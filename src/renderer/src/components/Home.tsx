@@ -1,5 +1,6 @@
 import type { RecentBook } from '@shared/types'
 import { Icon } from './Icons'
+import wordmark from '../assets/wordmark.svg'
 
 const COVER_COLORS = ['#0F3B33', '#6B2E3A', '#2D3F63', '#5A4A2A', '#3E2F57', '#2F5A4E']
 
@@ -31,6 +32,7 @@ interface Props {
 export function Home({ books, onOpen, onNew, onOpenFolder, onForget }: Props) {
   return (
     <section className="home">
+      <img className="wordmark" src={wordmark} alt="הַכְּרִיכִיָּה" />
       <div className="hhead">
         <h2>הספרים שלי</h2>
         <span className="grow" />

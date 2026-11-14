@@ -10,6 +10,7 @@ import { ChapterEditor, type SaveState } from './components/ChapterEditor'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
+import appIcon from './assets/icon.png'
 
 type Toast = { text: string; error?: boolean } | null
 type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | null
@@ -164,9 +165,7 @@ export default function App() {
     <div className="app" data-mode={theme} data-overlay={overlay ? '1' : '0'} onClick={() => menu && setMenu(null)}>
       <IconSprite />
       <div className="titlebar">
-        <span className="logo">
-          <Icon name="book" />
-        </span>
+        <img className="logo" src={appIcon} alt="" />
         <b>הַכְּרִיכִיָּה</b>
         {book && (
           <span className="crumb">

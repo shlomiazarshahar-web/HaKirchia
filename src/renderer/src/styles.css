@@ -41,8 +41,7 @@ body { background: #dde3e0; overflow: hidden; }
 
 /* title bar (drag area; Windows draws its own min/max/close on the right) */
 .titlebar { height: 34px; display: flex; align-items: center; gap: 10px; padding-inline: calc(12px + var(--overlay-w)) 12px; background: var(--w-frame); font-size: 12.5px; flex: none; -webkit-app-region: drag; user-select: none; }
-.titlebar .logo { width: 18px; height: 18px; border-radius: 4px; background: var(--w-accent); display: grid; place-items: center; color: var(--w-on-accent); }
-.titlebar .logo svg { width: 12px; height: 12px; }
+.titlebar .logo { width: 20px; height: 20px; }
 .titlebar .crumb { color: var(--w-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .titlebar b { font-weight: 600; color: var(--w-ink); }
 
@@ -167,3 +166,4 @@ body { background: #dde3e0; overflow: hidden; }
 .toast { position: absolute; bottom: 40px; left: 20px; max-width: 460px; background: var(--w-ink); color: var(--w-paper); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; line-height: 1.5; z-index: 40; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2); }
 .toast.error { background: var(--w-danger); color: #fff; }
 .fname { unicode-bidi: isolate; direction: ltr; }
+.home .wordmark { height: 72px; width: auto; align-self: flex-start; }
