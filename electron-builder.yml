@@ -1,0 +1,25 @@
+appId: com.hakirchia.app
+productName: HaKirchia
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - build/icon.png
+  - package.json
+asar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: HaKirchia-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  shortcutName: הכריכייה
+  artifactName: HaKirchia-Setup-${version}.${ext}
+portable:
+  artifactName: HaKirchia-Portable-${version}.${ext}
