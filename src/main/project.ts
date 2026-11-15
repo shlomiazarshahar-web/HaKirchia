@@ -3,9 +3,9 @@
 //   <book folder>/פרקים/01 - שם הפרק.docx   one Word file per chapter
 // File names follow the chapter number and title, and are renamed when chapters move or get renamed.
 
-import { promises as fs, existsSync } from 'fs'
+import { promises as fs, existsSync, watch, type FSWatcher } from 'fs'
 import { join, basename } from 'path'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { Book, Chapter, ChapterStatus, LoadedChapter, PMNode } from '../shared/types'
 import { docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
@@ -44,6 +44,12 @@ export function safeName(title: string): string {
 export function desiredFileName(index: number, title: string): string {
   return `${String(index + 1).padStart(2, '0')} - ${safeName(title)}.docx`
 }
+
+// What each chapter file looked like the last time the app read or wrote it. Lets the watcher
+// below tell a change made outside the app (e.g. in Word) from the app's own saves and renames.
+const known = new Map<string, string>()
+const fingerprint = (bytes: Uint8Array) => createHash('sha1').update(bytes).digest('hex')
+const remember = (bookPath: string, id: string, bytes: Uint8Array) => known.set(`${bookPath}|${id}`, fingerprint(bytes))
 
 const chaptersDir = (bookPath: string) => join(bookPath, CHAPTERS_DIR)
 const chapterPath = (bookPath: string, ch: Chapter) => join(chaptersDir(bookPath), ch.file)
@@ -99,7 +105,9 @@ async function addChapterUnlocked(bookPath: string, m: Manifest, title: string):
   // Avoid clobbering an existing file with the same name
   let n = 2
   while (existsSync(chapterPath(bookPath, ch))) ch.file = ch.file.replace(/( \(\d+\))?\.docx$/, ` (${n++}).docx`)
-  await fs.writeFile(chapterPath(bookPath, ch), await docToDocx(emptyDoc(), ch.title))
+  const bytes = await docToDocx(emptyDoc(), ch.title)
+  await fs.writeFile(chapterPath(bookPath, ch), bytes)
+  remember(bookPath, ch.id, bytes)
   m.chapters.push(ch)
   await writeManifest(bookPath, m)
   return ch
@@ -174,7 +182,9 @@ async function rewriteTitleInFile(bookPath: string, ch: Chapter): Promise<string
   const bytes = new Uint8Array(await fs.readFile(file))
   const loaded = await docxToDoc(bytes)
   if (loaded.warnings.length && !(await isOurFile(bytes))) return undefined // don't touch files with content we can't keep
-  await fs.writeFile(file, await docToDocx(loaded.doc, ch.title))
+  const out = await docToDocx(loaded.doc, ch.title)
+  await fs.writeFile(file, out)
+  remember(bookPath, ch.id, out)
   return undefined
 }
 
@@ -227,6 +237,7 @@ export function loadChapter(bookPath: string, id: string): Promise<LoadedChapter
     if (!existsSync(file)) return { doc: emptyDoc(), warnings: ['קובץ הפרק לא נמצא בתיקייה, ייווצר מחדש בשמירה'] }
     const bytes = new Uint8Array(await fs.readFile(file))
     const res = await docxToDoc(bytes)
+    remember(bookPath, ch.id, bytes)
     return { doc: res.doc, warnings: res.warnings }
   })
 }
@@ -252,6 +263,7 @@ export function saveChapter(bookPath: string, id: string, doc: PMNode): Promise<
     await fs.writeFile(tmp, bytes)
     try {
       await fs.rename(tmp, file)
+      remember(bookPath, ch.id, bytes)
     } catch (e) {
       await fs.rm(tmp, { force: true })
       throw new Error('השמירה נכשלה. אם הקובץ פתוח ב-Word, יש לסגור אותו ולנסות שוב.')
@@ -262,4 +274,64 @@ export function saveChapter(bookPath: string, id: string, doc: PMNode): Promise<
 export function chapterFilePath(book: Book, id: string): string | null {
   const ch = book.chapters.find((c) => c.id === id)
   return ch ? chapterPath(book.path, ch) : null
+}
+
+// ---------------------------------------------------------------------------
+// Watching the chapters folder: when a chapter file changes outside the app (edited in Word,
+// restored from a backup, synced from another computer), the open editors reload it.
+// ---------------------------------------------------------------------------
+
+let watching: { bookPath: string; watcher: FSWatcher; timers: Map<string, ReturnType<typeof setTimeout>> } | null = null
+
+export function stopWatching(): void {
+  if (!watching) return
+  watching.watcher.close()
+  for (const t of watching.timers.values()) clearTimeout(t)
+  watching = null
+}
+
+export function watchBook(bookPath: string, onChange: (chapterId: string) => void): void {
+  if (watching?.bookPath === bookPath) return
+  stopWatching()
+  try {
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    const watcher = watch(chaptersDir(bookPath), (_event, filename) => {
+      const name = typeof filename === 'string' ? basename(filename) : null
+      if (!name || !name.endsWith('.docx') || name.startsWith('~')) return
+      // Word and the app both write in several steps; wait until the file settles
+      const prev = timers.get(name)
+      if (prev) clearTimeout(prev)
+      timers.set(
+        name,
+        setTimeout(() => {
+          timers.delete(name)
+          void checkChanged(bookPath, name).then((id) => id && onChange(id))
+        }, 500)
+      )
+    })
+    watcher.on('error', () => stopWatching())
+    watching = { bookPath, watcher, timers }
+  } catch {
+    // Watching is a convenience; without it the master still reloads every time it opens
+  }
+}
+
+/** Returns the chapter id if this file now differs from what the app last read or wrote. */
+export function checkChanged(bookPath: string, fileName: string): Promise<string | null> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const ch = m.chapters.find((c) => c.file === fileName)
+    if (!ch) return null
+    let bytes: Uint8Array
+    try {
+      bytes = new Uint8Array(await fs.readFile(chapterPath(bookPath, ch)))
+    } catch {
+      return null // gone or still locked
+    }
+    const key = `${bookPath}|${ch.id}`
+    const fp = fingerprint(bytes)
+    if (known.get(key) === fp) return null
+    known.set(key, fp)
+    return ch.id
+  })
 }

@@ -113,6 +113,7 @@ function registerIpc(): void {
 
   const opened = (book: Book) => {
     rememberBook(book.path, book.title, book.chapters.length)
+    project.watchBook(book.path, (id) => win?.webContents.send('chapter:disk-changed', book.path, id))
     return book
   }
 

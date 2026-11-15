@@ -17,3 +17,15 @@ export function registerFlusher(fn: () => Promise<void>): () => void {
 export async function flushAll(): Promise<void> {
   await Promise.all([...flushers].map((f) => f()))
 }
+
+// Chapters changed on disk outside the app. Each open editor listens for its own chapter.
+const diskListeners = new Map<string, Set<() => void>>()
+api.onChapterDiskChanged((bookPath, chapterId) => {
+  for (const fn of diskListeners.get(`${bookPath}|${chapterId}`) ?? []) fn()
+})
+export function onDiskChange(bookPath: string, chapterId: string, fn: () => void): () => void {
+  const key = `${bookPath}|${chapterId}`
+  if (!diskListeners.has(key)) diskListeners.set(key, new Set())
+  diskListeners.get(key)!.add(fn)
+  return () => diskListeners.get(key)?.delete(fn)
+}

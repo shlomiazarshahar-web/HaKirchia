@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
-import { api, registerFlusher } from '../api'
+import { api, onDiskChange, registerFlusher } from '../api'
 import { editorExtensions } from '../editor'
 import { Icon } from './Icons'
 
@@ -51,7 +51,20 @@ export function ChapterEditor(props: Props) {
         <TitleInput title={chapter.title} onRename={props.onRename} />
         {loadError && <div className="paper-state">לא הצלחתי לפתוח את הקובץ: {loadError}</div>}
         {!loaded && !loadError && <div className="paper-state">פותח את הפרק…</div>}
-        {loaded && <EditorSurface {...props} initial={loaded.doc} warnings={loaded.warnings} />}
+        {loaded && (
+          <ChapterBody
+            bookPath={book.path}
+            chapterId={chapter.id}
+            initial={loaded.doc}
+            warnings={loaded.warnings}
+            autoFocus={props.autoFocus}
+            activateOn="mount"
+            onEditor={props.onEditor}
+            onWords={props.onWords}
+            onSaveState={props.onSaveState}
+            onError={props.onError}
+          />
+        )}
       </article>
     </main>
   )
@@ -85,13 +98,36 @@ function TitleInput({ title, onRename }: { title: string; onRename: (t: string) 
   )
 }
 
-function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, onWords, onSaveState, onError }: Props & { initial: PMNode; warnings: string[] }) {
+export interface BodyProps {
+  bookPath: string
+  chapterId: string
+  initial: PMNode
+  warnings: string[]
+  autoFocus: boolean
+  /** 'mount': this is the only editor on screen. 'focus': one of many (master), active while focused. */
+  activateOn: 'mount' | 'focus'
+  onEditor: (e: Editor | null) => void
+  /** focus mode: this editor is going away (chapter deleted, master closed) */
+  onRelease?: (e: Editor) => void
+  onWords: (n: number) => void
+  onSaveState: (s: SaveState) => void
+  onError: (msg: string) => void
+}
+
+/**
+ * The text of one chapter, saved automatically to its .docx file. Used by the writing view and,
+ * once per chapter, by the master. Reloads itself when the file changes outside the app.
+ */
+export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError }: BodyProps) {
   const [readOnly, setReadOnly] = useState(warnings.length > 0)
+  const [warn, setWarn] = useState(warnings)
   const dirty = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef<PMNode>(initial)
   const saving = useRef<Promise<void>>(Promise.resolve())
-  const ids = useRef({ bookPath: book.path, chapterId: chapter.id })
+  const ids = useRef({ bookPath, chapterId })
+  const cb = useRef({ onEditor, onRelease, onWords, onSaveState, onError })
+  cb.current = { onEditor, onRelease, onWords, onSaveState, onError }
 
   const save = async () => {
     if (timer.current) {
@@ -102,14 +138,14 @@ function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, 
     await saving.current
     if (!dirty.current) return
     dirty.current = false
-    onSaveState('saving')
+    cb.current.onSaveState('saving')
     const run = (async () => {
       const r = await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
       if (!r.ok) {
         dirty.current = true
-        onSaveState('error')
-        onError(r.error ?? 'השמירה נכשלה')
-      } else onSaveState(dirty.current ? 'dirty' : 'saved')
+        cb.current.onSaveState('error')
+        cb.current.onError(r.error ?? 'השמירה נכשלה')
+      } else cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
     })()
     saving.current = run
     await run
@@ -117,17 +153,25 @@ function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, 
   const saveRef = useRef(save)
   saveRef.current = save
 
+  const words = (e: Editor) => countWords(e.getText({ blockSeparator: '\n' }))
+
   const editor = useEditor({
     extensions: editorExtensions,
     content: initial,
     editable: !readOnly,
     autofocus: autoFocus ? 'end' : false,
     editorProps: { attributes: { spellcheck: 'true', 'aria-label': 'טקסט הפרק' } },
-    onUpdate: ({ editor }) => {
+    onFocus: ({ editor }) => {
+      if (activateOn === 'focus') cb.current.onEditor(editor)
+    },
+    onUpdate: ({ editor, transaction }) => {
+      // TipTap also reports an "update" with no real change when the editor starts; ignoring it
+      // keeps a chapter from being re-saved (and a Word file rewritten) just by opening it
+      if (!transaction.docChanged) return
       latest.current = editor.getJSON() as PMNode
       dirty.current = true
-      onSaveState('dirty')
-      onWords(countWords(editor.getText({ blockSeparator: '\n' })))
+      cb.current.onSaveState('dirty')
+      cb.current.onWords(words(editor))
       if (timer.current) clearTimeout(timer.current)
       timer.current = setTimeout(() => void saveRef.current(), SAVE_DELAY_MS)
     }
@@ -135,9 +179,9 @@ function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, 
 
   useEffect(() => {
     if (!editor) return
-    onEditor(editor)
-    onWords(countWords(editor.getText({ blockSeparator: '\n' })))
-    onSaveState('saved')
+    if (activateOn === 'mount') cb.current.onEditor(editor)
+    cb.current.onWords(words(editor))
+    cb.current.onSaveState('saved')
     const unregister = registerFlusher(() => saveRef.current())
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -146,10 +190,28 @@ function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, 
       }
     }
     window.addEventListener('keydown', onKey)
+    // The file was changed outside the app: show the new text, unless there is unsaved typing here
+    const stopListening = onDiskChange(ids.current.bookPath, ids.current.chapterId, async () => {
+      await saving.current
+      if (editor.isDestroyed) return
+      if (dirty.current) {
+        cb.current.onError('קובץ הפרק השתנה מחוץ לכריכייה בזמן שהקלדת כאן. הטקסט שעל המסך יישמר ויחליף את השינוי החיצוני.')
+        return
+      }
+      const r = await api.loadChapter(ids.current.bookPath, ids.current.chapterId)
+      if (!r.ok || !r.value || dirty.current || editor.isDestroyed) return
+      latest.current = r.value.doc
+      editor.commands.setContent(r.value.doc, { emitUpdate: false })
+      cb.current.onWords(words(editor))
+      setWarn(r.value.warnings)
+      if (r.value.warnings.length) setReadOnly(true)
+    })
     return () => {
+      stopListening()
       window.removeEventListener('keydown', onKey)
       unregister()
-      onEditor(null)
+      if (activateOn === 'mount') cb.current.onEditor(null)
+      else cb.current.onRelease?.(editor)
       void saveRef.current()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,7 +226,7 @@ function EditorSurface({ book, chapter, initial, warnings, autoFocus, onEditor, 
       {readOnly && (
         <div className="warnbanner" role="alert">
           <div>
-            בקובץ הזה יש דברים שהכריכייה עוד לא יודעת להציג: <b>{warnings.join(', ')}</b>. כדי לא לאבד אותם, הפרק פתוח לקריאה בלבד.
+            בקובץ הזה יש דברים שהכריכייה עוד לא יודעת להציג: <b>{warn.join(', ')}</b>. כדי לא לאבד אותם, הפרק פתוח לקריאה בלבד.
           </div>
           <div className="row">
             <button className="btn ghost" onClick={() => setReadOnly(false)}>
