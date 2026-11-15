@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import type { Book, OpResult, PMNode, RecentBook, Theme } from '../shared/types'
+import type { Book, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
 import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
 
@@ -131,17 +131,17 @@ function registerIpc(): void {
       return opened(await project.openBook(folder))
     })
   )
-  ipcMain.handle('chapter:add', async (_e, bookPath: string, title: string) => {
+  ipcMain.handle('chapter:add', async (_e, bookPath: string, title: string, partId?: string) => {
     try {
-      const { book, chapter } = await project.addChapter(bookPath, title)
+      const { book, chapter, notice } = await project.addChapter(bookPath, title, partId)
       rememberBook(book.path, book.title, book.chapters.length)
-      return { ok: true, value: { book, chapterId: chapter.id } }
+      return { ok: true, value: { book, chapterId: chapter.id }, notice }
     } catch (e) {
       return { ok: false, error: errText(e) }
     }
   })
   ipcMain.handle('chapter:rename', (_e, b: string, id: string, title: string) => wrapBook(() => project.renameChapter(b, id, title)))
-  ipcMain.handle('chapter:reorder', (_e, b: string, ids: string[]) => wrapBook(() => project.reorderChapters(b, ids)))
+  ipcMain.handle('book:outline', (_e, b: string, outline: OutlineNode[]) => wrapBook(() => project.saveOutline(b, outline)))
   ipcMain.handle('chapter:delete', (_e, b: string, id: string) => wrapBook(() => project.deleteChapter(b, id)))
   ipcMain.handle('chapter:meta', (_e, b: string, id: string, meta) => wrap(() => project.updateChapterMeta(b, id, meta)))
   ipcMain.handle('chapter:load', (_e, b: string, id: string) => wrap(() => project.loadChapter(b, id)))

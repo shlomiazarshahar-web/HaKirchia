@@ -35,6 +35,8 @@ export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenCh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book.chapters])
 
+  const byId = new Map(book.chapters.map((c) => [c.id, c]))
+
   const report = () => {
     onWords([...words.current.values()].reduce((a, b) => a + b, 0))
     const all = [...states.current.values()]
@@ -51,7 +53,25 @@ export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenCh
           </span>
         </div>
         {book.chapters.length === 0 && <div className="paper-state">אין עדיין פרקים בספר הזה.</div>}
-        {book.chapters.map((ch) => (
+        {book.outline.flatMap((n) => {
+          if (n.type !== 'part') return [chapterSection(n.id)]
+          return [
+            <header key={`p-${n.id}`} className="m-part" id={`m-${n.id}`}>
+              <div className="lbl">חלק</div>
+              <h1 dir="auto">{n.title}</h1>
+              {n.children.length === 0 && <div className="empty">אין עדיין פרקים בחלק הזה</div>}
+            </header>,
+            ...n.children.map(chapterSection)
+          ]
+        })}
+      </article>
+    </main>
+  )
+
+  function chapterSection(id: string) {
+    const ch = byId.get(id)
+    if (!ch) return null
+    return (
           <MasterChapter
             key={ch.id}
             bookPath={book.path}
@@ -70,10 +90,8 @@ export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenCh
             }}
             onError={onError}
           />
-        ))}
-      </article>
-    </main>
-  )
+    )
+  }
 }
 
 interface ChapterProps {

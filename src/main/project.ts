@@ -7,7 +7,8 @@ import { promises as fs, existsSync, watch, type FSWatcher } from 'fs'
 import { join, basename } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
-import type { Book, Chapter, ChapterStatus, LoadedChapter, PMNode } from '../shared/types'
+import type { Book, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
+import { flatten, normalizeOutline } from '../shared/outline'
 import { docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
@@ -19,6 +20,15 @@ interface Manifest {
   version: 1
   title: string
   chapters: Chapter[]
+  /** The binder tree with parts. Missing in books made before parts existed. */
+  outline?: OutlineNode[]
+}
+
+/** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
+function fixup(m: Manifest): void {
+  m.outline = normalizeOutline(m.outline, m.chapters)
+  const byId = new Map(m.chapters.map((c) => [c.id, c]))
+  m.chapters = flatten(m.outline).map((id) => byId.get(id)!)
 }
 
 // One queue per book, so disk operations never overlap (e.g. a save during a rename).
@@ -58,6 +68,7 @@ async function readManifest(bookPath: string): Promise<Manifest> {
   const raw = await fs.readFile(join(bookPath, MANIFEST), 'utf8')
   const m = JSON.parse(raw) as Manifest
   if (!Array.isArray(m.chapters)) throw new Error('קובץ הספר פגום')
+  fixup(m)
   return m
 }
 
@@ -68,7 +79,7 @@ async function writeManifest(bookPath: string, m: Manifest): Promise<void> {
   await fs.rename(tmp, file)
 }
 
-const toBook = (bookPath: string, m: Manifest): Book => ({ path: bookPath, title: m.title, chapters: m.chapters })
+const toBook = (bookPath: string, m: Manifest): Book => ({ path: bookPath, title: m.title, chapters: m.chapters, outline: m.outline ?? [] })
 
 export function isBookFolder(folder: string): boolean {
   return existsSync(join(folder, MANIFEST))
@@ -80,7 +91,7 @@ export async function createBook(parentDir: string, title: string): Promise<Book
     throw new Error(`כבר יש תיקייה בשם "${basename(folder)}" במקום הזה. אפשר לבחור שם אחר או מקום אחר.`)
   }
   await fs.mkdir(chaptersDir(folder), { recursive: true })
-  const m: Manifest = { app: 'hakirchia', version: 1, title: title.trim() || 'ספר חדש', chapters: [] }
+  const m: Manifest = { app: 'hakirchia', version: 1, title: title.trim() || 'ספר חדש', chapters: [], outline: [] }
   await writeManifest(folder, m)
   // Start with a first chapter so the writer can begin right away
   await addChapterUnlocked(folder, m, 'פרק 1')
@@ -94,30 +105,38 @@ export async function openBook(folder: string): Promise<Book> {
   return toBook(folder, m)
 }
 
-async function addChapterUnlocked(bookPath: string, m: Manifest, title: string): Promise<Chapter> {
+/** Adds a chapter at the end of the book, or at the end of a part. */
+async function addChapterUnlocked(bookPath: string, m: Manifest, title: string, partId?: string): Promise<{ chapter: Chapter; notice?: string }> {
   const ch: Chapter = {
     id: randomUUID(),
     title: title.trim() || 'פרק חדש',
-    file: desiredFileName(m.chapters.length, title),
+    file: '',
     status: 'draft',
     synopsis: ''
   }
+  m.chapters.push(ch)
+  const part = partId ? m.outline?.find((n) => n.type === 'part' && n.id === partId) : undefined
+  if (part && part.type === 'part') part.children.push(ch.id)
+  else m.outline?.push({ type: 'chapter', id: ch.id })
+  fixup(m)
+  ch.file = desiredFileName(m.chapters.indexOf(ch), ch.title)
   // Avoid clobbering an existing file with the same name
   let n = 2
   while (existsSync(chapterPath(bookPath, ch))) ch.file = ch.file.replace(/( \(\d+\))?\.docx$/, ` (${n++}).docx`)
   const bytes = await docToDocx(emptyDoc(), ch.title)
   await fs.writeFile(chapterPath(bookPath, ch), bytes)
   remember(bookPath, ch.id, bytes)
-  m.chapters.push(ch)
   await writeManifest(bookPath, m)
-  return ch
+  // Added in the middle of the book (inside a part): the chapters after it get new numbers
+  const notice = await syncFileNames(bookPath, m)
+  return { chapter: ch, notice }
 }
 
-export function addChapter(bookPath: string, title: string): Promise<{ book: Book; chapter: Chapter }> {
+export function addChapter(bookPath: string, title: string, partId?: string): Promise<{ book: Book; chapter: Chapter; notice?: string }> {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
-    const chapter = await addChapterUnlocked(bookPath, m, title)
-    return { book: toBook(bookPath, m), chapter }
+    const { chapter, notice } = await addChapterUnlocked(bookPath, m, title, partId)
+    return { book: toBook(bookPath, m), chapter, notice }
   })
 }
 
@@ -188,13 +207,16 @@ async function rewriteTitleInFile(bookPath: string, ch: Chapter): Promise<string
   return undefined
 }
 
-export function reorderChapters(bookPath: string, ids: string[]) {
+/**
+ * Saves the binder tree: order of chapters, parts, part names, open/closed parts.
+ * When the chapter order changed, the files get new numbers.
+ */
+export function saveOutline(bookPath: string, outline: OutlineNode[]) {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
-    const byId = new Map(m.chapters.map((c) => [c.id, c]))
-    const next = ids.map((id) => byId.get(id)).filter((c): c is Chapter => !!c)
-    for (const c of m.chapters) if (!next.includes(c)) next.push(c)
-    m.chapters = next
+    m.outline = outline
+    fixup(m)
+    await writeManifest(bookPath, m)
     const notice = await syncFileNames(bookPath, m)
     return { book: toBook(bookPath, m), notice }
   })
@@ -211,6 +233,7 @@ export function deleteChapter(bookPath: string, id: string) {
       await shell.trashItem(file)
     }
     m.chapters = m.chapters.filter((c) => c.id !== id)
+    fixup(m)
     const notice = await syncFileNames(bookPath, m)
     return { book: toBook(bookPath, m), notice }
   })

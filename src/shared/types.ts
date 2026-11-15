@@ -11,11 +11,30 @@ export interface Chapter {
   synopsis: string
 }
 
+/** A part (חלק) groups consecutive chapters, e.g. "חלק ראשון: הנמל". */
+export interface PartNode {
+  type: 'part'
+  id: string
+  title: string
+  /** Closed in the binder (does not affect the master) */
+  collapsed?: boolean
+  /** Chapter ids, in order */
+  children: string[]
+}
+export interface ChapterRef {
+  type: 'chapter'
+  id: string
+}
+/** The binder tree: chapters and parts at the top level, chapters inside parts. */
+export type OutlineNode = ChapterRef | PartNode
+
 export interface Book {
   /** Absolute path of the book folder */
   path: string
   title: string
+  /** All chapters, flat, in reading order (the order of the tree) */
   chapters: Chapter[]
+  outline: OutlineNode[]
 }
 
 export interface RecentBook {

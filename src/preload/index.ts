@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Book, ChapterStatus, LoadedChapter, OpResult, PMNode, RecentBook, Settings, Theme } from '../shared/types'
+import type { Book, ChapterStatus, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, Theme } from '../shared/types'
 
 const api = {
   platform: process.platform,
@@ -12,10 +12,11 @@ const api = {
   defaultFolder: (): Promise<string> => ipcRenderer.invoke('app:defaultFolder'),
   createBook: (parentDir: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:create', parentDir, title),
   openBook: (folder: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:open', folder),
-  addChapter: (bookPath: string, title: string): Promise<OpResult<{ book: Book; chapterId: string }>> =>
-    ipcRenderer.invoke('chapter:add', bookPath, title),
+  addChapter: (bookPath: string, title: string, partId?: string): Promise<OpResult<{ book: Book; chapterId: string }>> =>
+    ipcRenderer.invoke('chapter:add', bookPath, title, partId),
   renameChapter: (bookPath: string, id: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:rename', bookPath, id, title),
-  reorderChapters: (bookPath: string, ids: string[]): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:reorder', bookPath, ids),
+  /** Saves the binder tree (order, parts). Renames files when the chapter order changed. */
+  saveOutline: (bookPath: string, outline: OutlineNode[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:outline', bookPath, outline),
   deleteChapter: (bookPath: string, id: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:delete', bookPath, id),
   updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string }): Promise<OpResult<Book>> =>
     ipcRenderer.invoke('chapter:meta', bookPath, id, meta),
