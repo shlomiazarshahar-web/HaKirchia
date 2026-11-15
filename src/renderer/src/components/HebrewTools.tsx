@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { SpellStatus } from '@shared/types'
-import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
+import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, pressesFor, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
 import { api } from '../api'
 import { EDITOR_FONTS } from '../fonts'
 import { setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
@@ -188,7 +188,7 @@ export function NiqqudPanel({ editor, keyboard = false, onClose }: { editor: Edi
           <button
             key={m.char}
             className={`nq${lit === m ? ' lit' : ''}`}
-            title={`${m.name} (במקלדת: ${keysFor(m)})`}
+            title={`${m.name} (במקלדת: ${pressesFor(m) === 1 ? m.letter : `${m.letter}, ${pressesFor(m)} פעמים`})`}
             aria-label={m.name}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => add(m.char)}

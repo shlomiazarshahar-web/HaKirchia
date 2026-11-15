@@ -97,9 +97,15 @@ export function marksForLetter(letter: string): NiqqudMark[] {
   return NIQQUD_MARKS.filter((m) => m.letter === letter)
 }
 
-/** "ח" for the first mark of ח, "חח" for the second, and so on: what to press to get this mark. */
+/** How many presses of its letter type this mark: 1 for the first mark of ח, 2 for the second... */
+export function pressesFor(mark: NiqqudMark): number {
+  return marksForLetter(mark.letter).indexOf(mark) + 1
+}
+
+/** What to press, in words: "ח", "ח ×2". */
 export function keysFor(mark: NiqqudMark): string {
-  return mark.letter.repeat(marksForLetter(mark.letter).indexOf(mark) + 1)
+  const n = pressesFor(mark)
+  return n === 1 ? mark.letter : `${mark.letter} ×${n}`
 }
 
 /** The Hebrew letter on each key of the standard Israeli keyboard, so the panel also works when the

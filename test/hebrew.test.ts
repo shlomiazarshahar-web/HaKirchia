@@ -114,7 +114,7 @@ describe('niqqud from the keyboard', () => {
     expect(hebrewLetterOf('1', 'Digit1')).toBeNull()
   })
   it('shows what to press', () => {
-    expect(keysFor(NIQQUD_MARKS.find((m) => m.name === 'חולם')!)).toBe('חח')
+    expect(keysFor(NIQQUD_MARKS.find((m) => m.name === 'חולם')!)).toBe('ח ×2')
     expect(keysFor(NIQQUD_MARKS.find((m) => m.name === 'צירה')!)).toBe('צ')
   })
 })

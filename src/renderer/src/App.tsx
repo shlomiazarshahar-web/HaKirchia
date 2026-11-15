@@ -126,6 +126,11 @@ export default function App() {
     }
   }, [editor])
 
+  // The "what next" note steps aside once writing starts
+  useEffect(() => {
+    if (saveState === 'dirty') setStopCard(null)
+  }, [saveState])
+
   // Typewriter scrolling is on while focus mode is on and wants it
   useEffect(() => {
     setTypewriterNow(focusMode && prefs.focus.typewriter)
