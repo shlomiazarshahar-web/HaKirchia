@@ -1,5 +1,6 @@
 import type { Api } from '../../preload'
 import type { PMNode } from '@shared/types'
+import type { StopPoint } from '@shared/stoppoint'
 
 declare global {
   interface Window {
@@ -48,4 +49,29 @@ export function hasLiveTwin(bookPath: string, chapterId: string): boolean {
 }
 export function publishLiveEdit(bookPath: string, chapterId: string, doc: PMNode, from: symbol): void {
   for (const fn of liveListeners.get(`${bookPath}|${chapterId}`) ?? []) fn(doc, from)
+}
+
+// Live word counts: every editor reports its chapter's words as they change, so the status bar can
+// show the whole book's total (the other chapters come from the files on disk).
+type WordsFn = (bookPath: string, chapterId: string, words: number) => void
+const wordListeners = new Set<WordsFn>()
+export function reportWords(bookPath: string, chapterId: string, words: number): void {
+  for (const fn of wordListeners) fn(bookPath, chapterId, words)
+}
+export function onWordsReport(fn: WordsFn): () => void {
+  wordListeners.add(fn)
+  return () => wordListeners.delete(fn)
+}
+
+// Stopping point: when a book opens where the writer stopped, the editor of that chapter puts the
+// cursor back there as soon as it has loaded.
+let pendingStop: { bookPath: string; sp: StopPoint } | null = null
+export function setPendingStop(bookPath: string, sp: StopPoint | null): void {
+  pendingStop = sp ? { bookPath, sp } : null
+}
+export function takePendingStop(bookPath: string, chapterId: string): StopPoint | null {
+  if (!pendingStop || pendingStop.bookPath !== bookPath || pendingStop.sp.chapterId !== chapterId) return null
+  const sp = pendingStop.sp
+  pendingStop = null
+  return sp
 }

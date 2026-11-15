@@ -5,7 +5,7 @@ import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOu
 import { CHAPTERS_DIR } from '@shared/constants'
 import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, type PaneLayout } from '@shared/panes'
 import { MASTER_LABEL } from './labels'
-import { api, flushAll } from './api'
+import { api, flushAll, onWordsReport, setPendingStop } from './api'
 import { IconSprite, Icon } from './components/Icons'
 import { Home } from './components/Home'
 import { Binder } from './components/Binder'
@@ -16,8 +16,11 @@ import { SplitView } from './components/SplitView'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
-import { WritingSettings } from './components/HebrewTools'
-import { initPrefs } from './prefs'
+import { NiqqudAtCursor, WritingSettings } from './components/HebrewTools'
+import { FocusBar, StopCard, StopDialog } from './components/Focus'
+import { getPrefs, initPrefs, setTypewriterNow, usePrefs } from './prefs'
+import { stopHere } from './editor'
+import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 
 type Toast = { text: string; error?: boolean } | null
@@ -49,6 +52,18 @@ export default function App() {
   /** With more than one pane, "על הפרק" is hidden; it slides out inside one pane (this one) on demand */
   const [infoKey, setInfoKey] = useState<string | null>(null)
   const [zoom, setZoomState] = useState(1)
+  /** Focused writing mode: only the text being written, full screen (feature 7) */
+  const [focusMode, setFocusMode] = useState(false)
+  /** Words of every chapter of the open book (from the files, kept live while typing) */
+  const [bookWords, setBookWords] = useState<Record<string, number>>({})
+  /** Words in the selected text, when there is a selection */
+  const [selWords, setSelWords] = useState(0)
+  /** The "what next" note from last time, shown when the book opens */
+  const [stopCard, setStopCard] = useState<StopPoint | null>(null)
+  /** Asking "what next?" before closing the book (going to the library) or the app */
+  const [stopAsk, setStopAsk] = useState<{ closingApp: boolean; resolve: (close: boolean) => void } | null>(null)
+  const [niqqudOpen, setNiqqudOpen] = useState(false)
+  const prefs = usePrefs()
   const splitSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedLayouts = useRef<Record<string, PaneLayout>>({})
   const lastChapter = useRef<Record<string, string>>({})
@@ -74,8 +89,47 @@ export default function App() {
       }
     })
     void refreshLibrary()
-    api.onFlushBeforeClose(flushAll)
+    api.onBeforeClose((wait) => beforeClose.current(wait))
   }, [refreshLibrary])
+
+  // Live word counts of the open book
+  const bookPathRef = useRef<string | null>(null)
+  bookPathRef.current = book?.path ?? null
+  useEffect(
+    () =>
+      onWordsReport((bookPath, id, w) => {
+        if (bookPath !== bookPathRef.current) return
+        openCounts.current.add(id)
+        setBookWords((m) => (m[id] === w ? m : { ...m, [id]: w }))
+      }),
+    []
+  )
+  const refreshWords = (path: string) =>
+    api.wordCounts(path).then((r) => {
+      if (r.ok && r.value && bookPathRef.current === path) setBookWords((m) => ({ ...r.value, ...pickOpen(m) }))
+    })
+  // counts reported by editors that are open now are newer than the files on disk
+  const openCounts = useRef<Set<string>>(new Set())
+  const pickOpen = (m: Record<string, number>) => Object.fromEntries(Object.entries(m).filter(([id]) => openCounts.current.has(id)))
+
+  // Words in the selection
+  useEffect(() => {
+    if (!editor) return setSelWords(0)
+    const upd = () => {
+      const { from, to, empty } = editor.state.selection
+      setSelWords(empty ? 0 : (editor.state.doc.textBetween(from, to, ' ', ' ').match(/[^\s\u05BE\u2013\u2014]+/g)?.length ?? 0))
+    }
+    upd()
+    editor.on('selectionUpdate', upd)
+    return () => {
+      editor.off('selectionUpdate', upd)
+    }
+  }, [editor])
+
+  // Typewriter scrolling is on while focus mode is on and wants it
+  useEffect(() => {
+    setTypewriterNow(focusMode && prefs.focus.typewriter)
+  }, [focusMode, prefs.focus.typewriter])
 
   /** Applies a result that returns the updated book; shows errors and notices. */
   const applyBook = (r: OpResult<Book>): Book | null => {
@@ -90,16 +144,70 @@ export default function App() {
 
   const enterBook = (b: Book) => {
     setBook(b)
+    bookPathRef.current = b.path
+    setBookWords({})
+    openCounts.current = new Set()
+    void refreshWords(b.path)
     setView('write')
     setMasterFocusId(null)
     setInfoKey(null)
-    const last = lastChapter.current[b.path]
+    // Where the writer stopped last time wins over the last chapter shown
+    const sp = b.stopPoint && b.chapters.some((c) => c.id === b.stopPoint!.chapterId) ? b.stopPoint : null
+    const last = sp?.chapterId ?? lastChapter.current[b.path]
     const active = b.chapters.some((c) => c.id === last) ? last : (b.chapters[0]?.id ?? null)
     setActiveId(active)
     // The panes as they were last left in this book, or just the chapter being written
-    const l = normalizeLayout(savedLayouts.current[b.path], b, active)
+    let l = normalizeLayout(savedLayouts.current[b.path], b, active)
+    let pane = l.panes.find((p) => p.content.kind === 'chapter' && p.content.id === active)
+    if (!pane && active) {
+      l = setPaneContent(l, 0, { kind: 'chapter', id: active })
+      pane = l.panes[0]
+    }
     setSplit(l)
-    setFocusKey((l.panes.find((p) => p.content.kind === 'chapter' && p.content.id === active) ?? l.panes[0]).key)
+    setFocusKey((pane ?? l.panes[0]).key)
+    setPendingStop(b.path, sp)
+    setStopCard(sp && sp.note ? sp : null)
+  }
+
+  /** Remembers where the writer is now (the chapter and the cursor), with an optional note. */
+  const saveStop = async (note: string) => {
+    if (!book) return
+    let chapterId: string | null = null
+    let place: Pick<StopPoint, 'pos' | 'before' | 'after'> = { pos: 1, before: '', after: '' }
+    const pane = split?.panes.find((p) => p.key === focusKey)
+    if (view === 'write' && pane?.content.kind === 'chapter') chapterId = pane.content.id
+    else if (masterFocusId) chapterId = masterFocusId
+    else chapterId = activeId
+    if (editor && !editor.isDestroyed && chapterId && (view === 'write' ? pane?.content.kind === 'chapter' : masterFocusId === chapterId)) place = stopHere(editor)
+    if (!chapterId) return
+    const sp: StopPoint = { chapterId, ...place, note, at: Date.now() }
+    const r = await api.setStopPoint(book.path, sp)
+    if (r.ok) setBook((b) => (b && b.path === book.path ? { ...b, stopPoint: sp } : b))
+  }
+
+  /** Before leaving the book: asks "what next?" (if wanted), saves the stopping point. false = stay. */
+  const leaveBook = async (closingApp: boolean, wait?: () => void): Promise<boolean> => {
+    if (!book || book.chapters.length === 0) return true
+    let note = ''
+    if (getPrefs().askStopNote) {
+      wait?.()
+      if (focusMode) exitFocus()
+      const answer = await new Promise<string | null>((resolve) =>
+        setStopAsk({ closingApp, resolve: (ok) => resolve(ok ? (stopNoteRef.current ?? '') : null) })
+      )
+      setStopAsk(null)
+      if (answer === null) return false
+      note = answer
+    }
+    await saveStop(note)
+    return true
+  }
+  const stopNoteRef = useRef<string | null>(null)
+  const beforeClose = useRef<(wait: () => void) => Promise<boolean>>(async () => true)
+  beforeClose.current = async (wait) => {
+    if (!(await leaveBook(true, wait))) return false
+    await flushAll()
+    return true
   }
 
   const openBook = async (path: string) => {
@@ -115,6 +223,9 @@ export default function App() {
   }
 
   const goHome = async () => {
+    if (!book) return
+    if (!(await leaveBook(false))) return
+    exitFocus()
     await flushAll()
     setBook(null)
     setActiveId(null)
@@ -128,6 +239,23 @@ export default function App() {
     setEditor(null)
     setMasterFocusId(null)
     setView(v)
+    void refreshWords(book.path)
+  }
+
+  const exitFocus = () => {
+    setFocusMode((on) => {
+      if (on) void api.setFullScreen(false)
+      return false
+    })
+  }
+  const toggleFocus = () => {
+    if (!book || book.chapters.length === 0) return
+    if (focusMode) return exitFocus()
+    if (view !== 'write') void switchView('write')
+    setInfoKey(null)
+    setMenu(null)
+    setFocusMode(true)
+    void api.setFullScreen(true)
   }
 
   /** Changes the panes of the writing view. Saved (a moment later) so the book opens the same way next time. */
@@ -205,8 +333,15 @@ export default function App() {
   // Keyboard shortcuts of the window. e.code, so they work with a Hebrew keyboard layout too.
   const keys = useRef<(e: KeyboardEvent) => void>(() => {})
   keys.current = (e: KeyboardEvent) => {
+    if (e.code === 'F11' && !e.ctrlKey && !e.altKey) return e.preventDefault(), toggleFocus()
+    if (e.key === 'Escape' && focusMode && !document.querySelector('.pop, .scrim, .pdrawer')) return e.preventDefault(), exitFocus()
     if (!e.ctrlKey || e.altKey || e.metaKey) return
-    if (e.shiftKey && book && view === 'write') {
+    if (e.shiftKey) {
+      if (e.code === 'KeyD') return e.preventDefault(), toggleTheme()
+      if (e.code === 'KeyF' && book) return e.preventDefault(), toggleFocus()
+      if (e.code === 'KeyB' && editor && editor.isEditable && !editor.isDestroyed) return e.preventDefault(), setNiqqudOpen((o) => !o)
+    }
+    if (e.shiftKey && book && view === 'write' && !focusMode) {
       if (e.code === 'KeyN') return e.preventDefault(), addPaneNow()
       if (e.code === 'KeyX') return e.preventDefault(), closeFocusedPane()
       if (e.code === 'KeyI' && split && split.panes.length > 1) {
@@ -292,6 +427,11 @@ export default function App() {
     if (!applyBook(await api.saveOutline(before.path, next.outline))) setBook(before)
   }
 
+  // Close the niqqud panel when the editor it types into goes away
+  useEffect(() => {
+    if (!editor) setNiqqudOpen(false)
+  }, [editor])
+
   const addPart = () => {
     if (!book) return
     const id = crypto.randomUUID()
@@ -372,9 +512,18 @@ export default function App() {
   const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : writeMaster ? (masterFocus ?? null) : writeChapter
   const overlay = api.platform === 'win32' || api.platform === 'linux'
   const empty = !!book && book.chapters.length === 0
+  const totalWords = book ? book.chapters.reduce((sum, c) => sum + (bookWords[c.id] ?? 0), 0) : 0
+  const focusOn = focusMode && inWrite && !empty
+  const stopChapter = stopCard ? book?.chapters.find((c) => c.id === stopCard.chapterId) : undefined
+  const themeLabel = theme === 'light' ? 'מצב כהה' : 'מצב בהיר'
 
   return (
-    <div className="app" data-mode={theme} data-overlay={overlay ? '1' : '0'} onClick={() => menu && setMenu(null)}>
+    <div
+      className={`app${focusOn ? ' focusmode' : ''}${focusOn && prefs.focus.typewriter ? ' typewriter' : ''}${focusOn && prefs.focus.dim ? ' dim' : ''}`}
+      data-mode={theme}
+      data-overlay={overlay ? '1' : '0'}
+      onClick={() => menu && setMenu(null)}
+    >
       <IconSprite />
       <div className="titlebar">
         <img className="logo" src={appIcon} alt="" />
@@ -416,7 +565,17 @@ export default function App() {
           </>
         )}
         <span className="grow" />
-        <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים" onClick={() => setDialog({ kind: 'settings' })}>
+        {inWrite && !empty && (
+          <button className="ib" title="מצב כתיבה ממוקדת: רק הטקסט, על כל המסך (F11 או Ctrl+Shift+כ)" onClick={toggleFocus}>
+            <Icon name="focus" />
+            כתיבה ממוקדת
+          </button>
+        )}
+        <button className="ib theme-btn" title={`${themeLabel} (Ctrl+Shift+ג)`} aria-label={themeLabel} onClick={toggleTheme}>
+          <Icon name={theme === 'light' ? 'moon' : 'sun'} />
+          {theme === 'light' ? 'כהה' : 'בהיר'}
+        </button>
+        <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים, נקודת עצירה" onClick={() => setDialog({ kind: 'settings' })}>
           <Icon name="gear" />
           הגדרות כתיבה
         </button>
@@ -491,7 +650,8 @@ export default function App() {
                 focusKey={focusedPane!.key}
                 renamingId={renamingId}
                 onLayout={updateSplit}
-                infoKey={multi ? infoKey : null}
+                only={focusOn ? focusedPane!.key : null}
+                infoKey={multi && !focusOn ? infoKey : null}
                 onInfo={setInfoKey}
                 renderInfo={(ch) => <Inspector book={book} chapter={ch} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(ch))} />}
                 onFocusPane={(k) => k !== focusKey && focusPane(k)}
@@ -516,6 +676,7 @@ export default function App() {
                 </article>
               </main>
             )}
+            {stopCard && stopChapter && inWrite && <StopCard sp={stopCard} chapterTitle={stopChapter.title} onClose={() => setStopCard(null)} />}
             {inspected && !multi && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
           </>
         )}
@@ -544,8 +705,14 @@ export default function App() {
           writeChapter && <span className="fname">{writeChapter.file}</span>
         )}
         <span className="grow" />
-        {(inMaster || inBoard || writeMaster) && !empty && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {selWords > 0 && <span className="wc sel">{selWords.toLocaleString('he-IL')} מילים מסומנות</span>}
         {writeChapter && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
+        {inBoard && !empty && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {book && !inBoard && !empty && (
+          <span className="wc" title="סטטיסטיקה בלבד">
+            {totalWords.toLocaleString('he-IL')} מילים בספר
+          </span>
+        )}
         {book && (
           <span>
             {book.chapters.length} פרקים
@@ -563,10 +730,21 @@ export default function App() {
             <Icon name="plus" />
           </button>
         </span>
-        <button className="ib" title={theme === 'light' ? 'מצב כהה' : 'מצב בהיר'} onClick={toggleTheme}>
-          <Icon name={theme === 'light' ? 'moon' : 'sun'} />
-        </button>
       </div>
+
+      {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} />}
+      {niqqudOpen && editor && !editor.isDestroyed && <NiqqudAtCursor editor={editor} onClose={() => setNiqqudOpen(false)} />}
+      {stopAsk && (
+        <StopDialog
+          previous={book?.stopPoint}
+          closingApp={stopAsk.closingApp}
+          onDone={(note) => {
+            stopNoteRef.current = note
+            stopAsk.resolve(true)
+          }}
+          onCancel={() => stopAsk.resolve(false)}
+        />
+      )}
 
       {menu && 'chapter' in menu && book && (
         <div className="menu" role="menu" style={{ top: Math.min(menu.y, window.innerHeight - 320), left: Math.max(8, menu.x - 200) }} onClick={(e) => e.stopPropagation()}>

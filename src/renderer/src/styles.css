@@ -378,3 +378,51 @@ body { background: #dde3e0; overflow: hidden; }
 .chips .chip { display: inline-flex; align-items: center; gap: 4px; background: var(--w-soft); border-radius: 14px; padding: 2px; padding-inline: 10px 4px; font-size: 13px; }
 .chips .chip button { all: unset; cursor: pointer; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; color: var(--w-muted); }
 .chips .chip button:hover, .chips .chip button:focus-visible { background: var(--w-paper); color: var(--w-danger); }
+
+/* Comfortable writing (round 2) */
+.topbar .theme-btn { border: 1px solid var(--w-line); }
+.statusbar .wc { font-variant-numeric: tabular-nums; }
+.statusbar .wc.sel { color: var(--w-accent); font-weight: 600; }
+
+/* focused writing mode (feature 7): only the page, full screen */
+.app.focusmode .titlebar, .app.focusmode .topbar, .app.focusmode .fmt, .app.focusmode .binder,
+.app.focusmode .insp, .app.focusmode .statusbar, .app.focusmode .stopcard { display: none; }
+.app.focusmode .desk { padding-top: 8vh; }
+.app.focusmode .paper { box-shadow: none; background: transparent; }
+.app.focusmode .desk, .app.focusmode .panes, .app.focusmode .pane { background: var(--w-paper); }
+.app.focusmode .paper .docfile { display: none; }
+/* typewriter scrolling (feature 38): room above and below, so any line can be in the middle */
+.app.typewriter .desk { padding-block: 48vh; }
+.app.typewriter .paper { min-height: 0; }
+/* fade the other paragraphs */
+.app.dim .prose .ProseMirror > * { opacity: 0.32; transition: opacity 0.25s; }
+.app.dim .prose .ProseMirror > .has-focus, .app.dim .prose .ProseMirror:not(.ProseMirror-focused) > * { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .app.dim .prose .ProseMirror > * { transition: none; } }
+.focusbar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 22; display: flex; align-items: center; gap: 6px;
+  background: var(--w-bar); border: 1px solid var(--w-line); border-radius: 22px; padding: 4px 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14);
+  font-size: 12.5px; color: var(--w-muted); opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+.focusbar.shown, .focusbar:hover, .focusbar:focus-within { opacity: 1; pointer-events: auto; }
+.focusbar .sep { width: 1px; height: 18px; background: var(--w-line); margin-inline: 4px; }
+.focusbar .fb-wc { font-variant-numeric: tabular-nums; padding-inline: 4px; }
+.focusbar .fb-toggle { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 6px; border-radius: var(--radius); color: var(--w-ink); }
+.focusbar .fb-toggle:hover { background: var(--w-soft); }
+.focusbar .ib { font-size: 12.5px; padding: 4px 8px; }
+@media (prefers-reduced-motion: reduce) { .focusbar { transition: none; } }
+
+/* stopping point (feature 32) */
+.stopdlg textarea { font: inherit; font-size: 14px; line-height: 1.6; color: var(--w-ink); background: var(--w-panel); border: 1px solid var(--w-line); border-radius: var(--radius); padding: 8px 10px; resize: vertical; }
+.stopdlg textarea:focus { outline: 2px solid var(--w-accent); outline-offset: -1px; }
+.body { position: relative; }
+.stopcard { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 12; width: min(460px, calc(100% - 40px)); background: var(--w-hl);
+  color: var(--w-ink); border-radius: var(--radius); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.16); padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 4px; animation: drawer-in 0.2s ease-out; }
+.stopcard .sc-h { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.stopcard .sc-h svg { color: var(--w-thread); }
+.stopcard .sc-when { color: var(--w-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stopcard .sc-note { font-family: var(--editor-font); font-size: 16px; line-height: 1.6; white-space: pre-wrap; }
+.stopcard .ib.icon { padding: 3px; }
+@media (prefers-reduced-motion: reduce) { .stopcard { animation: none; } }
+
+/* niqqud from the keyboard: the letter to press on each mark */
+.nq { position: relative; }
+.nq-key { position: absolute; top: 3px; inset-inline-start: 4px; font: 600 10.5px var(--w-ui); color: var(--w-accent); background: var(--w-soft); border-radius: 4px; padding: 0 3px; line-height: 1.5; }
+.nq.lit { background: var(--w-soft); border-color: var(--w-accent); box-shadow: inset 0 0 0 1px var(--w-accent); }

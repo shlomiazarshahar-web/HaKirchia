@@ -1,16 +1,22 @@
 // Writing preferences shared by every editor on screen: added fonts and Hebrew typography.
 // A tiny store, so the format bar, the settings dialog and the editors all see changes at once.
 import { useSyncExternalStore } from 'react'
-import type { CustomFont, Settings } from '@shared/types'
+import { DEFAULT_FOCUS, type CustomFont, type FocusSettings, type Settings } from '@shared/types'
 import { DEFAULT_TYPOGRAPHY, type TypographySettings } from '@shared/hebrew'
 import { api } from './api'
 
 interface Prefs {
   customFonts: CustomFont[]
   typography: TypographySettings
+  /** Focused writing mode settings (saved) */
+  focus: FocusSettings
+  /** Ask "what next?" when closing a book */
+  askStopNote: boolean
+  /** Right now: keep the line being written in the middle of the screen (focus mode is on and wants it) */
+  typewriterNow: boolean
 }
 
-let prefs: Prefs = { customFonts: [], typography: DEFAULT_TYPOGRAPHY }
+let prefs: Prefs = { customFonts: [], typography: DEFAULT_TYPOGRAPHY, focus: DEFAULT_FOCUS, askStopNote: true, typewriterNow: false }
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
 
@@ -43,7 +49,13 @@ async function registerFonts(list: CustomFont[]): Promise<void> {
 }
 
 export function initPrefs(s: Settings): void {
-  prefs = { customFonts: s.customFonts ?? [], typography: { ...DEFAULT_TYPOGRAPHY, ...s.typography } }
+  prefs = {
+    ...prefs,
+    customFonts: s.customFonts ?? [],
+    typography: { ...DEFAULT_TYPOGRAPHY, ...s.typography },
+    focus: { ...DEFAULT_FOCUS, ...s.focus },
+    askStopNote: s.askStopNote ?? true
+  }
   emit()
   void registerFonts(prefs.customFonts)
 }
@@ -58,4 +70,23 @@ export function setTypography(patch: Partial<TypographySettings>): void {
   prefs = { ...prefs, typography: { ...prefs.typography, ...patch } }
   emit()
   void api.setTypography(prefs.typography)
+}
+
+export function setFocusSettings(patch: Partial<FocusSettings>): void {
+  prefs = { ...prefs, focus: { ...prefs.focus, ...patch } }
+  emit()
+  void api.setFocusSettings(prefs.focus)
+}
+
+export function setAskStopNote(on: boolean): void {
+  prefs = { ...prefs, askStopNote: on }
+  emit()
+  void api.setAskStopNote(on)
+}
+
+/** Turned on by the app while focus mode is on with typewriter scrolling; read by every editor. */
+export function setTypewriterNow(on: boolean): void {
+  if (prefs.typewriterNow === on) return
+  prefs = { ...prefs, typewriterNow: on }
+  emit()
 }

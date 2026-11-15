@@ -74,3 +74,47 @@ describe('mixed text in Word files', () => {
     expect((await docxToDoc(bytes)).doc).toEqual(doc)
   })
 })
+
+import { NIQQUD_MARKS, hebrewLetterOf, keysFor, marksForLetter, nextNiqqud } from '../src/shared/hebrew'
+
+describe('niqqud from the keyboard', () => {
+  it('every mark has the first letter of its name', () => {
+    for (const m of NIQQUD_MARKS) expect(m.name.startsWith(m.letter)).toBe(true)
+  })
+  it('a letter types its first mark, the same letter again the next one', () => {
+    const a = nextNiqqud(null, 'ח')!
+    expect(a.mark.name).toBe('חיריק')
+    expect(a.replace).toBe(false)
+    const b = nextNiqqud(a.turn, 'ח')!
+    expect(b.mark.name).toBe('חולם')
+    expect(b.replace).toBe(true)
+    // goes round
+    let t = b.turn
+    for (let i = 0; i < marksForLetter('ח').length - 1; i++) t = nextNiqqud(t, 'ח')!.turn
+    expect(t.index).toBe(0)
+  })
+  it('another letter adds a mark (dagesh, then qamats)', () => {
+    const a = nextNiqqud(null, 'ד')!
+    const b = nextNiqqud(a.turn, 'ק')!
+    expect(b.mark.name).toBe('קמץ')
+    expect(b.replace).toBe(false)
+  })
+  it('a letter with one mark never stacks it twice', () => {
+    const a = nextNiqqud(null, 'ס')!
+    const b = nextNiqqud(a.turn, 'ס')!
+    expect(b.mark.name).toBe('סגול')
+    expect(b.replace).toBe(true)
+  })
+  it('letters with no mark do nothing', () => {
+    expect(nextNiqqud(null, 'ט')).toBeNull()
+  })
+  it('works with the keyboard in English too', () => {
+    expect(hebrewLetterOf('ס', 'KeyX')).toBe('ס')
+    expect(hebrewLetterOf('x', 'KeyX')).toBe('ס')
+    expect(hebrewLetterOf('1', 'Digit1')).toBeNull()
+  })
+  it('shows what to press', () => {
+    expect(keysFor(NIQQUD_MARKS.find((m) => m.name === 'חולם')!)).toBe('חח')
+    expect(keysFor(NIQQUD_MARKS.find((m) => m.name === 'צירה')!)).toBe('צ')
+  })
+})

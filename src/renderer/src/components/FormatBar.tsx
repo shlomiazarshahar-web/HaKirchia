@@ -5,7 +5,7 @@ import { EDITOR_FONTS, FONT_SIZES } from '../fonts'
 import { Icon } from './Icons'
 import type { Align } from '../editor'
 import { usePrefs } from '../prefs'
-import { FontPanel, NiqqudPanel, Popover } from './HebrewTools'
+import { FontPanel, NIQQUD_SHORTCUT, NiqqudPanel, Popover } from './HebrewTools'
 
 
 export function FormatBar({ editor }: { editor: Editor | null }) {
@@ -152,7 +152,7 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
         {s?.dir === 'ltr' ? 'LTR' : 'RTL'}
       </button>
       <span className="sep" />
-      <button ref={nqRef} className="ib" title="ניקוד, מקף, גרש וסימני כיוון" aria-pressed={pop === 'niqqud'} onClick={() => setPop(pop === 'niqqud' ? null : 'niqqud')}>
+      <button ref={nqRef} className="ib" title={`ניקוד, מקף, גרש וסימני כיוון (${NIQQUD_SHORTCUT}, ואז האות הראשונה של שם הסימן)`} aria-pressed={pop === 'niqqud'} onClick={() => setPop(pop === 'niqqud' ? null : 'niqqud')}>
         <span className="nq-btn">נִקּוּד</span>
       </button>
       {pop === 'font' && (

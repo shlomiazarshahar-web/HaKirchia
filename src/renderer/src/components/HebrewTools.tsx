@@ -1,22 +1,43 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { SpellStatus } from '@shared/types'
-import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, type TypographySettings } from '@shared/hebrew'
+import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
 import { api } from '../api'
 import { EDITOR_FONTS } from '../fonts'
-import { setCustomFonts, setTypography, usePrefs } from '../prefs'
+import { setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
 
 /** A small panel under a toolbar button. Closes on Escape or a click outside. */
-export function Popover({ anchor, onClose, children, label, width = 300 }: { anchor: HTMLElement | null; onClose: () => void; children: ReactNode; label: string; width?: number }) {
+export function Popover({
+  anchor,
+  at,
+  onClose,
+  children,
+  label,
+  width = 300
+}: {
+  anchor: HTMLElement | null
+  /** instead of under a button: under this point of the screen (e.g. the cursor) */
+  at?: { x: number; y: number }
+  onClose: () => void
+  children: ReactNode
+  label: string
+  width?: number
+}) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   useEffect(() => {
+    if (at) {
+      const h = ref.current?.offsetHeight ?? 360
+      const top = at.y + h + 12 > window.innerHeight ? Math.max(8, at.y - h - 30) : at.y + 8
+      setPos({ top, left: Math.max(8, Math.min(window.innerWidth - width - 8, at.x - width / 2)) })
+      return
+    }
     if (!anchor) return
     const r = anchor.getBoundingClientRect()
     // the panel opens under the button, its right edge on the button's right edge (RTL)
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, r.right - width))
     setPos({ top: r.bottom + 6, left })
-  }, [anchor, width])
+  }, [anchor, at, width])
   useEffect(() => {
     const down = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node) && !anchor?.contains(e.target as Node)) onClose()
@@ -105,21 +126,75 @@ const MARKS_EXTRA = [
   { char: MAQAF, name: 'מקף עברי', show: MAQAF },
   { char: GERESH, name: 'גרש', show: GERESH },
   { char: GERSHAYIM, name: 'גרשיים', show: GERSHAYIM },
-  { char: '‏', name: 'סימן כיוון ימין לשמאל (RLM), עוזר כשסימן פיסוק נדחק לצד הלא נכון', show: 'RLM' },
-  { char: '‎', name: 'סימן כיוון שמאל לימין (LRM)', show: 'LRM' }
+  { char: '\u200F', name: 'סימן כיוון ימין לשמאל (RLM), עוזר כשסימן פיסוק נדחק לצד הלא נכון', show: 'RLM' },
+  { char: '\u200E', name: 'סימן כיוון שמאל לימין (LRM)', show: 'LRM' }
 ]
 
-/** Niqqud marks: a click adds the mark to the letter before the cursor. */
-export function NiqqudPanel({ editor }: { editor: Editor }) {
+/** The keyboard shortcut that opens the niqqud panel at the cursor */
+export const NIQQUD_SHORTCUT = 'Ctrl+Shift+נ'
+
+/**
+ * Niqqud marks: a click adds the mark to the letter before the cursor. Opened from the keyboard
+ * (keyboard = true), the first letter of a mark's name types it: ס → סגול. Pressing the same letter
+ * again swaps the mark for the next one with that letter (ח → חיריק, ח → חולם, ח → חטף פתח...).
+ * Esc, Enter, a space or any other key closes the panel (that key is typed as usual).
+ */
+export function NiqqudPanel({ editor, keyboard = false, onClose }: { editor: Editor; keyboard?: boolean; onClose?: () => void }) {
   const add = (c: string) => editor.chain().focus().insertContent(c).run()
+  const [turn, setTurn] = useState<NiqqudTurn | null>(null)
+  const last = useRef<{ turn: NiqqudTurn; pos: number } | null>(null)
+  const close = useRef(onClose)
+  close.current = onClose
+
+  useEffect(() => {
+    if (!keyboard) return
+    const down = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      if (['Shift', 'CapsLock'].includes(e.key)) return
+      const letter = hebrewLetterOf(e.key, e.code)
+      const step = letter ? nextNiqqud(last.current && last.current.pos === editor.state.selection.head ? last.current.turn : null, letter) : null
+      if (!step) {
+        // any other key closes the panel; Esc is only for closing, the rest are typed as usual
+        if (e.key === 'Escape') e.preventDefault()
+        e.stopPropagation()
+        close.current?.()
+        return
+      }
+      e.preventDefault()
+      e.stopPropagation()
+      const { state } = editor
+      const head = state.selection.head
+      let chain = editor.chain().focus()
+      if (step.replace && head > 1) chain = chain.deleteRange({ from: head - 1, to: head })
+      chain.insertContent(step.mark.char).run()
+      last.current = { turn: step.turn, pos: editor.state.selection.head }
+      setTurn(step.turn)
+    }
+    window.addEventListener('keydown', down, true)
+    return () => window.removeEventListener('keydown', down, true)
+  }, [keyboard, editor])
+
+  const lit = turn ? NIQQUD_MARKS.filter((m) => m.letter === turn.letter)[turn.index] : null
   return (
     <div className="nqpanel">
       <div className="lp-h">ניקוד</div>
-      <div className="lp-note">מקלידים אות, ואז לוחצים על הסימן כדי להוסיף אותו לאות שלפני הסמן.</div>
+      <div className="lp-note">
+        {keyboard
+          ? 'מקלידים את האות הראשונה של שם הסימן (ס = סגול). אותה אות שוב מחליפה לסימן הבא באותה אות. Esc סוגר.'
+          : `מקלידים אות, ואז לוחצים על הסימן כדי להוסיף אותו לאות שלפני הסמן. מהמקלדת: ${NIQQUD_SHORTCUT}.`}
+      </div>
       <div className="nq-grid">
         {NIQQUD_MARKS.map((m) => (
-          <button key={m.char} className="nq" title={m.name} aria-label={m.name} onMouseDown={(e) => e.preventDefault()} onClick={() => add(m.char)}>
-            <span className="nq-glyph">{(m.char === 'ׁ' || m.char === 'ׂ' ? 'ש' : 'ב') + m.char}</span>
+          <button
+            key={m.char}
+            className={`nq${lit === m ? ' lit' : ''}`}
+            title={`${m.name} (במקלדת: ${keysFor(m)})`}
+            aria-label={m.name}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => add(m.char)}
+          >
+            <kbd className="nq-key">{keysFor(m)}</kbd>
+            <span className="nq-glyph">{(m.char === '\u05C1' || m.char === '\u05C2' ? 'ש' : 'ב') + m.char}</span>
             <span className="nq-name">{m.name}</span>
           </button>
         ))}
@@ -140,6 +215,23 @@ export function NiqqudPanel({ editor }: { editor: Editor }) {
   )
 }
 
+/** The niqqud panel opened from the keyboard, right under the cursor. */
+export function NiqqudAtCursor({ editor, onClose }: { editor: Editor; onClose: () => void }) {
+  const at = useMemo(() => {
+    try {
+      const c = editor.view.coordsAtPos(editor.state.selection.head)
+      return { x: c.left, y: c.bottom }
+    } catch {
+      return { x: window.innerWidth / 2, y: 120 }
+    }
+  }, [editor])
+  return (
+    <Popover anchor={null} at={at} label="ניקוד" width={318} onClose={onClose}>
+      <NiqqudPanel editor={editor} keyboard onClose={onClose} />
+    </Popover>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Writing settings (Hebrew typography, spelling, added fonts)
 // ---------------------------------------------------------------------------
@@ -152,7 +244,7 @@ const RULES: { key: Exclude<keyof TypographySettings, 'quotes'>; label: string; 
 ]
 
 export function WritingSettings({ onClose }: { onClose: () => void }) {
-  const { typography: t, customFonts } = usePrefs()
+  const { typography: t, customFonts, askStopNote: askStop } = usePrefs()
   const [spell, setSpell] = useState<SpellStatus | null>(null)
   const [word, setWord] = useState('')
   useEffect(() => {
@@ -220,6 +312,15 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
               </span>
             ))}
           </div>
+        </section>
+
+        <section>
+          <h3>נקודת עצירה</h3>
+          <label className="set-row">
+            <input type="checkbox" checked={askStop} onChange={(e) => setAskStopNote(e.target.checked)} />
+            <span>לשאול "מה הלאה?" כשסוגרים ספר</span>
+          </label>
+          <p className="lp-note">המקום שבו עצרת נשמר תמיד, וכשפותחים את הספר שוב הסמן חוזר אליו.</p>
         </section>
 
         <section>
