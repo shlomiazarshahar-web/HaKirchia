@@ -15,6 +15,10 @@ import '@fontsource/heebo/700.css'
 import '@fontsource/assistant/400.css'
 import '@fontsource/assistant/600.css'
 import '@fontsource/assistant/700.css'
+import '@fontsource/rubik/400.css'
+import '@fontsource/rubik/700.css'
+import '@fontsource/bellefair/400.css'
+import '@fontsource/secular-one/400.css'
 
 export const EDITOR_FONTS = [
   'Frank Ruhl Libre',
@@ -23,6 +27,9 @@ export const EDITOR_FONTS = [
   'Miriam Libre',
   'Alef',
   'Heebo',
-  'Assistant'
+  'Assistant',
+  'Rubik',
+  'Bellefair',
+  'Secular One'
 ]
 export const FONT_SIZES = [10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32]

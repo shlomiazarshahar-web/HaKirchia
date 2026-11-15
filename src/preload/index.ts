@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PaneLayout } from '../shared/panes'
-import type { Book, ChapterStatus, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, Theme } from '../shared/types'
+import type { Book, ChapterStatus, CustomFont, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
+import type { TypographySettings } from '../shared/hebrew'
 
 const api = {
   platform: process.platform,
@@ -13,6 +14,18 @@ const api = {
     webFrame.setZoomFactor(zoom)
     return ipcRenderer.invoke('settings:zoom', zoom)
   },
+  setTypography: (t: TypographySettings): Promise<void> => ipcRenderer.invoke('settings:typography', t),
+  /** Font families installed in Windows */
+  systemFonts: (): Promise<string[]> => ipcRenderer.invoke('fonts:system'),
+  addSystemFont: (family: string): Promise<CustomFont[]> => ipcRenderer.invoke('fonts:addSystem', family),
+  /** Asks for a font file (ttf/otf/woff) and adds it. value is null when cancelled. */
+  addFontFile: (): Promise<OpResult<{ fonts: CustomFont[]; family: string } | null>> => ipcRenderer.invoke('fonts:addFile'),
+  readFontFile: (file: string): Promise<Uint8Array | null> => ipcRenderer.invoke('fonts:read', file),
+  removeFont: (family: string): Promise<CustomFont[]> => ipcRenderer.invoke('fonts:remove', family),
+  spellStatus: (): Promise<SpellStatus> => ipcRenderer.invoke('spell:status'),
+  setSpellcheck: (on: boolean): Promise<SpellStatus> => ipcRenderer.invoke('spell:enable', on),
+  addDictionaryWord: (word: string): Promise<SpellStatus> => ipcRenderer.invoke('spell:add', word),
+  removeDictionaryWord: (word: string): Promise<SpellStatus> => ipcRenderer.invoke('spell:remove', word),
   listLibrary: (): Promise<RecentBook[]> => ipcRenderer.invoke('library:list'),
   forgetBook: (path: string): Promise<void> => ipcRenderer.invoke('library:forget', path),
   chooseFolder: (purpose: 'parent' | 'open'): Promise<string | null> => ipcRenderer.invoke('dialog:chooseFolder', purpose),

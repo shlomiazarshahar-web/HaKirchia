@@ -8,6 +8,7 @@
 import JSZip from 'jszip'
 import { DOMParser } from '@xmldom/xmldom'
 import type { PMMark, PMNode } from './types'
+import { splitByDirection } from './hebrew'
 
 export const DEFAULT_FONT = 'Frank Ruhl Libre'
 export const DEFAULT_SIZE_PT = 14
@@ -91,14 +92,18 @@ function runProps(marks: PMMark[] | undefined, rtl: boolean): string {
 }
 
 function textRuns(text: string, marks: PMMark[] | undefined, paraRtl: boolean): string {
-  const rtl = paraRtl ? !(guessDir(text) === 'ltr') : HEBREW_RE.test(text)
-  const rPr = runProps(marks, rtl)
-  // Tabs become <w:tab/> inside the run
-  const parts = text.split('\t')
-  const inner = parts
-    .map((t, i) => (i > 0 ? '<w:tab/>' : '') + (t ? `<w:t xml:space="preserve">${esc(t)}</w:t>` : ''))
+  // Mixed Hebrew and English: a run per direction, so Word lays out each piece correctly
+  return splitByDirection(text, paraRtl)
+    .map(({ text: piece, rtl }) => {
+      const rPr = runProps(marks, rtl)
+      // Tabs become <w:tab/> inside the run
+      const inner = piece
+        .split('\t')
+        .map((t, i) => (i > 0 ? '<w:tab/>' : '') + (t ? `<w:t xml:space="preserve">${esc(t)}</w:t>` : ''))
+        .join('')
+      return `<w:r>${rPr}${inner}</w:r>`
+    })
     .join('')
-  return `<w:r>${rPr}${inner}</w:r>`
 }
 
 function jcFor(align: Align, dir: Dir): string | null {
