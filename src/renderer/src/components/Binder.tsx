@@ -4,6 +4,7 @@ import { moveNode, updatePart, type Dragged, type DropTarget } from '@shared/out
 import type { OutlineNode } from '@shared/types'
 import { Icon } from './Icons'
 import { CHAPTER_DRAG_TYPE } from '@shared/panes'
+import { MASTER_LABEL } from '../labels'
 
 interface Props {
   book: Book
@@ -208,7 +209,7 @@ export function Binder(props: Props) {
           onKeyDown={(e) => e.key === 'Enter' && onMaster()}
         >
           <Icon name="master" />
-          <span className="name">{book.title} · מאסטר</span>
+          <span className="name">{MASTER_LABEL}</span>
         </div>
       </div>
       <div className="bsec">

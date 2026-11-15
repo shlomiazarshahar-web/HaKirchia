@@ -3,12 +3,13 @@ import type { Editor } from '@tiptap/react'
 import type { Book, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
-import { addPane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, type PaneLayout } from '@shared/panes'
+import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, type PaneLayout } from '@shared/panes'
+import { MASTER_LABEL } from './labels'
 import { api, flushAll } from './api'
 import { IconSprite, Icon } from './components/Icons'
 import { Home } from './components/Home'
 import { Binder } from './components/Binder'
-import { ChapterEditor, type SaveState } from './components/ChapterEditor'
+import { type SaveState } from './components/ChapterEditor'
 import { MasterView } from './components/MasterView'
 import { CorkBoard } from './components/CorkBoard'
 import { SplitView } from './components/SplitView'
@@ -20,9 +21,10 @@ import appIcon from './assets/icon.png'
 type Toast = { text: string; error?: boolean } | null
 type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
-type View = 'write' | 'master' | 'split' | 'board'
+type View = 'write' | 'master' | 'board'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
+const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6]
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>('light')
@@ -39,10 +41,14 @@ export default function App() {
   const [dialog, setDialog] = useState<Dialog>(null)
   const [menu, setMenu] = useState<Menu>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
-  /** Split screen: the panes, and the one in focus (by its stable key) */
+  /** Writing view: its panes (one, or 2–3 side by side), and the one in focus (by its stable key) */
   const [split, setSplit] = useState<PaneLayout | null>(null)
   const [focusKey, setFocusKey] = useState('')
+  /** With more than one pane, "על הפרק" is hidden and opens on demand as a side panel */
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [zoom, setZoomState] = useState(1)
   const splitSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savedLayouts = useRef<Record<string, PaneLayout>>({})
   const lastChapter = useRef<Record<string, string>>({})
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -58,6 +64,11 @@ export default function App() {
     api.getSettings().then((s) => {
       setTheme(s.theme)
       lastChapter.current = s.lastChapter ?? {}
+      savedLayouts.current = s.splitLayout ?? {}
+      if (s.zoom && s.zoom !== 1) {
+        setZoomState(s.zoom)
+        void api.setZoom(s.zoom)
+      }
     })
     void refreshLibrary()
     api.onFlushBeforeClose(flushAll)
@@ -78,8 +89,14 @@ export default function App() {
     setBook(b)
     setView('write')
     setMasterFocusId(null)
+    setInspectorOpen(false)
     const last = lastChapter.current[b.path]
-    setActiveId(b.chapters.some((c) => c.id === last) ? last : (b.chapters[0]?.id ?? null))
+    const active = b.chapters.some((c) => c.id === last) ? last : (b.chapters[0]?.id ?? null)
+    setActiveId(active)
+    // The panes as they were last left in this book, or just the chapter being written
+    const l = normalizeLayout(savedLayouts.current[b.path], b, active)
+    setSplit(l)
+    setFocusKey((l.panes.find((p) => p.content.kind === 'chapter' && p.content.id === active) ?? l.panes[0]).key)
   }
 
   const openBook = async (path: string) => {
@@ -107,34 +124,38 @@ export default function App() {
     await flushAll()
     setEditor(null)
     setMasterFocusId(null)
-    if (v === 'split') {
-      // The panes as they were last left in this book, or the chapter being written + the next one
-      const s = await api.getSettings()
-      const l = normalizeLayout(s.splitLayout?.[book.path], book, activeId)
-      const keep = l.panes.find((p) => p.content.kind === 'chapter' && p.content.id === activeId) ?? l.panes[0]
-      setSplit(l)
-      setFocusKey(keep.key)
-    }
     setView(v)
   }
 
-  /** Changes the split screen. Saved (a moment later) so it opens the same way next time. */
+  /** Changes the panes of the writing view. Saved (a moment later) so the book opens the same way next time. */
   const updateSplit = (l: PaneLayout) => {
     if (!book) return
     setSplit(l)
     if (!l.panes.some((p) => p.key === focusKey)) setFocusKey(l.panes[0].key)
     const path = book.path
+    savedLayouts.current[path] = l
     if (splitSaveTimer.current) clearTimeout(splitSaveTimer.current)
     splitSaveTimer.current = setTimeout(() => void api.setSplitLayout(path, l), 400)
   }
 
-  /** Split screen: shows a chapter in the pane in focus, or (if that pane is the master) next to it. */
+  const focusPane = (key: string) => {
+    if (!split) return
+    setFocusKey(key)
+    const p = split.panes.find((x) => x.key === key)
+    if (p?.content.kind === 'chapter' && book) {
+      setActiveId(p.content.id)
+      lastChapter.current[book.path] = p.content.id
+      void api.setLastChapter(book.path, p.content.id)
+    }
+  }
+
+  /** Shows a chapter in the pane in focus. If that pane shows the whole book, the chapter opens next to it. */
   const showInSplit = (id: string, fromMaster = false) => {
     if (!book || !split) return
     let l = split
     let i = l.panes.findIndex((p) => p.key === focusKey)
     if (i < 0) i = 0
-    if (fromMaster || l.panes[i].content.kind === 'master') {
+    if (l.panes.length > 1 && (fromMaster || l.panes[i].content.kind === 'master')) {
       const other = l.panes.findIndex((p, j) => j !== i && p.content.kind === 'chapter')
       if (other >= 0) i = other
       else if (l.panes.length < MAX_PANES) {
@@ -150,6 +171,55 @@ export default function App() {
     void api.setLastChapter(book.path, id)
   }
 
+  const addPaneNow = () => {
+    if (!book || !split || split.panes.length >= MAX_PANES) return
+    if (view !== 'write') void switchView('write')
+    const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
+    const l = addPane(split, nextContent(split, book, i), i)
+    updateSplit(l)
+    focusPane(l.panes[i + 1].key)
+  }
+
+  const closeFocusedPane = () => {
+    if (!split || split.panes.length <= 1) return
+    const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
+    const l = closePane(split, i)
+    updateSplit(l)
+    focusPane(l.panes[Math.min(i, l.panes.length - 1)].key)
+  }
+
+  const setZoom = (z: number) => {
+    const v = Math.round(Math.min(ZOOMS[ZOOMS.length - 1], Math.max(ZOOMS[0], z)) * 100) / 100
+    setZoomState(v)
+    void api.setZoom(v)
+  }
+  const stepZoom = (dir: 1 | -1) => {
+    const i = ZOOMS.findIndex((z) => z >= zoom - 0.001)
+    const at = i < 0 ? ZOOMS.length - 1 : i
+    setZoom(ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, (ZOOMS[at] > zoom + 0.001 && dir === 1 ? at - 1 : at) + dir))])
+  }
+
+  // Keyboard shortcuts of the window. e.code, so they work with a Hebrew keyboard layout too.
+  const keys = useRef<(e: KeyboardEvent) => void>(() => {})
+  keys.current = (e: KeyboardEvent) => {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return
+    if (e.shiftKey && book && view === 'write') {
+      if (e.code === 'KeyN') return e.preventDefault(), addPaneNow()
+      if (e.code === 'KeyX') return e.preventDefault(), closeFocusedPane()
+      if (e.code === 'KeyI' && (split?.panes.length ?? 1) > 1) return e.preventDefault(), setInspectorOpen((o) => !o)
+    }
+    if (!e.shiftKey || e.code === 'Equal') {
+      if (e.code === 'Equal' || e.code === 'NumpadAdd') return e.preventDefault(), stepZoom(1)
+      if (e.code === 'Minus' || e.code === 'NumpadSubtract') return e.preventDefault(), stepZoom(-1)
+      if (e.code === 'Digit0' || e.code === 'Numpad0') return e.preventDefault(), setZoom(1)
+    }
+  }
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => keys.current(e)
+    window.addEventListener('keydown', h, true)
+    return () => window.removeEventListener('keydown', h, true)
+  }, [])
+
   // Chapters deleted (or the book changed): drop panes that showed them
   useEffect(() => {
     if (!book || !split) return
@@ -158,55 +228,42 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book?.chapters])
 
-  /** From the master: open one chapter in the writing view */
+  /** From the whole-book view: open one chapter in the writing view */
   const openChapter = async (id: string) => {
     if (!book) return
-    if (view === 'split') return showInSplit(id, true)
+    if (view === 'write') return showInSplit(id, true)
     await flushAll()
     setEditor(null)
     setView('write')
-    setActiveId(id)
-    lastChapter.current[book.path] = id
-    void api.setLastChapter(book.path, id)
+    showInSplit(id)
   }
 
   const selectChapter = async (id: string) => {
     if (!book) return
-    if (view === 'master') {
-      // In the master, a chapter in the binder jumps to its place in the text
+    const pane = split?.panes.find((p) => p.key === focusKey)
+    if (view === 'master' || (view === 'write' && split && split.panes.length > 1 && pane?.content.kind === 'master')) {
+      // In the whole book, a chapter in the binder jumps to its place in the text
       document.getElementById(`m-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       setMasterFocusId(id)
       return
     }
-    if (view === 'split' && split) {
-      const pane = split.panes.find((p) => p.key === focusKey)
-      if (pane?.content.kind === 'master') {
-        document.getElementById(`m-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        setMasterFocusId(id)
-        return
-      }
-      return showInSplit(id)
-    }
-    if (id === activeId) return
-    await flushAll()
-    setActiveId(id)
-    lastChapter.current[book.path] = id
-    void api.setLastChapter(book.path, id)
+    if (pane?.content.kind === 'chapter' && pane.content.id === id) return
+    showInSplit(id)
   }
 
   /** New chapter: at the end of the given part, or of the part of the chapter being written, or of the book. */
   const addChapter = async (partId?: string) => {
     if (!book) return
     await flushAll()
-    const inPart = partId ?? ((view === 'write' || view === 'split') && activeId ? partOf(book.outline, activeId)?.id : undefined)
+    const inPart = partId ?? (view === 'write' && activeId ? partOf(book.outline, activeId)?.id : undefined)
     const r = await api.addChapter(book.path, `פרק ${book.chapters.length + 1}`, inPart)
     if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי להוסיף פרק', true)
     if (r.notice) show(r.notice, true)
     if (inPart) r.value.book = withOutline(r.value.book, r.value.book.outline.map((n) => (n.type === 'part' && n.id === inPart ? { ...n, collapsed: false } : n)))
     setBook(r.value.book)
-    setActiveId(r.value.chapterId)
     setRenamingId(r.value.chapterId)
-    if (view === 'split') showInSplit(r.value.chapterId)
+    if (view === 'write') showInSplit(r.value.chapterId)
+    else setActiveId(r.value.chapterId)
     void api.setLastChapter(book.path, r.value.chapterId)
   }
 
@@ -296,16 +353,17 @@ export default function App() {
     return [book!.path, CHAPTERS_DIR, ch.file].join(sep)
   }
 
-  const active = book?.chapters.find((c) => c.id === activeId) ?? null
   const inMaster = !!book && view === 'master'
   const inBoard = !!book && view === 'board'
-  const inSplit = !!book && view === 'split' && !!split
-  const focusedPane = inSplit ? (split!.panes.find((p) => p.key === focusKey) ?? split!.panes[0]) : null
-  const splitChapter = focusedPane?.content.kind === 'chapter' ? (book!.chapters.find((c) => c.id === (focusedPane.content as { id: string }).id) ?? null) : null
-  const splitMaster = focusedPane?.content.kind === 'master'
-  const masterFocus = inMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
-  const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : active
+  const inWrite = !!book && view === 'write' && !!split
+  const multi = inWrite && split!.panes.length > 1
+  const focusedPane = inWrite ? (split!.panes.find((p) => p.key === focusKey) ?? split!.panes[0]) : null
+  const writeChapter = focusedPane?.content.kind === 'chapter' ? (book!.chapters.find((c) => c.id === (focusedPane.content as { id: string }).id) ?? null) : null
+  const writeMaster = focusedPane?.content.kind === 'master'
+  const masterFocus = inMaster || writeMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
+  const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : writeMaster ? (masterFocus ?? null) : writeChapter
   const overlay = api.platform === 'win32' || api.platform === 'linux'
+  const empty = !!book && book.chapters.length === 0
 
   return (
     <div className="app" data-mode={theme} data-overlay={overlay ? '1' : '0'} onClick={() => menu && setMenu(null)}>
@@ -316,7 +374,7 @@ export default function App() {
         {book && (
           <span className="crumb">
             {book.title}
-            {inMaster ? ' · מאסטר' : inBoard ? ' · לוח שעם' : inSplit ? ` · מסך מפוצל${splitChapter ? ` · ${splitChapter.title}` : ''}` : active ? ` · ${active.title}` : ''}
+            {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · לוח שעם' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
           </span>
         )}
       </div>
@@ -336,11 +394,7 @@ export default function App() {
               </button>
               <button className="tab" role="tab" aria-selected={view === 'master'} title="כל הפרקים ברצף" onClick={() => switchView('master')}>
                 <Icon name="master" />
-                מאסטר
-              </button>
-              <button className="tab" role="tab" aria-selected={view === 'split'} title="שניים או שלושה חלונות זה לצד זה" onClick={() => switchView('split')}>
-                <Icon name="split" />
-                מפוצל
+                {MASTER_LABEL}
               </button>
               <button className="tab" role="tab" aria-selected={view === 'board'} title="כרטיס לכל פרק, עם תקציר וסטטוס" onClick={() => switchView('board')}>
                 <Icon name="grid" />
@@ -354,20 +408,24 @@ export default function App() {
           </>
         )}
         <span className="grow" />
-        {inSplit && (
-          <button
-            className="ib"
-            title={split!.panes.length >= MAX_PANES ? 'אפשר עד שלושה חלונות' : 'חלון נוסף לצד החלונות הפתוחים'}
-            disabled={split!.panes.length >= MAX_PANES}
-            onClick={() => {
-              const l = addPane(split!, nextContent(split!, book!))
-              updateSplit(l)
-              setFocusKey(l.panes[l.panes.length - 1].key)
-            }}
-          >
-            <Icon name="pane-plus" />
-            חלון נוסף
-          </button>
+        {inWrite && !empty && (
+          <>
+            {multi && (
+              <button className="ib" data-drawer-toggle aria-pressed={inspectorOpen} title="פרטי הפרק: סטטוס, תקציר והערות (Ctrl+Shift+I)" onClick={() => setInspectorOpen((o) => !o)}>
+                <Icon name="info" />
+                על הפרק
+              </button>
+            )}
+            <button
+              className="ib"
+              title={split!.panes.length >= MAX_PANES ? 'אפשר עד שלושה חלונות' : 'עוד חלון לצד החלון הפעיל (Ctrl+Shift+N)'}
+              disabled={split!.panes.length >= MAX_PANES}
+              onClick={addPaneNow}
+            >
+              <Icon name="pane-plus" />
+              חלון נוסף
+            </button>
+          </>
         )}
       </div>
 
@@ -395,9 +453,9 @@ export default function App() {
           <>
             <Binder
               book={book}
-              activeId={inSplit ? (splitChapter?.id ?? null) : activeId}
-              masterActive={inMaster || splitMaster}
-              onMaster={() => (inSplit ? updateSplit(setPaneContent(split!, split!.panes.indexOf(focusedPane!), { kind: 'master' })) : switchView('master'))}
+              activeId={inWrite ? (writeChapter?.id ?? null) : activeId}
+              masterActive={inMaster || (multi && writeMaster)}
+              onMaster={() => (multi ? updateSplit(setPaneContent(split!, split!.panes.indexOf(focusedPane!), { kind: 'master' })) : switchView('master'))}
               renamingId={renamingId}
               onSelect={selectChapter}
               onAdd={() => addChapter()}
@@ -408,29 +466,7 @@ export default function App() {
               onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })}
               onPartMenu={(part, x, y) => setMenu({ part, x, y })}
             />
-            {inSplit ? (
-              <SplitView
-                book={book}
-                layout={split!}
-                focusKey={focusedPane!.key}
-                renamingId={renamingId}
-                onLayout={updateSplit}
-                onFocusPane={(k) => {
-                  if (k === focusKey) return
-                  setFocusKey(k)
-                  const p = split!.panes.find((x) => x.key === k)
-                  if (p?.content.kind === 'chapter') setActiveId(p.content.id)
-                }}
-                onEditor={setEditor}
-                onRelease={(e) => setEditor((cur) => (cur === e ? null : cur))}
-                onRename={renameChapter}
-                onMasterFocus={setMasterFocusId}
-                onOpenFromMaster={openChapter}
-                onWords={setWords}
-                onSaveState={setSaveState}
-                onError={(m) => show(m, true)}
-              />
-            ) : inMaster ? (
+            {inMaster ? (
               <MasterView
                 key={book.path}
                 book={book}
@@ -442,17 +478,22 @@ export default function App() {
                 onSaveState={setSaveState}
                 onError={(m) => show(m, true)}
               />
-            ) : active ? (
-              <ChapterEditor
-                key={`${book.path}|${active.id}`}
+            ) : inWrite && !empty ? (
+              <SplitView
                 book={book}
-                chapter={active}
+                layout={split!}
+                focusKey={focusedPane!.key}
+                renamingId={renamingId}
+                onLayout={updateSplit}
+                onFocusPane={(k) => k !== focusKey && focusPane(k)}
                 onEditor={setEditor}
+                onRelease={(e) => setEditor((cur) => (cur === e ? null : cur))}
+                onRename={renameChapter}
+                onMasterFocus={setMasterFocusId}
+                onOpenFromMaster={openChapter}
                 onWords={setWords}
                 onSaveState={setSaveState}
                 onError={(m) => show(m, true)}
-                onRename={(t) => renameChapter(active.id, t)}
-                autoFocus={renamingId !== active.id}
               />
             ) : (
               <main className="desk">
@@ -466,47 +507,58 @@ export default function App() {
                 </article>
               </main>
             )}
-            {inspected && !inSplit && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
+            {inspected && !multi && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
+            {inspected && multi && inspectorOpen && (
+              <InspectorDrawer onClose={() => setInspectorOpen(false)}>
+                <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />
+              </InspectorDrawer>
+            )}
           </>
         )}
       </div>
 
       <div className="statusbar">
-        {book && !inBoard && (inMaster || inSplit ? book.chapters.length > 0 : active) && (
+        {book && !inBoard && !empty && (
           <span className={`saved ${saveState}`}>
             <i />
             <span>{SAVE_LABEL[saveState]}</span>
           </span>
         )}
-        {inMaster ? (
+        {(inMaster || writeMaster) && !empty ? (
           masterFocus ? (
             <span>
-              עורך במאסטר ← <span className="fname">{masterFocus.file}</span>
+              עורך את <span className="fname">{masterFocus.file}</span>
             </span>
           ) : (
-            <span>מאסטר · {book!.chapters.length} קבצים מקושרים</span>
-          )
-        ) : inSplit ? (
-          splitChapter ? (
-            <span className="fname">{splitChapter.file}</span>
-          ) : (
-            <span>מאסטר · {book!.chapters.length} קבצים מקושרים</span>
+            <span>
+              {MASTER_LABEL} · {book!.chapters.length} קבצים מקושרים
+            </span>
           )
         ) : inBoard ? (
-          <span>לוח שעם · לחיצה כפולה על כרטיס פותחת את הפרק, על השם משנה אותו</span>
+          <span>לוח שעם · לחיצה כפולה על כרטיס פותחת את הפרק, לחיצה על השם משנה אותו</span>
         ) : (
-          book && active && <span className="fname">{active.file}</span>
+          writeChapter && <span className="fname">{writeChapter.file}</span>
         )}
         <span className="grow" />
-        {inSplit && <span className="wc">{words.toLocaleString('he-IL')} מילים {splitMaster ? 'בספר' : 'בפרק'}</span>}
-        {(inMaster || inBoard) && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
-        {book && view === 'write' && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
+        {(inMaster || inBoard || writeMaster) && !empty && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {writeChapter && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
         {book && (
           <span>
             {book.chapters.length} פרקים
             {parts(book.outline).length > 0 && ` · ${parts(book.outline).length} חלקים`}
           </span>
         )}
+        <span className="zoom" role="group" aria-label="גודל התצוגה">
+          <button className="ib icon" title="הקטנה (Ctrl+מינוס)" aria-label="הקטנת התצוגה" disabled={zoom <= ZOOMS[0]} onClick={() => stepZoom(-1)}>
+            <Icon name="minus" />
+          </button>
+          <button className="ib zval" title="חזרה ל-100% (Ctrl+0)" onClick={() => setZoom(1)}>
+            {Math.round(zoom * 100)}%
+          </button>
+          <button className="ib icon" title="הגדלה (Ctrl+פלוס)" aria-label="הגדלת התצוגה" disabled={zoom >= ZOOMS[ZOOMS.length - 1]} onClick={() => stepZoom(1)}>
+            <Icon name="plus" />
+          </button>
+        </span>
         <button className="ib" title={theme === 'light' ? 'מצב כהה' : 'מצב בהיר'} onClick={toggleTheme}>
           <Icon name={theme === 'light' ? 'moon' : 'sun'} />
         </button>
@@ -602,6 +654,33 @@ export default function App() {
           {toast.text}
         </div>
       )}
+    </div>
+  )
+}
+
+/** "על הפרק" as a side panel over the panes. Closes by itself on a click outside it, or with Esc. */
+function InspectorDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (ref.current && !ref.current.contains(t) && !t.closest('[data-drawer-toggle]')) onClose()
+    }
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    // a moment later, so the click that opened the panel does not close it again
+    const t = setTimeout(() => {
+      window.addEventListener('mousedown', down, true)
+      window.addEventListener('keydown', key)
+    })
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('mousedown', down, true)
+      window.removeEventListener('keydown', key)
+    }
+  }, [onClose])
+  return (
+    <div className="drawer" ref={ref} role="complementary" aria-label="על הפרק">
+      {children}
     </div>
   )
 }

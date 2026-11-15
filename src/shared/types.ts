@@ -83,6 +83,8 @@ export interface Settings {
   defaultFolder?: string
   /** Split screen panes per book path, as they were last left */
   splitLayout?: Record<string, PaneLayout>
+  /** Size of the whole interface (1 = 100%) */
+  zoom?: number
 }
 
 export const STATUS_LABELS: Record<ChapterStatus, string> = {

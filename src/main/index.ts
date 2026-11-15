@@ -90,6 +90,9 @@ function registerIpc(): void {
   ipcMain.handle('settings:lastChapter', (_e, bookPath: string, chapterId: string) => {
     updateSettings({ lastChapter: { ...getSettings().lastChapter, [bookPath]: chapterId } })
   })
+  ipcMain.handle('settings:zoom', (_e, zoom: number) => {
+    updateSettings({ zoom })
+  })
   ipcMain.handle('settings:splitLayout', (_e, bookPath: string, layout: PaneLayout) => {
     updateSettings({ splitLayout: { ...getSettings().splitLayout, [bookPath]: layout } })
   })

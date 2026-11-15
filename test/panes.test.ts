@@ -8,10 +8,9 @@ const kinds = (l: PaneLayout) => l.panes.map((p) => (p.content.kind === 'chapter
 const sum = (w: number[]) => w.reduce((a, b) => a + b, 0)
 
 describe('panes', () => {
-  it('starts with the active chapter next to the following one', () => {
-    expect(kinds(defaultLayout(book, 'b'))).toEqual(['b', 'c'])
-    expect(kinds(defaultLayout(book, 'c'))).toEqual(['c', 'b'])
-    expect(kinds(defaultLayout({ ...book, chapters: [ch('a')] }, 'a'))).toEqual(['a', 'M'])
+  it('starts with one pane: the chapter being written', () => {
+    expect(kinds(defaultLayout(book, 'b'))).toEqual(['b'])
+    expect(kinds(defaultLayout(book, 'zz'))).toEqual(['a'])
     expect(kinds(defaultLayout({ ...book, chapters: [] }, null))).toEqual(['M'])
   })
 
@@ -31,20 +30,22 @@ describe('panes', () => {
     expect(kinds(n)).toEqual(['M', 'a', 'b'])
     expect(n.widths[0]).toBeCloseTo(0.375)
     expect(sum(n.widths)).toBeCloseTo(1)
-    expect(kinds(normalizeLayout(undefined, book, 'a'))).toEqual(['a', 'b'])
+    expect(kinds(normalizeLayout(undefined, book, 'a'))).toEqual(['a'])
   })
 
-  it('adds up to three panes, the master first', () => {
-    let l = defaultLayout(book, 'a')
-    l = addPane(l, nextContent(l, book))
-    expect(kinds(l)).toEqual(['a', 'b', 'M'])
+  it('adds up to three panes: the next chapters, then the whole book', () => {
+    let l = defaultLayout(book, 'b')
+    l = addPane(l, nextContent(l, book, 0))
+    expect(kinds(l)).toEqual(['b', 'c'])
+    l = addPane(l, nextContent(l, book, 1))
+    expect(kinds(l)).toEqual(['b', 'c', 'a'])
     expect(l.widths.map((w) => +w.toFixed(3))).toEqual([0.333, 0.333, 0.333])
     expect(addPane(l, { kind: 'chapter', id: 'c' })).toBe(l)
-    expect(nextContent(l, book)).toEqual({ kind: 'chapter', id: 'c' })
+    expect(nextContent(l, book, 0)).toEqual({ kind: 'master' })
   })
 
   it('closes panes but never the last one', () => {
-    let l = addPane(defaultLayout(book, 'a'), { kind: 'master' })
+    let l = addPane(addPane(defaultLayout(book, 'a'), { kind: 'chapter', id: 'b' }), { kind: 'master' })
     l = closePane(l, 1)
     expect(kinds(l)).toEqual(['a', 'M'])
     expect(sum(l.widths)).toBeCloseTo(1)
@@ -53,7 +54,7 @@ describe('panes', () => {
   })
 
   it('changes what a pane shows; the master moves instead of opening twice', () => {
-    let l = addPane(defaultLayout(book, 'a'), { kind: 'master' })
+    let l = addPane(addPane(defaultLayout(book, 'a'), { kind: 'chapter', id: 'b' }), { kind: 'master' })
     l = setPaneContent(l, 0, { kind: 'chapter', id: 'c' })
     expect(kinds(l)).toEqual(['c', 'b', 'M'])
     const keys = l.panes.map((p) => p.key)
@@ -65,7 +66,7 @@ describe('panes', () => {
   })
 
   it('swaps panes and drags borders within limits', () => {
-    const l = defaultLayout(book, 'a')
+    const l = addPane(defaultLayout(book, 'a'), { kind: 'chapter', id: 'b' })
     expect(kinds(swapPanes(l, 0, 1))).toEqual(['b', 'a'])
     expect(resizeBorder([0.5, 0.5], 0, 0.1)).toEqual([0.6, 0.4])
     expect(resizeBorder([0.5, 0.5], 0, 0.9)).toEqual([0.8, 0.19999999999999996])

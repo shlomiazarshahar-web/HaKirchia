@@ -37,20 +37,11 @@ function fixWidths(widths: number[] | undefined, n: number): number[] {
   return widths.map((w) => w / sum)
 }
 
-/** First screen: the chapter being written next to the one after it (or the master). */
+/** First screen: one pane with the chapter being written (the writing view as it always was). */
 export function defaultLayout(book: Book, activeId: string | null): PaneLayout {
   const ids = book.chapters.map((c) => c.id)
   const first = activeId && ids.includes(activeId) ? activeId : ids[0]
-  if (!first) return { panes: [{ key: newPaneKey(), content: { kind: 'master' } }], widths: [1] }
-  const i = ids.indexOf(first)
-  const second = ids[i + 1] ?? ids[i - 1]
-  return {
-    panes: [
-      { key: newPaneKey(), content: { kind: 'chapter', id: first } },
-      { key: newPaneKey(), content: second ? { kind: 'chapter', id: second } : { kind: 'master' } }
-    ],
-    widths: evenWidths(2)
-  }
+  return { panes: [{ key: newPaneKey(), content: first ? { kind: 'chapter', id: first } : { kind: 'master' } }], widths: [1] }
 }
 
 /**
@@ -81,12 +72,20 @@ export function normalizeLayout(layout: PaneLayout | undefined, book: Book, acti
   return { panes, widths }
 }
 
-/** What a new pane shows: the master if it is not open yet, else the first chapter not on screen. */
-export function nextContent(layout: PaneLayout, book: Book): PaneContent {
-  if (!layout.panes.some((p) => p.content.kind === 'master')) return { kind: 'master' }
+/**
+ * What a new pane shows: the chapter after the one in focus (or before it) that is not on screen
+ * yet; if every chapter is open, the whole book.
+ */
+export function nextContent(layout: PaneLayout, book: Book, focused = 0): PaneContent {
   const open = new Set(layout.panes.flatMap((p) => (p.content.kind === 'chapter' ? [p.content.id] : [])))
-  const id = book.chapters.find((c) => !open.has(c.id))?.id ?? book.chapters[0]?.id
-  return id ? { kind: 'chapter', id } : { kind: 'master' }
+  const ids = book.chapters.map((c) => c.id)
+  const cur = layout.panes[focused]?.content
+  const at = cur?.kind === 'chapter' ? ids.indexOf(cur.id) : -1
+  const order = at < 0 ? ids : [...ids.slice(at + 1), ...ids.slice(0, at).reverse()]
+  const id = order.find((x) => !open.has(x))
+  if (id) return { kind: 'chapter', id }
+  if (!layout.panes.some((p) => p.content.kind === 'master')) return { kind: 'master' }
+  return ids[0] ? { kind: 'chapter', id: ids[0] } : { kind: 'master' }
 }
 
 /** Adds a pane after `after` (or at the end). The new pane takes an even share of the width. */

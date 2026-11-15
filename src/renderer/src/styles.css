@@ -281,8 +281,9 @@ body { background: #dde3e0; overflow: hidden; }
 .cpart.loose { font-weight: 500; font-size: 13px; color: var(--w-muted); border-bottom-style: dashed; }
 
 /* cork board: the chapter name is renamed with a double click */
-.card h4.rename-hint { cursor: text; border-radius: 4px; }
-.card h4.rename-hint:hover { background: color-mix(in srgb, var(--w-soft) 60%, transparent); }
+.card h4 .title { all: unset; display: block; width: 100%; box-sizing: border-box; cursor: text; border-radius: 4px; overflow-wrap: anywhere; }
+.card h4 .title:hover { background: color-mix(in srgb, var(--w-soft) 60%, transparent); }
+.card h4 .title:focus-visible { outline: 2px solid var(--w-accent); outline-offset: 1px; }
 
 /* split screen (feature 6): panes side by side with draggable borders */
 .panes { flex: 1; min-width: 0; display: flex; min-height: 0; background: var(--w-panel); }
@@ -295,17 +296,17 @@ body { background: #dde3e0; overflow: hidden; }
 .phead .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
 .phead .t > svg { color: var(--w-muted); }
 .pane.focused .phead .t > svg { color: var(--w-accent); }
-.phead .pfile { color: var(--w-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.phead .pstat { color: var(--w-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-variant-numeric: tabular-nums; }
 .phead .ib.icon { padding: 4px; }
 .ppick { min-width: 0; max-width: 60%; flex: 0 1 auto; font-weight: 600; color: var(--w-ink); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 4px; cursor: pointer; text-overflow: ellipsis; }
 .ppick:hover { border-color: var(--w-line); background: var(--w-paper); }
 .ppick:focus-visible { outline: 2px solid var(--w-accent); outline-offset: -1px; }
 .ppick option, .ppick optgroup { background: var(--w-paper); color: var(--w-ink); }
 .pbody { flex: 1; min-height: 0; display: flex; }
-.pbody > .desk { padding: 16px 14px 48px; }
-.pbody .paper { padding: 36px 44px 56px; }
-.pbody .paper .ch-title { font-size: 26px; margin-bottom: 18px; }
-.pbody .paper .docfile { display: none; }
+.pane:not(.bare) .pbody > .desk { padding: 16px 14px 48px; }
+.pane:not(.bare) .pbody .paper { padding: 36px 44px 56px; }
+.pane:not(.bare) .pbody .paper .ch-title { font-size: 26px; margin-bottom: 18px; }
+.pane:not(.bare) .pbody .paper .docfile { display: none; }
 .pane.drop::after { content: ''; position: absolute; inset: 0; border: 2px dashed var(--w-accent); background: color-mix(in srgb, var(--w-soft) 45%, transparent); pointer-events: none; }
 .pdrop { position: absolute; top: 46px; inset-inline: 16px; text-align: center; background: var(--w-accent); color: var(--w-on-accent); border-radius: var(--radius); padding: 8px; font-size: 13px; z-index: 3; pointer-events: none; }
 .prz { flex: none; width: 7px; margin-inline: -3px; position: relative; z-index: 2; cursor: col-resize; touch-action: none; }
@@ -314,7 +315,24 @@ body { background: #dde3e0; overflow: hidden; }
 .prz:focus-visible { outline: none; }
 .pslot > .pane { container-type: inline-size; }
 @container (max-width: 440px) {
-  .pbody > .desk { padding: 10px 8px 40px; }
-  .pbody .paper { padding: 24px 20px 40px; }
-  .pbody .paper .ch-title { font-size: 22px; }
+  .pane .pbody > .desk { padding: 10px 8px 40px; }
+  .pane .pbody .paper { padding: 24px 20px 40px; }
+  .pane .pbody .paper .ch-title { font-size: 22px; }
 }
+
+.masterbanner { transition: opacity 0.6s; }
+.masterbanner.fading { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .masterbanner { transition: none; } }
+
+/* "על הפרק" as a side panel (writing view with more than one pane) */
+.body { position: relative; }
+.drawer { position: absolute; inset-block: 0; inset-inline-end: 0; z-index: 15; display: flex; box-shadow: 8px 0 28px rgba(0, 0, 0, 0.16); animation: drawer-in 0.16s ease-out; }
+.drawer > .insp { height: 100%; }
+@keyframes drawer-in { from { transform: translateX(-16px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+
+/* interface size in the status bar */
+.statusbar .zoom { display: inline-flex; align-items: center; gap: 0; }
+.statusbar .zoom .ib.icon { padding: 3px; }
+.statusbar .zoom svg { width: 13px; height: 13px; }
+.statusbar .zoom .zval { padding: 2px 4px; font-variant-numeric: tabular-nums; min-width: 36px; justify-content: center; }

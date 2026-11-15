@@ -12,6 +12,7 @@ import { CHAPTER_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, 
 import { ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
 import { Icon } from './Icons'
+import { MASTER_LABEL } from '../labels'
 
 
 const WORST: SaveState[] = ['error', 'saving', 'dirty', 'saved']
@@ -39,6 +40,8 @@ interface Props {
 export function SplitView(props: Props) {
   const { book, layout, focusKey, onLayout, onFocusPane } = props
   const words = useRef(new Map<string, number>())
+  // words per pane, also kept in state so the pane headers show them
+  const [shown, setShown] = useState<Record<string, number>>({})
   const states = useRef(new Map<string, SaveState>())
   const byId = new Map(book.chapters.map((c) => [c.id, c]))
   const n = layout.panes.length
@@ -55,6 +58,7 @@ export function SplitView(props: Props) {
 
   const setWords = (key: string, w: number) => {
     words.current.set(key, w)
+    setShown((m) => (m[key] === w ? m : { ...m, [key]: w }))
     if (key === focusKey) props.onWords(w)
   }
   const setState = (key: string, s: SaveState) => {
@@ -72,6 +76,7 @@ export function SplitView(props: Props) {
           <PaneFrame
             key={pane.key}
             focused={focused && n > 1}
+            bare={n === 1}
             onFocus={() => onFocusPane(pane.key)}
             onDropChapter={(id) => {
               onLayout(setPaneContent(layout, i, { kind: 'chapter', id }))
@@ -81,7 +86,11 @@ export function SplitView(props: Props) {
               <>
                 <Icon name={c.kind === 'master' ? 'master' : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
-                {ch && <small className="pfile fname">{ch.file}</small>}
+                {shown[pane.key] !== undefined && (
+                  <small className="pstat" title={ch ? ch.file : undefined}>
+                    {shown[pane.key].toLocaleString('he-IL')} מילים{c.kind === 'master' ? ' בספר' : ''}
+                  </small>
+                )}
               </>
             }
             actions={
@@ -91,7 +100,7 @@ export function SplitView(props: Props) {
                     <Icon name="swap" />
                   </button>
                 )}
-                <button className="ib icon" title={n > 1 ? 'סגירת החלון' : 'זה החלון היחיד'} aria-label="סגירת החלון" disabled={n <= 1} onClick={() => onLayout(closePane(layout, i))}>
+                <button className="ib icon" title={n > 1 ? 'סגירת החלון (Ctrl+Shift+X)' : 'זה החלון היחיד'} aria-label="סגירת החלון" disabled={n <= 1} onClick={() => onLayout(closePane(layout, i))}>
                   <Icon name="close" />
                 </button>
               </>
@@ -165,7 +174,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
         onChange(v === 'master' ? { kind: 'master' } : { kind: 'chapter', id: v.slice(2) })
       }}
     >
-      <option value="master">{book.title} · מאסטר</option>
+      <option value="master">{MASTER_LABEL}</option>
       {loose.length > 0 && <optgroup label="פרקים">{loose}</optgroup>}
       {groups}
     </select>
@@ -177,6 +186,7 @@ export function PaneFrame({
   head,
   actions,
   focused,
+  bare = false,
   onFocus,
   onDropChapter,
   children
@@ -184,6 +194,8 @@ export function PaneFrame({
   head: ReactNode
   actions?: ReactNode
   focused: boolean
+  /** the only pane: no header bar, looks like the plain writing view */
+  bare?: boolean
   onFocus: () => void
   onDropChapter?: (id: string) => void
   children: ReactNode
@@ -192,7 +204,7 @@ export function PaneFrame({
   const accepts = (e: DragEvent) => !!onDropChapter && e.dataTransfer.types.includes(CHAPTER_DRAG_TYPE)
   return (
     <section
-      className={`pane${focused ? ' focused' : ''}${dropOn ? ' drop' : ''}`}
+      className={`pane${focused ? ' focused' : ''}${bare ? ' bare' : ''}${dropOn ? ' drop' : ''}`}
       onFocusCapture={onFocus}
       onMouseDown={onFocus}
       onDragOver={(e) => {
@@ -212,10 +224,12 @@ export function PaneFrame({
         if (id) onDropChapter!(id)
       }}
     >
-      <div className="phead">
-        <span className="t">{head}</span>
-        {actions}
-      </div>
+      {!bare && (
+        <div className="phead">
+          <span className="t">{head}</span>
+          {actions}
+        </div>
+      )}
       <div className="pbody">{children}</div>
       {dropOn && <div className="pdrop">שחררו כאן כדי לפתוח את הפרק בחלון הזה</div>}
     </section>
