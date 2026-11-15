@@ -5,6 +5,8 @@ import { Icon } from './Icons'
 interface Props {
   book: Book
   activeId: string | null
+  masterActive: boolean
+  onMaster: () => void
   renamingId: string | null
   onSelect: (id: string) => void
   onAdd: () => void
@@ -14,7 +16,7 @@ interface Props {
   onContextMenu: (ch: Chapter, x: number, y: number) => void
 }
 
-export function Binder({ book, activeId, renamingId, onSelect, onAdd, onRename, onStartRename, onReorder, onContextMenu }: Props) {
+export function Binder({ book, activeId, masterActive, onMaster, renamingId, onSelect, onAdd, onRename, onStartRename, onReorder, onContextMenu }: Props) {
   const [dragId, setDragId] = useState<string | null>(null)
   const [over, setOver] = useState<{ id: string; after: boolean } | null>(null)
 
@@ -35,7 +37,15 @@ export function Binder({ book, activeId, renamingId, onSelect, onAdd, onRename, 
   return (
     <nav className="binder" aria-label="עץ הספר">
       <div className="bsec">
-        <div className="bitem soon" title="קובץ המאסטר יגיע בפיצ'ר הבא">
+        <div
+          className={`bitem master${masterActive ? ' active' : ''}`}
+          role="button"
+          tabIndex={0}
+          aria-current={masterActive ? 'page' : undefined}
+          title="כל הפרקים ברצף, לפי הסדר בעץ"
+          onClick={onMaster}
+          onKeyDown={(e) => e.key === 'Enter' && onMaster()}
+        >
           <Icon name="master" />
           <span className="name">{book.title} · מאסטר</span>
         </div>
@@ -50,7 +60,7 @@ export function Binder({ book, activeId, renamingId, onSelect, onAdd, onRename, 
         {book.chapters.length === 0 && <div className="bempty">אין עדיין פרקים. הפלוס למעלה מוסיף פרק.</div>}
         {book.chapters.map((ch) => {
           const cls = ['bitem']
-          if (ch.id === activeId) cls.push('active')
+          if (ch.id === activeId && !masterActive) cls.push('active')
           if (ch.id === dragId) cls.push('dragging')
           if (over?.id === ch.id && dragId !== ch.id) cls.push(over.after ? 'over-after' : 'over-before')
           return (
@@ -59,7 +69,7 @@ export function Binder({ book, activeId, renamingId, onSelect, onAdd, onRename, 
               className={cls.join(' ')}
               role="button"
               tabIndex={0}
-              aria-current={ch.id === activeId ? 'page' : undefined}
+              aria-current={ch.id === activeId && !masterActive ? 'page' : undefined}
               draggable={renamingId !== ch.id}
               title={ch.file}
               onClick={() => onSelect(ch.id)}

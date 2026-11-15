@@ -12,6 +12,10 @@ import type { PMMark, PMNode } from './types'
 export const DEFAULT_FONT = 'Frank Ruhl Libre'
 export const DEFAULT_SIZE_PT = 14
 export const APP_MARKER = 'HaKirchia'
+/** First-line indent of body paragraphs, like printed books (1.5em at 14pt = 21pt). */
+export const FIRST_LINE_INDENT_TWIPS = 420
+/** Style for a body paragraph without the first-line indent (first after a heading, etc.) */
+export const FIRST_PARAGRAPH_STYLE = 'FirstParagraph'
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 
@@ -124,6 +128,20 @@ function paragraphXml(node: PMNode, styleId: string | null): string {
   return `<w:p><w:pPr>${pPr.join('')}</w:pPr>${runs}</w:p>`
 }
 
+const isCentered = (n: PMNode) => n.attrs?.textAlign === 'center'
+const hasText = (n: PMNode) => (n.content?.length ?? 0) > 0
+
+/**
+ * Book typesetting rule (the editor's CSS follows the same rule): a body paragraph gets a
+ * first-line indent only when it follows another, non-empty, non-centered body paragraph.
+ * So the first paragraph of a chapter, after a heading, after an empty line (scene break) or after
+ * a centered line like "* * *" starts flush, and centered paragraphs are never indented.
+ */
+export function isIndented(node: PMNode, prev: PMNode | undefined): boolean {
+  if (node.type !== 'paragraph' || isCentered(node)) return false
+  return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev)
+}
+
 function bodyXml(doc: PMNode, title: string): string {
   const out: string[] = []
   out.push(
@@ -132,8 +150,9 @@ function bodyXml(doc: PMNode, title: string): string {
       'Heading1'
     )
   )
+  let prev: PMNode | undefined
   for (const node of doc.content ?? []) {
-    if (node.type === 'paragraph') out.push(paragraphXml(node, null))
+    if (node.type === 'paragraph') out.push(paragraphXml(node, isIndented(node, prev) ? null : FIRST_PARAGRAPH_STYLE))
     else if (node.type === 'heading') {
       const level = Number(node.attrs?.level ?? 2)
       out.push(paragraphXml(node, level <= 2 ? 'Heading2' : 'Heading3'))
@@ -141,6 +160,7 @@ function bodyXml(doc: PMNode, title: string): string {
       // Unknown block (should not happen with our editor schema): keep its text
       for (const c of node.content) if (c.type === 'paragraph' || c.type === 'heading') out.push(paragraphXml(c, null))
     }
+    prev = node
   }
   return out.join('')
 }
@@ -161,9 +181,9 @@ function stylesXml(): string {
   const f = esc(DEFAULT_FONT)
   const sz = DEFAULT_SIZE_PT * 2
   const heading = (id: string, name: string, size: number, before: number, after: number, outline: number) =>
-    `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${before}" w:after="${after}"/><w:outlineLvl w:val="${outline}"/></w:pPr><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`
+    `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${before}" w:after="${after}"/><w:ind w:firstLine="0"/><w:outlineLvl w:val="${outline}"/></w:pPr><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
+<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
 }
 
 function coreXml(title: string): string {

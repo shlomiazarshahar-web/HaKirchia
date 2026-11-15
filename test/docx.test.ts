@@ -3,7 +3,7 @@ import { writeFileSync, mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
-import { docToDocx, docxToDoc, isOurFile, countWords, guessDir } from '../src/shared/docx'
+import { docToDocx, docxToDoc, isOurFile, countWords, guessDir, isIndented } from '../src/shared/docx'
 import type { PMNode } from '../src/shared/types'
 
 const sample: PMNode = {
@@ -80,6 +80,37 @@ describe('reading Word files we did not write', () => {
     expect(res.doc.content![1]).toMatchObject({ type: 'heading', attrs: { level: 2, dir: 'rtl', textAlign: 'left' } })
     expect(res.doc.content![2].content![0].text).toBe('תא')
     expect(await isOurFile(await zip.generateAsync({ type: 'uint8array' }))).toBe(false)
+  })
+})
+
+describe('book-style first-line indent', () => {
+  const p = (text: string, textAlign: string | null = null): PMNode => ({
+    type: 'paragraph',
+    attrs: { dir: 'rtl', textAlign },
+    content: text ? [{ type: 'text', text }] : undefined
+  })
+  const h: PMNode = { type: 'heading', attrs: { level: 2, dir: 'rtl', textAlign: null }, content: [{ type: 'text', text: 'כותרת' }] }
+  const doc: PMNode = { type: 'doc', content: [p('ראשונה'), p('שנייה'), h, p('אחרי כותרת'), p('מוזחת'), p(''), p('אחרי שורה ריקה'), p('* * *', 'center'), p('אחרי מרכוז'), p('מוזחת שוב')] }
+  const expected = [false, true, false, false, true, true, false, false, false, true]
+
+  it('indents a paragraph only when it follows another body paragraph', () => {
+    const got = doc.content!.map((n, i) => isIndented(n, doc.content![i - 1]))
+    expect(got).toEqual(expected)
+  })
+
+  it('writes the indent into the Word file and reads it back unchanged', async () => {
+    const JSZip = (await import('jszip')).default
+    const bytes = await docToDocx(doc, 'פרק')
+    const zip = await JSZip.loadAsync(bytes)
+    const styles = await zip.file('word/styles.xml')!.async('string')
+    expect(styles).toMatch(/w:styleId="Normal">.*?<w:ind w:firstLine="420"\/>/)
+    expect(styles).toMatch(/w:styleId="FirstParagraph">.*?<w:ind w:firstLine="0"\/>/)
+    const xml = await zip.file('word/document.xml')!.async('string')
+    const paras = xml.split('<w:p>').slice(2) // skip the text before the first paragraph and the chapter title
+    const flush = paras.map((x) => x.includes('<w:pStyle w:val="FirstParagraph"/>'))
+    const isPara = doc.content!.map((n) => n.type === 'paragraph')
+    expect(flush).toEqual(expected.map((ind, i) => isPara[i] && !ind))
+    expect((await docxToDoc(bytes)).doc).toEqual(doc)
   })
 })
 

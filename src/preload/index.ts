@@ -23,6 +23,14 @@ const api = {
   saveChapter: (bookPath: string, id: string, doc: PMNode): Promise<OpResult<void>> => ipcRenderer.invoke('chapter:save', bookPath, id, doc),
   showFile: (path: string): Promise<void> => ipcRenderer.invoke('shell:showFile', path),
   openInWord: (path: string): Promise<string> => ipcRenderer.invoke('shell:openInWord', path),
+  /** A chapter file was changed outside the app (e.g. saved in Word). Returns an unsubscribe function. */
+  onChapterDiskChanged: (fn: (bookPath: string, chapterId: string) => void) => {
+    const h = (_e: unknown, bookPath: string, chapterId: string) => fn(bookPath, chapterId)
+    ipcRenderer.on('chapter:disk-changed', h)
+    return () => {
+      ipcRenderer.removeListener('chapter:disk-changed', h)
+    }
+  },
   onFlushBeforeClose: (fn: () => Promise<void>) => {
     ipcRenderer.on('app:flush-before-close', async () => {
       try {

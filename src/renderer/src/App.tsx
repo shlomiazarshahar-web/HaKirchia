@@ -7,6 +7,7 @@ import { IconSprite, Icon } from './components/Icons'
 import { Home } from './components/Home'
 import { Binder } from './components/Binder'
 import { ChapterEditor, type SaveState } from './components/ChapterEditor'
+import { MasterView } from './components/MasterView'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
@@ -15,6 +16,7 @@ import appIcon from './assets/icon.png'
 type Toast = { text: string; error?: boolean } | null
 type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | null
 type Menu = { chapter: Chapter; x: number; y: number } | null
+type View = 'write' | 'master'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
 
@@ -23,6 +25,9 @@ export default function App() {
   const [books, setBooks] = useState<RecentBook[]>([])
   const [book, setBook] = useState<Book | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [view, setView] = useState<View>('write')
+  /** In the master: the chapter being edited (shown in the inspector and status bar) */
+  const [masterFocusId, setMasterFocusId] = useState<string | null>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
   const [words, setWords] = useState(0)
   const [saveState, setSaveState] = useState<SaveState>('saved')
@@ -63,6 +68,8 @@ export default function App() {
 
   const enterBook = (b: Book) => {
     setBook(b)
+    setView('write')
+    setMasterFocusId(null)
     const last = lastChapter.current[b.path]
     setActiveId(b.chapters.some((c) => c.id === last) ? last : (b.chapters[0]?.id ?? null))
   }
@@ -86,8 +93,35 @@ export default function App() {
     void refreshLibrary()
   }
 
+  const switchView = async (v: View) => {
+    if (v === view) return
+    // Save everything first, so the other view reads the files exactly as they are now
+    await flushAll()
+    setEditor(null)
+    setMasterFocusId(null)
+    setView(v)
+  }
+
+  /** From the master: open one chapter in the writing view */
+  const openChapter = async (id: string) => {
+    if (!book) return
+    await flushAll()
+    setEditor(null)
+    setView('write')
+    setActiveId(id)
+    lastChapter.current[book.path] = id
+    void api.setLastChapter(book.path, id)
+  }
+
   const selectChapter = async (id: string) => {
-    if (!book || id === activeId) return
+    if (!book) return
+    if (view === 'master') {
+      // In the master, a chapter in the binder jumps to its place in the text
+      document.getElementById(`m-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setMasterFocusId(id)
+      return
+    }
+    if (id === activeId) return
     await flushAll()
     setActiveId(id)
     lastChapter.current[book.path] = id
@@ -159,6 +193,9 @@ export default function App() {
   }
 
   const active = book?.chapters.find((c) => c.id === activeId) ?? null
+  const inMaster = !!book && view === 'master'
+  const masterFocus = inMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
+  const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : active
   const overlay = api.platform === 'win32' || api.platform === 'linux'
 
   return (
@@ -170,7 +207,7 @@ export default function App() {
         {book && (
           <span className="crumb">
             {book.title}
-            {active ? ` · ${active.title}` : ''}
+            {inMaster ? ' · מאסטר' : active ? ` · ${active.title}` : ''}
           </span>
         )}
       </div>
@@ -184,11 +221,11 @@ export default function App() {
           <>
             <span className="sep" />
             <div className="tabs" role="tablist">
-              <button className="tab" role="tab" aria-selected="true">
+              <button className="tab" role="tab" aria-selected={view === 'write'} onClick={() => switchView('write')}>
                 <Icon name="pen" />
                 כתיבה
               </button>
-              <button className="tab" role="tab" aria-selected="false" disabled title="יגיע בפיצ'ר הבא">
+              <button className="tab" role="tab" aria-selected={view === 'master'} title="כל הפרקים ברצף" onClick={() => switchView('master')}>
                 <Icon name="master" />
                 מאסטר
               </button>
@@ -219,6 +256,8 @@ export default function App() {
             <Binder
               book={book}
               activeId={activeId}
+              masterActive={inMaster}
+              onMaster={() => switchView('master')}
               renamingId={renamingId}
               onSelect={selectChapter}
               onAdd={addChapter}
@@ -227,7 +266,19 @@ export default function App() {
               onReorder={reorder}
               onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })}
             />
-            {active ? (
+            {inMaster ? (
+              <MasterView
+                key={book.path}
+                book={book}
+                onEditor={setEditor}
+                onRelease={(e) => setEditor((cur) => (cur === e ? null : cur))}
+                onFocusChapter={setMasterFocusId}
+                onOpenChapter={openChapter}
+                onWords={setWords}
+                onSaveState={setSaveState}
+                onError={(m) => show(m, true)}
+              />
+            ) : active ? (
               <ChapterEditor
                 key={`${book.path}|${active.id}`}
                 book={book}
@@ -251,23 +302,32 @@ export default function App() {
                 </article>
               </main>
             )}
-            {active && <Inspector book={book} chapter={active} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(active))} />}
+            {inspected && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
           </>
         )}
       </div>
 
       <div className="statusbar">
-        {book && active && (
-          <>
-            <span className={`saved ${saveState}`}>
-              <i />
-              <span>{SAVE_LABEL[saveState]}</span>
+        {book && (inMaster ? book.chapters.length > 0 : active) && (
+          <span className={`saved ${saveState}`}>
+            <i />
+            <span>{SAVE_LABEL[saveState]}</span>
+          </span>
+        )}
+        {inMaster ? (
+          masterFocus ? (
+            <span>
+              עורך במאסטר ← <span className="fname">{masterFocus.file}</span>
             </span>
-            <span className="fname">{active.file}</span>
-          </>
+          ) : (
+            <span>מאסטר · {book!.chapters.length} קבצים מקושרים</span>
+          )
+        ) : (
+          book && active && <span className="fname">{active.file}</span>
         )}
         <span className="grow" />
-        {book && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
+        {inMaster && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {book && !inMaster && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
         {book && <span>{book.chapters.length} פרקים</span>}
         <button className="ib" title={theme === 'light' ? 'מצב כהה' : 'מצב בהיר'} onClick={toggleTheme}>
           <Icon name={theme === 'light' ? 'moon' : 'sun'} />
