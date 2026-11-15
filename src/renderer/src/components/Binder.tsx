@@ -274,7 +274,7 @@ export function Binder(props: Props) {
   )
 }
 
-function RenameField({ initial, label, onDone }: { initial: string; label: string; onDone: (t: string | null) => void }) {
+export function RenameField({ initial, label, onDone }: { initial: string; label: string; onDone: (t: string | null) => void }) {
   const [v, setV] = useState(initial)
   const ref = useRef<HTMLInputElement>(null)
   const done = useRef(false)

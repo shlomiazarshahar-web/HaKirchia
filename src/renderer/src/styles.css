@@ -221,3 +221,61 @@ body { background: #dde3e0; overflow: hidden; }
 .toast.error { background: var(--w-danger); color: #fff; }
 .fname { unicode-bidi: isolate; direction: ltr; }
 .home .wordmark { height: 72px; width: auto; align-self: center; }
+
+/* cork board (לוח שעם): a card per chapter, in reading order, grouped by part */
+.board { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: auto; padding: 18px 24px 48px; gap: 16px;
+  background-color: var(--w-panel); background-image: radial-gradient(color-mix(in srgb, var(--w-muted) 18%, transparent) 1px, transparent 1px); background-size: 14px 14px; }
+.bbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bbar h2 { margin: 0; font-size: 16px; font-weight: 700; margin-inline-end: 10px; }
+.bbar .bhint { font-size: 12px; color: var(--w-muted); }
+.fchips { display: flex; gap: 6px; flex-wrap: wrap; }
+.fchip { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--w-line); background: var(--w-paper); padding: 4px 10px; border-radius: 20px; font-size: 12.5px; }
+.fchip:focus-visible { outline: 2px solid var(--w-accent); outline-offset: 1px; }
+.fchip[aria-pressed='true'] { border-color: var(--w-accent); color: var(--w-accent); font-weight: 600; }
+.fchip .cnt { font-size: 11px; color: var(--w-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.bempty-board { color: var(--w-muted); font-size: 13.5px; padding: 20px 4px; }
+.bgroup-board { display: flex; flex-direction: column; gap: 10px; }
+.bgroup-board + .bgroup-board, .cards + .bgroup-board, .bgroup-board + .cards { margin-top: 10px; }
+.cpart { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; padding: 4px 6px; border-radius: var(--radius); border-bottom: 1px solid color-mix(in srgb, var(--w-thread) 45%, transparent); }
+.cpart svg { color: var(--w-thread); }
+.cpart .count { font-size: 11px; font-weight: 500; color: var(--w-muted); background: var(--w-soft); border-radius: 10px; padding: 0 7px; }
+.cpart input { font-size: 14px; border: 1px solid var(--w-accent); border-radius: 4px; background: var(--w-paper); color: var(--w-ink); padding: 1px 6px; }
+.cpart.over-into { background: var(--w-soft); box-shadow: inset 0 0 0 2px var(--w-accent); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+.card { background: var(--w-paper); border: 1px solid var(--w-line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; cursor: grab; min-height: 160px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); position: relative; box-sizing: border-box; }
+.card::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--c); border-radius: var(--radius) var(--radius) 0 0; }
+.card:focus-visible { outline: 2px solid var(--w-accent); outline-offset: 2px; }
+.card .num { font-size: 11.5px; color: var(--w-muted); display: flex; justify-content: space-between; align-items: center; }
+.card h4 { margin: 0; font-family: var(--editor-font); font-size: 18px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+.card h4.renaming input { width: 100%; box-sizing: border-box; font: inherit; border: 1px solid var(--w-accent); border-radius: 4px; background: var(--w-paper); color: var(--w-ink); padding: 1px 6px; }
+.card .syn { all: unset; cursor: text; flex: 1; font-size: 13.5px; line-height: 1.55; color: var(--w-muted); white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 4px; display: -webkit-box; -webkit-line-clamp: 7; -webkit-box-orient: vertical; overflow: hidden; }
+.card .syn:hover { background: color-mix(in srgb, var(--w-soft) 60%, transparent); }
+.card .syn:focus-visible { outline: 2px solid var(--w-accent); }
+.card .syn.empty { font-style: italic; opacity: 0.75; }
+.card .syn-edit { flex: 1; min-height: 70px; font: inherit; font-size: 13.5px; line-height: 1.55; color: var(--w-ink); background: var(--w-panel); border: 1px solid var(--w-accent); border-radius: 4px; padding: 4px 6px; resize: none; overflow: hidden; }
+.card .cfoot { display: flex; align-items: center; gap: 6px; }
+.card .pill { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; padding: 2px 6px; margin-inline-start: -6px; border-radius: 12px; }
+.card .pill:hover { background: var(--w-soft); }
+.card .pill:focus-visible { outline: 2px solid var(--w-accent); }
+.card .pill svg { opacity: 0.6; }
+.card .open { opacity: 0; color: var(--w-muted); }
+.card:hover .open, .card:focus-within .open { opacity: 1; }
+.card .smenu { position: absolute; inset-inline-start: 8px; bottom: 38px; z-index: 5; background: var(--w-paper); border: 1px solid var(--w-line); border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18); padding: 4px; display: flex; flex-direction: column; min-width: 130px; }
+.card .smenu button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 6px; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.card .smenu button:hover, .card .smenu button:focus-visible { background: var(--w-soft); }
+.card .smenu button[aria-checked='true'] { font-weight: 700; }
+.card.dragging { opacity: 0.4; }
+.card.over-before::after, .card.over-after::after { content: ''; position: absolute; inset-block: 6px; width: 3px; border-radius: 2px; background: var(--w-accent); }
+.card.over-before::after { inset-inline-start: -10px; }
+.card.over-after::after { inset-inline-end: -10px; }
+.card.add { border-style: dashed; align-items: center; justify-content: center; color: var(--w-muted); cursor: pointer; background: transparent; box-shadow: none; font: inherit; text-align: center; }
+.card.add::before { display: none; }
+.card.add:hover { color: var(--w-ink); border-color: var(--w-accent); }
+.card.add:focus-visible { outline: 2px solid var(--w-accent); }
+.card.add.slot { cursor: default; padding: 0; }
+.card.add.slot.over-into { background: var(--w-soft); border-color: var(--w-accent); }
+.card.add .addin { all: unset; cursor: pointer; flex: 1; align-self: stretch; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+.card.add .addin:focus-visible { outline: 2px solid var(--w-accent); border-radius: var(--radius); }
+.card.add > span, .card.add .addin > span { display: block; }
+.card.add:not(.slot) { gap: 8px; }
+.cpart.loose { font-weight: 500; font-size: 13px; color: var(--w-muted); border-bottom-style: dashed; }

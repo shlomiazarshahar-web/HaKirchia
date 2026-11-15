@@ -42,3 +42,15 @@ describe('book folder with parts', () => {
     expect(opened.outline).toEqual([{ type: 'chapter', id: opened.chapters[0].id }])
   })
 })
+
+describe('cork board word counts', () => {
+  it('counts the words of each chapter from its file, without the title', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hk-'))
+    let book = await project.createBook(root, 'ספר')
+    book = (await project.addChapter(book.path, 'ריק')).book
+    const [a, b] = book.chapters.map((x) => x.id)
+    const p = (text: string) => ({ type: 'paragraph', attrs: { dir: 'rtl', textAlign: null }, content: [{ type: 'text', text }] })
+    await project.saveChapter(book.path, a, { type: 'doc', content: [p('שלוש מילים כאן'), p('ועוד שתיים')] })
+    expect(await project.wordCounts(book.path)).toEqual({ [a]: 5, [b]: 0 })
+  })
+})

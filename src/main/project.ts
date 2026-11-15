@@ -9,7 +9,7 @@ import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { Book, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
 import { flatten, normalizeOutline } from '../shared/outline'
-import { docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
+import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
 export { MANIFEST, CHAPTERS_DIR }
@@ -248,6 +248,26 @@ export function updateChapterMeta(bookPath: string, id: string, meta: { status?:
     if (typeof meta.synopsis === 'string') ch.synopsis = meta.synopsis
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
+  })
+}
+
+/** Words in each chapter (without its title), for the cork board. A missing or unreadable file counts 0. */
+export function wordCounts(bookPath: string): Promise<Record<string, number>> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const out: Record<string, number> = {}
+    for (const ch of m.chapters) {
+      out[ch.id] = 0
+      const file = chapterPath(bookPath, ch)
+      if (!existsSync(file)) continue
+      try {
+        const res = await docxToDoc(new Uint8Array(await fs.readFile(file)))
+        out[ch.id] = countWords(docText(res.doc))
+      } catch {
+        // A damaged file shows 0 here; opening the chapter reports the problem
+      }
+    }
+    return out
   })
 }
 

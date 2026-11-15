@@ -20,6 +20,8 @@ const api = {
   deleteChapter: (bookPath: string, id: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:delete', bookPath, id),
   updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string }): Promise<OpResult<Book>> =>
     ipcRenderer.invoke('chapter:meta', bookPath, id, meta),
+  /** Words per chapter id, read from the files on disk (for the cork board). */
+  wordCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:wordCounts', bookPath),
   loadChapter: (bookPath: string, id: string): Promise<OpResult<LoadedChapter>> => ipcRenderer.invoke('chapter:load', bookPath, id),
   saveChapter: (bookPath: string, id: string, doc: PMNode): Promise<OpResult<void>> => ipcRenderer.invoke('chapter:save', bookPath, id, doc),
   showFile: (path: string): Promise<void> => ipcRenderer.invoke('shell:showFile', path),
