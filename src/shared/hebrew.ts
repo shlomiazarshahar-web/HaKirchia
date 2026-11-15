@@ -63,27 +63,80 @@ export function splitByDirection(text: string, paraRtl: boolean): DirSegment[] {
 export interface NiqqudMark {
   char: string
   name: string
+  /** The key that types it while the niqqud panel is open: the first letter of its name */
+  letter: string
 }
 
-/** The marks offered in the niqqud panel, in the usual order. */
+/**
+ * The marks offered in the niqqud panel, in the usual order. With the panel open from the keyboard,
+ * the first letter of a mark's name types it (ס → סגול). Marks that share a letter come in turns:
+ * pressing the same letter again swaps the mark just typed for the next one (ח → חיריק, ח again → חולם).
+ */
 export const NIQQUD_MARKS: NiqqudMark[] = [
-  { char: 'ָ', name: 'קמץ' },
-  { char: 'ַ', name: 'פתח' },
-  { char: 'ֵ', name: 'צירה' },
-  { char: 'ֶ', name: 'סגול' },
-  { char: 'ְ', name: 'שווא' },
-  { char: 'ִ', name: 'חיריק' },
-  { char: 'ֹ', name: 'חולם' },
-  { char: 'ֻ', name: 'קובוץ' },
-  { char: 'ּ', name: 'דגש / שורוק' },
-  { char: 'ֲ', name: 'חטף פתח' },
-  { char: 'ֱ', name: 'חטף סגול' },
-  { char: 'ֳ', name: 'חטף קמץ' },
-  { char: 'ׁ', name: 'שי״ן ימנית' },
-  { char: 'ׂ', name: 'שי״ן שמאלית' },
-  { char: 'ׇ', name: 'קמץ קטן' },
-  { char: 'ֿ', name: 'רפה' }
+  { char: '\u05B8', name: 'קמץ', letter: 'ק' },
+  { char: '\u05B7', name: 'פתח', letter: 'פ' },
+  { char: '\u05B5', name: 'צירה', letter: 'צ' },
+  { char: '\u05B6', name: 'סגול', letter: 'ס' },
+  { char: '\u05B0', name: 'שווא', letter: 'ש' },
+  { char: '\u05B4', name: 'חיריק', letter: 'ח' },
+  { char: '\u05B9', name: 'חולם', letter: 'ח' },
+  { char: '\u05BB', name: 'קובוץ', letter: 'ק' },
+  { char: '\u05BC', name: 'דגש / שורוק', letter: 'ד' },
+  { char: '\u05B2', name: 'חטף פתח', letter: 'ח' },
+  { char: '\u05B1', name: 'חטף סגול', letter: 'ח' },
+  { char: '\u05B3', name: 'חטף קמץ', letter: 'ח' },
+  { char: '\u05C1', name: 'שי״ן ימנית', letter: 'ש' },
+  { char: '\u05C2', name: 'שי״ן שמאלית', letter: 'ש' },
+  { char: '\u05C7', name: 'קמץ קטן', letter: 'ק' },
+  { char: '\u05BF', name: 'רפה', letter: 'ר' },
+  { char: '\u05BD', name: 'מתג', letter: 'מ' }
 ]
+
+/** The marks a letter types, in the order that repeated presses go through them. */
+export function marksForLetter(letter: string): NiqqudMark[] {
+  return NIQQUD_MARKS.filter((m) => m.letter === letter)
+}
+
+/** "ח" for the first mark of ח, "חח" for the second, and so on: what to press to get this mark. */
+export function keysFor(mark: NiqqudMark): string {
+  return mark.letter.repeat(marksForLetter(mark.letter).indexOf(mark) + 1)
+}
+
+/** The Hebrew letter on each key of the standard Israeli keyboard, so the panel also works when the
+ *  keyboard is switched to English. */
+const HEBREW_BY_CODE: Record<string, string> = {
+  KeyQ: '/', KeyW: "'", KeyE: 'ק', KeyR: 'ר', KeyT: 'א', KeyY: 'ט', KeyU: 'ו', KeyI: 'ן', KeyO: 'ם', KeyP: 'פ',
+  KeyA: 'ש', KeyS: 'ד', KeyD: 'ג', KeyF: 'כ', KeyG: 'ע', KeyH: 'י', KeyJ: 'ח', KeyK: 'ל', KeyL: 'ך', Semicolon: 'ף',
+  KeyZ: 'ז', KeyX: 'ס', KeyC: 'ב', KeyV: 'ה', KeyB: 'נ', KeyN: 'מ', KeyM: 'צ', Comma: 'ת', Period: 'ץ'
+}
+
+/** The Hebrew letter a key press stands for, whichever keyboard language is on. */
+export function hebrewLetterOf(key: string, code: string): string | null {
+  if (/^[\u05D0-\u05EA]$/.test(key)) return key
+  return HEBREW_BY_CODE[code] ?? null
+}
+
+/** Where the typing is in the panel: the letter last pressed and which of its marks it typed. */
+export interface NiqqudTurn {
+  letter: string
+  index: number
+}
+
+/**
+ * The next step after pressing a letter in the niqqud panel. A new letter types its first mark;
+ * the same letter again replaces the mark just typed with the next mark of that letter (a letter
+ * with one mark just keeps it, so a double press never stacks the same mark twice).
+ * Returns null when the letter types no mark.
+ */
+export function nextNiqqud(prev: NiqqudTurn | null, letter: string): { turn: NiqqudTurn; mark: NiqqudMark; replace: boolean } | null {
+  const marks = marksForLetter(letter)
+  if (!marks.length) return null
+  if (prev && prev.letter === letter) {
+    const index = (prev.index + 1) % marks.length
+    return { turn: { letter, index }, mark: marks[index], replace: true }
+  }
+  return { turn: { letter, index: 0 }, mark: marks[0], replace: false }
+}
 
 const NIQQUD_RE = new RegExp(`[${NIQQUD_CLASS}]`, 'g')
 
