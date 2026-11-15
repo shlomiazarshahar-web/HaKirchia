@@ -213,7 +213,7 @@ body { background: #dde3e0; overflow: hidden; }
 .dialog { background: var(--w-paper); color: var(--w-ink); border-radius: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3); padding: 22px 24px; width: min(460px, calc(100vw - 40px)); display: flex; flex-direction: column; gap: 14px; }
 .dialog h2 { margin: 0; font-size: 18px; }
 .dialog p { margin: 0; line-height: 1.6; color: var(--w-muted); }
-.dialog .actions { display: flex; gap: 8px; justify-content: flex-start; margin-top: 6px; }
+.dialog .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 .dialog .pathrow { display: flex; gap: 8px; align-items: center; }
 .dialog .pathrow .mono { flex: 1; background: var(--w-panel); border: 1px solid var(--w-line); border-radius: var(--radius); padding: 7px 8px; }
 .dialog .err { color: var(--w-danger); font-size: 13px; }
