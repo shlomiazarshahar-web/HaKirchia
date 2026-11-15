@@ -131,7 +131,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
         style={{ ['--c' as string]: `var(--s-${ch.status})` }}
         tabIndex={0}
         aria-label={`${ch.title}, ${STATUS_LABELS[ch.status]}`}
-        title="לחיצה כפולה פותחת את הפרק לכתיבה. גרירה משנה את הסדר."
+        title="לחיצה כפולה על הכרטיס פותחת את הפרק לכתיבה, ועל השם משנה אותו. גרירה משנה את הסדר."
         draggable={editing !== ch.id && renamingId !== ch.id}
         onDragStart={(e) => {
           setDrag(ch.id)
@@ -143,7 +143,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
         onDrop={drop}
         onDragEnd={reset}
         onDoubleClick={(e) => {
-          if ((e.target as HTMLElement).closest('textarea, input, .syn, .pill, .smenu')) return
+          if ((e.target as HTMLElement).closest('textarea, input, h4, .syn, .pill, .smenu')) return
           onOpen(ch.id)
         }}
         onKeyDown={(e) => {
@@ -171,7 +171,17 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
             />
           </h4>
         ) : (
-          <h4 dir="auto">{ch.title}</h4>
+          <h4
+            dir="auto"
+            className="rename-hint"
+            title="לחיצה כפולה לשינוי השם"
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              onStartRename(ch.id)
+            }}
+          >
+            {ch.title}
+          </h4>
         )}
         {editing === ch.id ? (
           <SynopsisEditor

@@ -279,3 +279,42 @@ body { background: #dde3e0; overflow: hidden; }
 .card.add > span, .card.add .addin > span { display: block; }
 .card.add:not(.slot) { gap: 8px; }
 .cpart.loose { font-weight: 500; font-size: 13px; color: var(--w-muted); border-bottom-style: dashed; }
+
+/* cork board: the chapter name is renamed with a double click */
+.card h4.rename-hint { cursor: text; border-radius: 4px; }
+.card h4.rename-hint:hover { background: color-mix(in srgb, var(--w-soft) 60%, transparent); }
+
+/* split screen (feature 6): panes side by side with draggable borders */
+.panes { flex: 1; min-width: 0; display: flex; min-height: 0; background: var(--w-panel); }
+.panes.resizing { cursor: col-resize; user-select: none; }
+.panes.resizing .pane { pointer-events: none; }
+.pslot { min-width: 0; display: flex; }
+.pane { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--w-panel); position: relative; }
+.phead { display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 6px; background: var(--w-bar); border-bottom: 1px solid var(--w-line); font-size: 13px; flex: none; min-height: 32px; box-shadow: inset 0 -2px 0 transparent; }
+.pane.focused .phead { box-shadow: inset 0 -2px 0 var(--w-accent); }
+.phead .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+.phead .t > svg { color: var(--w-muted); }
+.pane.focused .phead .t > svg { color: var(--w-accent); }
+.phead .pfile { color: var(--w-muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.phead .ib.icon { padding: 4px; }
+.ppick { min-width: 0; max-width: 60%; flex: 0 1 auto; font-weight: 600; color: var(--w-ink); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 2px 4px; cursor: pointer; text-overflow: ellipsis; }
+.ppick:hover { border-color: var(--w-line); background: var(--w-paper); }
+.ppick:focus-visible { outline: 2px solid var(--w-accent); outline-offset: -1px; }
+.ppick option, .ppick optgroup { background: var(--w-paper); color: var(--w-ink); }
+.pbody { flex: 1; min-height: 0; display: flex; }
+.pbody > .desk { padding: 16px 14px 48px; }
+.pbody .paper { padding: 36px 44px 56px; }
+.pbody .paper .ch-title { font-size: 26px; margin-bottom: 18px; }
+.pbody .paper .docfile { display: none; }
+.pane.drop::after { content: ''; position: absolute; inset: 0; border: 2px dashed var(--w-accent); background: color-mix(in srgb, var(--w-soft) 45%, transparent); pointer-events: none; }
+.pdrop { position: absolute; top: 46px; inset-inline: 16px; text-align: center; background: var(--w-accent); color: var(--w-on-accent); border-radius: var(--radius); padding: 8px; font-size: 13px; z-index: 3; pointer-events: none; }
+.prz { flex: none; width: 7px; margin-inline: -3px; position: relative; z-index: 2; cursor: col-resize; touch-action: none; }
+.prz::before { content: ''; position: absolute; inset-block: 0; inset-inline-start: 3px; width: 1px; background: var(--w-line); }
+.prz:hover::before, .prz:focus-visible::before, .panes.resizing .prz::before { width: 3px; inset-inline-start: 2px; background: var(--w-accent); }
+.prz:focus-visible { outline: none; }
+.pslot > .pane { container-type: inline-size; }
+@container (max-width: 440px) {
+  .pbody > .desk { padding: 10px 8px 40px; }
+  .pbody .paper { padding: 24px 20px 40px; }
+  .pbody .paper .ch-title { font-size: 22px; }
+}

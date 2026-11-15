@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
-import { api, onDiskChange, registerFlusher } from '../api'
+import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher } from '../api'
 import { editorExtensions } from '../editor'
 import { Icon } from './Icons'
 
@@ -18,6 +18,9 @@ interface Props {
   onRename: (title: string) => void
   /** false right after adding a chapter, so the name field in the list keeps the focus */
   autoFocus: boolean
+  /** 'focus' when other editors are on screen too (split screen): active while focused */
+  activateOn?: 'mount' | 'focus'
+  onRelease?: (e: Editor) => void
 }
 
 const SAVE_DELAY_MS = 800
@@ -58,8 +61,9 @@ export function ChapterEditor(props: Props) {
             initial={loaded.doc}
             warnings={loaded.warnings}
             autoFocus={props.autoFocus}
-            activateOn="mount"
+            activateOn={props.activateOn ?? 'mount'}
             onEditor={props.onEditor}
+            onRelease={props.onRelease}
             onWords={props.onWords}
             onSaveState={props.onSaveState}
             onError={props.onError}
@@ -126,6 +130,8 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
   const latest = useRef<PMNode>(initial)
   const saving = useRef<Promise<void>>(Promise.resolve())
   const ids = useRef({ bookPath, chapterId })
+  const me = useRef(Symbol('editor'))
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cb = useRef({ onEditor, onRelease, onWords, onSaveState, onError })
   cb.current = { onEditor, onRelease, onWords, onSaveState, onError }
 
@@ -155,6 +161,13 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
 
   const words = (e: Editor) => countWords(e.getText({ blockSeparator: '\n' }))
 
+  /** Passes the text on to other editors of the same chapter (split screen) */
+  const publishLive = () => {
+    if (liveTimer.current) clearTimeout(liveTimer.current)
+    liveTimer.current = null
+    publishLiveEdit(ids.current.bookPath, ids.current.chapterId, latest.current, me.current)
+  }
+
   const editor = useEditor({
     extensions: editorExtensions,
     content: initial,
@@ -164,11 +177,18 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     onFocus: ({ editor }) => {
       if (activateOn === 'focus') cb.current.onEditor(editor)
     },
+    onBlur: () => {
+      if (liveTimer.current) publishLive()
+    },
     onUpdate: ({ editor, transaction }) => {
       // TipTap also reports an "update" with no real change when the editor starts; ignoring it
       // keeps a chapter from being re-saved (and a Word file rewritten) just by opening it
-      if (!transaction.docChanged) return
+      if (!transaction.docChanged || transaction.getMeta('liveSync')) return
       latest.current = editor.getJSON() as PMNode
+      if (hasLiveTwin(ids.current.bookPath, ids.current.chapterId)) {
+        if (liveTimer.current) clearTimeout(liveTimer.current)
+        liveTimer.current = setTimeout(publishLive, 150)
+      }
       dirty.current = true
       cb.current.onSaveState('dirty')
       cb.current.onWords(words(editor))
@@ -206,7 +226,23 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       setWarn(r.value.warnings)
       if (r.value.warnings.length) setReadOnly(true)
     })
+    // The same chapter was typed in somewhere else on screen: show that text here too
+    const stopLive = onLiveEdit(ids.current.bookPath, ids.current.chapterId, (doc, from) => {
+      if (from === me.current || editor.isDestroyed) return
+      try {
+        const content = editor.schema.nodeFromJSON(doc).content
+        const tr = editor.state.tr.replaceWith(0, editor.state.doc.content.size, content)
+        tr.setMeta('addToHistory', false).setMeta('liveSync', true).setMeta('preventUpdate', true)
+        editor.view.dispatch(tr)
+        latest.current = doc
+        cb.current.onWords(words(editor))
+      } catch {
+        /* a malformed document is ignored; this editor keeps its text */
+      }
+    })
     return () => {
+      if (liveTimer.current) publishLive()
+      stopLive()
       stopListening()
       window.removeEventListener('keydown', onKey)
       unregister()

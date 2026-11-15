@@ -3,6 +3,7 @@ import type { Book, Chapter, PartNode } from '@shared/types'
 import { moveNode, updatePart, type Dragged, type DropTarget } from '@shared/outline'
 import type { OutlineNode } from '@shared/types'
 import { Icon } from './Icons'
+import { CHAPTER_DRAG_TYPE } from '@shared/panes'
 
 interface Props {
   book: Book
@@ -80,6 +81,11 @@ export function Binder(props: Props) {
       setDrag(row)
       e.dataTransfer.effectAllowed = 'move'
       e.dataTransfer.setData('text/plain', row.id)
+      // lets a chapter be dropped on a pane of the split screen
+      if (row.type === 'chapter') {
+        e.dataTransfer.effectAllowed = 'copyMove'
+        e.dataTransfer.setData(CHAPTER_DRAG_TYPE, row.id)
+      }
     },
     onDragOver: (e: DragEvent<HTMLDivElement>) => overRow(e, row, part),
     onDrop: (e: DragEvent<HTMLDivElement>) => {

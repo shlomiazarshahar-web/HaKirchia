@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { PaneLayout } from '../shared/panes'
 import type { Book, ChapterStatus, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, Theme } from '../shared/types'
 
 const api = {
@@ -6,6 +7,7 @@ const api = {
   getSettings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   setTheme: (t: Theme): Promise<boolean> => ipcRenderer.invoke('settings:theme', t),
   setLastChapter: (bookPath: string, id: string): Promise<void> => ipcRenderer.invoke('settings:lastChapter', bookPath, id),
+  setSplitLayout: (bookPath: string, layout: PaneLayout): Promise<void> => ipcRenderer.invoke('settings:splitLayout', bookPath, layout),
   listLibrary: (): Promise<RecentBook[]> => ipcRenderer.invoke('library:list'),
   forgetBook: (path: string): Promise<void> => ipcRenderer.invoke('library:forget', path),
   chooseFolder: (purpose: 'parent' | 'open'): Promise<string | null> => ipcRenderer.invoke('dialog:chooseFolder', purpose),

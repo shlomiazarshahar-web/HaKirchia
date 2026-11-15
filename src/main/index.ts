@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'e
 import { join } from 'path'
 import { existsSync } from 'fs'
 import type { Book, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
+import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
 
@@ -88,6 +89,9 @@ function registerIpc(): void {
   })
   ipcMain.handle('settings:lastChapter', (_e, bookPath: string, chapterId: string) => {
     updateSettings({ lastChapter: { ...getSettings().lastChapter, [bookPath]: chapterId } })
+  })
+  ipcMain.handle('settings:splitLayout', (_e, bookPath: string, layout: PaneLayout) => {
+    updateSettings({ splitLayout: { ...getSettings().splitLayout, [bookPath]: layout } })
   })
   ipcMain.on('app:flushed', () => {
     allowClose = true
