@@ -24,7 +24,7 @@ body { background: #dde3e0; overflow: hidden; }
   font-family: var(--w-ui); font-size: 14px; position: relative;
 }
 .app svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-.app button, .app input, .app select, .app textarea { font: inherit; color: inherit; }
+:where(.app) :where(button, input, select, textarea) { font: inherit; color: inherit; }
 
 .ib { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--radius); color: var(--w-ink); white-space: nowrap; }
 .ib:hover { background: var(--w-soft); }
@@ -98,7 +98,7 @@ body { background: #dde3e0; overflow: hidden; }
 .app .ch-title { all: unset; display: block; width: 100%; font-family: var(--editor-font); font-size: 30px; font-weight: 500; margin: 0 0 26px; line-height: 1.3; color: var(--w-ink); }
 .app .ch-title::placeholder { color: var(--w-muted); }
 .prose { flex: 1; display: flex; flex-direction: column; }
-.prose .ProseMirror { flex: 1; outline: none; font-family: var(--editor-font); font-size: 14pt; line-height: 1.9; caret-color: var(--w-accent); white-space: pre-wrap; }
+.prose .ProseMirror { flex: 1; outline: none; font-family: var(--editor-font); font-size: 14pt; line-height: 1.9; caret-color: var(--w-accent); white-space: pre-wrap; tab-size: 4; }
 .prose .ProseMirror p { margin: 0 0 0.9em; text-align: start; }
 .prose .ProseMirror h2 { font-size: 1.45em; font-weight: 500; margin: 1.2em 0 0.5em; line-height: 1.35; }
 .prose .ProseMirror h3 { font-size: 1.2em; font-weight: 600; margin: 1em 0 0.4em; line-height: 1.35; }
@@ -166,4 +166,4 @@ body { background: #dde3e0; overflow: hidden; }
 .toast { position: absolute; bottom: 40px; left: 20px; max-width: 460px; background: var(--w-ink); color: var(--w-paper); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; line-height: 1.5; z-index: 40; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2); }
 .toast.error { background: var(--w-danger); color: #fff; }
 .fname { unicode-bidi: isolate; direction: ltr; }
-.home .wordmark { height: 72px; width: auto; align-self: flex-start; }
+.home .wordmark { height: 72px; width: auto; align-self: center; }

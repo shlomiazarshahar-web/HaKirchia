@@ -23,7 +23,19 @@ const ParagraphDirection = Extension.create({
   }
 })
 
+/** Tab types a tab character (as in Word) instead of moving focus out of the editor. */
+const TabKey = Extension.create({
+  name: 'tabKey',
+  addKeyboardShortcuts() {
+    return {
+      Tab: () => this.editor.commands.insertContent('\t'),
+      'Shift-Tab': () => true
+    }
+  }
+})
+
 export const editorExtensions = [
+  TabKey,
   StarterKit.configure({
     heading: { levels: [2, 3] },
     codeBlock: false,
