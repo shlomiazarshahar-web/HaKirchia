@@ -44,8 +44,8 @@ export default function App() {
   /** Writing view: its panes (one, or 2–3 side by side), and the one in focus (by its stable key) */
   const [split, setSplit] = useState<PaneLayout | null>(null)
   const [focusKey, setFocusKey] = useState('')
-  /** With more than one pane, "על הפרק" is hidden and opens on demand as a side panel */
-  const [inspectorOpen, setInspectorOpen] = useState(false)
+  /** With more than one pane, "על הפרק" is hidden; it slides out inside one pane (this one) on demand */
+  const [infoKey, setInfoKey] = useState<string | null>(null)
   const [zoom, setZoomState] = useState(1)
   const splitSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedLayouts = useRef<Record<string, PaneLayout>>({})
@@ -89,7 +89,7 @@ export default function App() {
     setBook(b)
     setView('write')
     setMasterFocusId(null)
-    setInspectorOpen(false)
+    setInfoKey(null)
     const last = lastChapter.current[b.path]
     const active = b.chapters.some((c) => c.id === last) ? last : (b.chapters[0]?.id ?? null)
     setActiveId(active)
@@ -206,7 +206,12 @@ export default function App() {
     if (e.shiftKey && book && view === 'write') {
       if (e.code === 'KeyN') return e.preventDefault(), addPaneNow()
       if (e.code === 'KeyX') return e.preventDefault(), closeFocusedPane()
-      if (e.code === 'KeyI' && (split?.panes.length ?? 1) > 1) return e.preventDefault(), setInspectorOpen((o) => !o)
+      if (e.code === 'KeyI' && split && split.panes.length > 1) {
+        e.preventDefault()
+        const p = split.panes.find((x) => x.key === focusKey)
+        if (p?.content.kind === 'chapter') setInfoKey((k) => (k === p.key ? null : p.key))
+        return
+      }
     }
     if (!e.shiftKey || e.code === 'Equal') {
       if (e.code === 'Equal' || e.code === 'NumpadAdd') return e.preventDefault(), stepZoom(1)
@@ -410,12 +415,6 @@ export default function App() {
         <span className="grow" />
         {inWrite && !empty && (
           <>
-            {multi && (
-              <button className="ib" data-drawer-toggle aria-pressed={inspectorOpen} title="פרטי הפרק: סטטוס, תקציר והערות (Ctrl+Shift+I)" onClick={() => setInspectorOpen((o) => !o)}>
-                <Icon name="info" />
-                על הפרק
-              </button>
-            )}
             <button
               className="ib"
               title={split!.panes.length >= MAX_PANES ? 'אפשר עד שלושה חלונות' : 'עוד חלון לצד החלון הפעיל (Ctrl+Shift+N)'}
@@ -485,6 +484,9 @@ export default function App() {
                 focusKey={focusedPane!.key}
                 renamingId={renamingId}
                 onLayout={updateSplit}
+                infoKey={multi ? infoKey : null}
+                onInfo={setInfoKey}
+                renderInfo={(ch) => <Inspector book={book} chapter={ch} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(ch))} />}
                 onFocusPane={(k) => k !== focusKey && focusPane(k)}
                 onEditor={setEditor}
                 onRelease={(e) => setEditor((cur) => (cur === e ? null : cur))}
@@ -508,11 +510,6 @@ export default function App() {
               </main>
             )}
             {inspected && !multi && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
-            {inspected && multi && inspectorOpen && (
-              <InspectorDrawer onClose={() => setInspectorOpen(false)}>
-                <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />
-              </InspectorDrawer>
-            )}
           </>
         )}
       </div>
@@ -658,29 +655,3 @@ export default function App() {
   )
 }
 
-/** "על הפרק" as a side panel over the panes. Closes by itself on a click outside it, or with Esc. */
-function InspectorDrawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const down = (e: MouseEvent) => {
-      const t = e.target as HTMLElement
-      if (ref.current && !ref.current.contains(t) && !t.closest('[data-drawer-toggle]')) onClose()
-    }
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    // a moment later, so the click that opened the panel does not close it again
-    const t = setTimeout(() => {
-      window.addEventListener('mousedown', down, true)
-      window.addEventListener('keydown', key)
-    })
-    return () => {
-      clearTimeout(t)
-      window.removeEventListener('mousedown', down, true)
-      window.removeEventListener('keydown', key)
-    }
-  }, [onClose])
-  return (
-    <div className="drawer" ref={ref} role="complementary" aria-label="על הפרק">
-      {children}
-    </div>
-  )
-}

@@ -7,7 +7,7 @@
 
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
-import type { Book } from '@shared/types'
+import type { Book, Chapter } from '@shared/types'
 import { CHAPTER_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
 import { ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
@@ -24,6 +24,10 @@ interface Props {
   /** right after adding a chapter: its name is being typed in the binder, so don't grab the focus */
   renamingId: string | null
   onLayout: (l: PaneLayout) => void
+  /** the pane whose "על הפרק" panel is open (slides out inside that pane), and how to draw it */
+  infoKey: string | null
+  onInfo: (key: string | null) => void
+  renderInfo: (ch: Chapter) => ReactNode
   onFocusPane: (key: string) => void
   onEditor: (e: Editor | null) => void
   onRelease: (e: Editor) => void
@@ -93,8 +97,27 @@ export function SplitView(props: Props) {
                 )}
               </>
             }
+            drawer={
+              ch && props.infoKey === pane.key ? (
+                <PaneDrawer label={`על הפרק: ${ch.title}`} onClose={() => props.onInfo(null)}>
+                  {props.renderInfo(ch)}
+                </PaneDrawer>
+              ) : null
+            }
             actions={
               <>
+                {ch && (
+                  <button
+                    className="ib icon"
+                    data-drawer-toggle={pane.key}
+                    aria-pressed={props.infoKey === pane.key}
+                    title="על הפרק: סטטוס, תקציר והערות (Ctrl+Shift+I)"
+                    aria-label="על הפרק"
+                    onClick={() => props.onInfo(props.infoKey === pane.key ? null : pane.key)}
+                  >
+                    <Icon name="info" />
+                  </button>
+                )}
                 {i < n - 1 && (
                   <button className="ib icon" title="החלפת מקום עם החלון שמשמאל" aria-label="החלפת מקום עם החלון שמשמאל" onClick={() => onLayout(swapPanes(layout, i, i + 1))}>
                     <Icon name="swap" />
@@ -187,6 +210,7 @@ export function PaneFrame({
   actions,
   focused,
   bare = false,
+  drawer,
   onFocus,
   onDropChapter,
   children
@@ -196,6 +220,8 @@ export function PaneFrame({
   focused: boolean
   /** the only pane: no header bar, looks like the plain writing view */
   bare?: boolean
+  /** a side panel that slides out inside this pane, over its content */
+  drawer?: ReactNode
   onFocus: () => void
   onDropChapter?: (id: string) => void
   children: ReactNode
@@ -230,9 +256,37 @@ export function PaneFrame({
           {actions}
         </div>
       )}
-      <div className="pbody">{children}</div>
+      <div className="pbody">
+        {children}
+        {drawer}
+      </div>
       {dropOn && <div className="pdrop">שחררו כאן כדי לפתוח את הפרק בחלון הזה</div>}
     </section>
+  )
+}
+
+/** A side panel inside a pane. Closes by itself on a click anywhere outside it, or with Esc. */
+export function PaneDrawer({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useRef(onClose)
+  close.current = onClose
+  useEffect(() => {
+    const down = (e: MouseEvent) => {
+      const t = e.target as HTMLElement
+      if (ref.current && !ref.current.contains(t) && !t.closest('[data-drawer-toggle]')) close.current()
+    }
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && close.current()
+    window.addEventListener('mousedown', down, true)
+    window.addEventListener('keydown', key)
+    return () => {
+      window.removeEventListener('mousedown', down, true)
+      window.removeEventListener('keydown', key)
+    }
+  }, [])
+  return (
+    <div className="pdrawer" ref={ref} role="complementary" aria-label={label}>
+      {children}
+    </div>
   )
 }
 

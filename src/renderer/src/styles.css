@@ -324,12 +324,12 @@ body { background: #dde3e0; overflow: hidden; }
 .masterbanner.fading { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { .masterbanner { transition: none; } }
 
-/* "על הפרק" as a side panel (writing view with more than one pane) */
-.body { position: relative; }
-.drawer { position: absolute; inset-block: 0; inset-inline-end: 0; z-index: 15; display: flex; box-shadow: 8px 0 28px rgba(0, 0, 0, 0.16); animation: drawer-in 0.16s ease-out; }
-.drawer > .insp { height: 100%; }
+/* "על הפרק" slides out inside a pane (writing view with more than one pane) */
+.pbody { position: relative; }
+.pdrawer { position: absolute; inset-block: 0; inset-inline-end: 0; z-index: 6; display: flex; max-width: 85%; box-shadow: 8px 0 28px rgba(0, 0, 0, 0.16); animation: drawer-in 0.16s ease-out; }
+.pdrawer > .insp { height: 100%; box-sizing: border-box; max-width: 100%; }
 @keyframes drawer-in { from { transform: translateX(-16px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .drawer { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pdrawer { animation: none; } }
 
 /* interface size in the status bar */
 .statusbar .zoom { display: inline-flex; align-items: center; gap: 0; }
