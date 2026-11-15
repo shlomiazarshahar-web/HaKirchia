@@ -24,6 +24,7 @@ const WORST: SaveState[] = ['error', 'saving', 'dirty', 'saved']
  * saves into that file, and the master always shows what the files contain right now.
  */
 export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenChapter, onWords, onSaveState, onError }: Props) {
+  const hint = useFirstTimeHint('hk.masterHintSeen')
   const words = useRef(new Map<string, number>())
   const states = useRef(new Map<string, SaveState>())
 
@@ -46,12 +47,14 @@ export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenCh
   return (
     <main className="desk" id="master-desk">
       <article className="paper master">
-        <div className="masterbanner">
-          <Icon name="link" />
-          <span>
-            המאסטר מרכיב את <b>{book.chapters.length}</b> קובצי הפרקים לפי הסדר בעץ. אפשר לערוך כאן, והשינוי נשמר מיד בקובץ הפרק המתאים.
-          </span>
-        </div>
+        {hint && (
+          <div className={`masterbanner${hint === 'fading' ? ' fading' : ''}`} role="note">
+            <Icon name="link" />
+            <span>
+              כאן מוצגים כל <b>{book.chapters.length}</b> קובצי הפרקים ברצף, לפי הסדר בעץ. אפשר לערוך כאן, והשינוי נשמר מיד בקובץ הפרק המתאים.
+            </span>
+          </div>
+        )}
         {book.chapters.length === 0 && <div className="paper-state">אין עדיין פרקים בספר הזה.</div>}
         {book.outline.flatMap((n) => {
           if (n.type !== 'part') return [chapterSection(n.id)]
@@ -92,6 +95,36 @@ export function MasterView({ book, onEditor, onRelease, onFocusChapter, onOpenCh
           />
     )
   }
+}
+
+/**
+ * An explanation shown only the first time: visible for 10 seconds, then fades out.
+ * Remembered in this computer's local storage.
+ */
+function useFirstTimeHint(storageKey: string): 'on' | 'fading' | null {
+  const [state, setState] = useState<'on' | 'fading' | null>(() => {
+    try {
+      return localStorage.getItem(storageKey) ? null : 'on'
+    } catch {
+      return null
+    }
+  })
+  useEffect(() => {
+    if (state !== 'on') return
+    try {
+      localStorage.setItem(storageKey, '1')
+    } catch {
+      /* not remembered; it will show again next time */
+    }
+    const t1 = setTimeout(() => setState('fading'), 10000)
+    const t2 = setTimeout(() => setState(null), 10600)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return state
 }
 
 interface ChapterProps {

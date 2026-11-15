@@ -1,4 +1,5 @@
 // Types shared by the main process (disk, docx) and the window (UI).
+import type { PaneLayout } from './panes'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -80,6 +81,10 @@ export interface Settings {
   recent: { path: string; title: string; chapterCount: number; lastOpened: number }[]
   lastChapter: Record<string, string>
   defaultFolder?: string
+  /** Split screen panes per book path, as they were last left */
+  splitLayout?: Record<string, PaneLayout>
+  /** Size of the whole interface (1 = 100%) */
+  zoom?: number
 }
 
 export const STATUS_LABELS: Record<ChapterStatus, string> = {
