@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
-import type { Book, Chapter, ChapterStatus, OpResult, RecentBook, Theme } from '@shared/types'
+import type { Book, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
+import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
 import { api, flushAll } from './api'
 import { IconSprite, Icon } from './components/Icons'
@@ -14,8 +15,8 @@ import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
 import appIcon from './assets/icon.png'
 
 type Toast = { text: string; error?: boolean } | null
-type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | null
-type Menu = { chapter: Chapter; x: number; y: number } | null
+type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
+type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
 type View = 'write' | 'master'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
@@ -128,11 +129,15 @@ export default function App() {
     void api.setLastChapter(book.path, id)
   }
 
-  const addChapter = async () => {
+  /** New chapter: at the end of the given part, or of the part of the chapter being written, or of the book. */
+  const addChapter = async (partId?: string) => {
     if (!book) return
     await flushAll()
-    const r = await api.addChapter(book.path, `פרק ${book.chapters.length + 1}`)
+    const inPart = partId ?? (view === 'write' && activeId ? partOf(book.outline, activeId)?.id : undefined)
+    const r = await api.addChapter(book.path, `פרק ${book.chapters.length + 1}`, inPart)
     if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי להוסיף פרק', true)
+    if (r.notice) show(r.notice, true)
+    if (inPart) r.value.book = withOutline(r.value.book, r.value.book.outline.map((n) => (n.type === 'part' && n.id === inPart ? { ...n, collapsed: false } : n)))
     setBook(r.value.book)
     setActiveId(r.value.chapterId)
     setRenamingId(r.value.chapterId)
@@ -145,13 +150,46 @@ export default function App() {
     applyBook(await api.renameChapter(book.path, id, title))
   }
 
-  const reorder = async (ids: string[]) => {
+  /** Saves a new binder tree (moved chapters, parts). Shown right away, then the files are renamed on disk. */
+  const saveOutline = async (outline: OutlineNode[]) => {
     if (!book) return
-    // Show the new order right away, then rename the files on disk
-    const byId = new Map(book.chapters.map((c) => [c.id, c]))
-    setBook({ ...book, chapters: ids.map((id) => byId.get(id)!).filter(Boolean) })
-    await flushAll()
-    if (!applyBook(await api.reorderChapters(book.path, ids))) setBook(book)
+    const before = book
+    const next = withOutline(book, outline)
+    setBook(next)
+    const orderChanged = next.chapters.map((c) => c.id).join() !== before.chapters.map((c) => c.id).join()
+    if (orderChanged) await flushAll()
+    if (!applyBook(await api.saveOutline(before.path, next.outline))) setBook(before)
+  }
+
+  const addPart = () => {
+    if (!book) return
+    const id = crypto.randomUUID()
+    void saveOutline([...book.outline, { type: 'part', id, title: newPartTitle(book.outline), collapsed: false, children: [] }])
+    setRenamingId(id)
+  }
+
+  const partFromChapter = (ch: Chapter) => {
+    if (!book) return
+    const id = crypto.randomUUID()
+    void saveOutline(startPartAt(book.outline, ch.id, { id, title: newPartTitle(book.outline) }))
+    setRenamingId(id)
+  }
+
+  const moveToPart = (ch: Chapter, partId: string | null) => {
+    if (!book) return
+    if (partId) void saveOutline(moveNode(book.outline, { type: 'chapter', id: ch.id }, { kind: 'into', partId, at: 'end' }))
+    else {
+      // Out of its part: right after the part, at the top level
+      const host = partOf(book.outline, ch.id)
+      if (host) void saveOutline(moveNode(book.outline, { type: 'chapter', id: ch.id }, { kind: 'after', ref: { type: 'part', id: host.id } }))
+    }
+  }
+
+  const removePart = (p: PartNode) => {
+    if (!book) return
+    setDialog(null)
+    void saveOutline(ungroupPart(book.outline, p.id))
+    show(`החלק "${p.title}" הוסר. הפרקים שהיו בו נשארו במקומם.`)
   }
 
   const deleteChapter = async (ch: Chapter) => {
@@ -260,11 +298,13 @@ export default function App() {
               onMaster={() => switchView('master')}
               renamingId={renamingId}
               onSelect={selectChapter}
-              onAdd={addChapter}
+              onAdd={() => addChapter()}
+              onAddPart={addPart}
               onRename={renameChapter}
               onStartRename={setRenamingId}
-              onReorder={reorder}
+              onOutline={saveOutline}
               onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })}
+              onPartMenu={(part, x, y) => setMenu({ part, x, y })}
             />
             {inMaster ? (
               <MasterView
@@ -295,7 +335,7 @@ export default function App() {
                 <article className="paper">
                   <div className="paper-state">
                     אין עדיין פרקים בספר הזה.
-                    <button className="btn" onClick={addChapter}>
+                    <button className="btn" onClick={() => addChapter()}>
                       פרק חדש
                     </button>
                   </div>
@@ -328,14 +368,19 @@ export default function App() {
         <span className="grow" />
         {inMaster && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
         {book && !inMaster && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
-        {book && <span>{book.chapters.length} פרקים</span>}
+        {book && (
+          <span>
+            {book.chapters.length} פרקים
+            {parts(book.outline).length > 0 && ` · ${parts(book.outline).length} חלקים`}
+          </span>
+        )}
         <button className="ib" title={theme === 'light' ? 'מצב כהה' : 'מצב בהיר'} onClick={toggleTheme}>
           <Icon name={theme === 'light' ? 'moon' : 'sun'} />
         </button>
       </div>
 
-      {menu && (
-        <div className="menu" role="menu" style={{ top: menu.y, left: Math.max(8, menu.x - 180) }} onClick={(e) => e.stopPropagation()}>
+      {menu && 'chapter' in menu && book && (
+        <div className="menu" role="menu" style={{ top: Math.min(menu.y, window.innerHeight - 320), left: Math.max(8, menu.x - 200) }} onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" onClick={() => (setRenamingId(menu.chapter.id), setMenu(null))}>
             <Icon name="rename" />
             שינוי שם
@@ -344,9 +389,52 @@ export default function App() {
             <Icon name="folder" />
             הצגה בתיקייה
           </button>
+          <div className="msep" />
+          <button role="menuitem" title="חלק חדש שמתחיל בפרק הזה וכולל את הפרקים שאחריו" onClick={() => (partFromChapter(menu.chapter), setMenu(null))}>
+            <Icon name="part-plus" />
+            חלק חדש מהפרק הזה
+          </button>
+          {parts(book.outline).length > 0 && (
+            <>
+              <div className="mlabel">העברה לחלק</div>
+              {parts(book.outline).map((p) => {
+                const here = p.children.includes(menu.chapter.id)
+                return (
+                  <button key={p.id} role="menuitemradio" aria-checked={here} disabled={here} onClick={() => (moveToPart(menu.chapter, p.id), setMenu(null))}>
+                    <Icon name="part" />
+                    {p.title}
+                  </button>
+                )
+              })}
+              {partOf(book.outline, menu.chapter.id) && (
+                <button role="menuitem" onClick={() => (moveToPart(menu.chapter, null), setMenu(null))}>
+                  <Icon name="file" />
+                  הוצאה מהחלק
+                </button>
+              )}
+            </>
+          )}
+          <div className="msep" />
           <button role="menuitem" className="danger" onClick={() => (setDialog({ kind: 'delete', chapter: menu.chapter }), setMenu(null))}>
             <Icon name="trash" />
             מחיקת הפרק
+          </button>
+        </div>
+      )}
+      {menu && 'part' in menu && (
+        <div className="menu" role="menu" style={{ top: menu.y, left: Math.max(8, menu.x - 200) }} onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" onClick={() => (setRenamingId(menu.part.id), setMenu(null))}>
+            <Icon name="rename" />
+            שינוי שם החלק
+          </button>
+          <button role="menuitem" onClick={() => (void addChapter(menu.part.id), setMenu(null))}>
+            <Icon name="plus" />
+            פרק חדש בחלק הזה
+          </button>
+          <div className="msep" />
+          <button role="menuitem" className="danger" onClick={() => (setDialog({ kind: 'deletePart', part: menu.part }), setMenu(null))}>
+            <Icon name="trash" />
+            הסרת החלק
           </button>
         </div>
       )}
@@ -359,6 +447,20 @@ export default function App() {
           confirmLabel="מחיקה"
           onCancel={() => setDialog(null)}
           onConfirm={() => deleteChapter(dialog.chapter)}
+        />
+      )}
+
+      {dialog?.kind === 'deletePart' && (
+        <ConfirmDialog
+          title={`להסיר את החלק "${dialog.part.title}"?`}
+          text={
+            dialog.part.children.length
+              ? `רק החלוקה תוסר. ${dialog.part.children.length === 1 ? 'הפרק שבחלק נשאר' : `${dialog.part.children.length} הפרקים שבחלק נשארים`} בספר, באותו מקום ובאותו סדר. שום קובץ לא נמחק.`
+              : 'החלק ריק, ושום קובץ לא נמחק.'
+          }
+          confirmLabel="הסרה"
+          onCancel={() => setDialog(null)}
+          onConfirm={() => removePart(dialog.part)}
         />
       )}
 

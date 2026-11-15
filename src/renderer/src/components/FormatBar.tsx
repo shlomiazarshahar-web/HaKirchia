@@ -2,8 +2,8 @@ import { useEditorState, type Editor } from '@tiptap/react'
 import { DEFAULT_FONT, DEFAULT_SIZE_PT } from '@shared/docx'
 import { EDITOR_FONTS, FONT_SIZES } from '../fonts'
 import { Icon } from './Icons'
+import type { Align } from '../editor'
 
-type Align = 'right' | 'center' | 'left' | 'justify'
 
 export function FormatBar({ editor }: { editor: Editor | null }) {
   const s = useEditorState({
@@ -34,16 +34,8 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
   const on = !!editor && !!s?.editable
   const chain = () => editor!.chain().focus()
 
-  const setAlign = (a: Align) => {
-    // In an RTL paragraph "right" is the normal side, so store it as "no alignment"
-    const normal = s?.dir === 'rtl' ? 'right' : 'left'
-    if (a === normal) chain().unsetTextAlign().run()
-    else chain().setTextAlign(a).run()
-  }
-  const toggleDir = () => {
-    const dir = s?.dir === 'rtl' ? 'ltr' : 'rtl'
-    chain().updateAttributes('paragraph', { dir, textAlign: null }).updateAttributes('heading', { dir, textAlign: null }).run()
-  }
+  const setAlign = (a: Align) => chain().alignParagraphs(a).run()
+  const toggleDir = () => chain().setParagraphDir(s?.dir === 'rtl' ? 'ltr' : 'rtl').run()
   const fonts = s && !EDITOR_FONTS.includes(s.font) ? [s.font, ...EDITOR_FONTS] : EDITOR_FONTS
   const sizes = s && !FONT_SIZES.includes(s.size) ? [...FONT_SIZES, s.size].sort((a, b) => a - b) : FONT_SIZES
 
@@ -112,19 +104,19 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
         <span className="u">ק</span>
       </button>
       <span className="sep" />
-      <button className="ib icon" title="יישור לימין" aria-pressed={s?.align === 'right'} onClick={() => setAlign('right')}>
+      <button className="ib icon" title="יישור לימין (Ctrl+R)" aria-pressed={s?.align === 'right'} onClick={() => setAlign('right')}>
         <Icon name="align-r" />
       </button>
-      <button className="ib icon" title="מרכוז" aria-pressed={s?.align === 'center'} onClick={() => setAlign('center')}>
+      <button className="ib icon" title="מרכוז (Ctrl+E)" aria-pressed={s?.align === 'center'} onClick={() => setAlign('center')}>
         <Icon name="align-c" />
       </button>
-      <button className="ib icon" title="יישור לשמאל" aria-pressed={s?.align === 'left'} onClick={() => setAlign('left')}>
+      <button className="ib icon" title="יישור לשמאל (Ctrl+L)" aria-pressed={s?.align === 'left'} onClick={() => setAlign('left')}>
         <Icon name="align-l" />
       </button>
-      <button className="ib icon" title="יישור לשני הצדדים" aria-pressed={s?.align === 'justify'} onClick={() => setAlign('justify')}>
+      <button className="ib icon" title="יישור לשני הצדדים (Ctrl+J)" aria-pressed={s?.align === 'justify'} onClick={() => setAlign('justify')}>
         <Icon name="align-j" />
       </button>
-      <button className="ib" title="כיוון הפסקה: ימין לשמאל / שמאל לימין" onClick={toggleDir}>
+      <button className="ib" title="כיוון הפסקה. Ctrl+Shift ימני: מימין לשמאל, Ctrl+Shift שמאלי: משמאל לימין" onClick={toggleDir}>
         <Icon name="dir" />
         {s?.dir === 'ltr' ? 'LTR' : 'RTL'}
       </button>
