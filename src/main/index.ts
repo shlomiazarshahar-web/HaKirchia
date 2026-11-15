@@ -5,6 +5,9 @@ import type { Book, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
+import * as fonts from './fonts'
+import * as spell from './spell'
+import type { TypographySettings } from '../shared/hebrew'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -33,7 +36,7 @@ function createWindow(): void {
       spellcheck: true
     }
   })
-  win.webContents.session.setSpellCheckerLanguages(['he', 'en-US'].filter((l) => win!.webContents.session.availableSpellCheckerLanguages.includes(l)))
+  spell.setupSpellcheck(win)
   win.once('ready-to-show', () => win?.show())
   // Links open in the normal browser, never inside the app window
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -96,6 +99,23 @@ function registerIpc(): void {
   ipcMain.handle('settings:splitLayout', (_e, bookPath: string, layout: PaneLayout) => {
     updateSettings({ splitLayout: { ...getSettings().splitLayout, [bookPath]: layout } })
   })
+  ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
+    updateSettings({ typography })
+  })
+
+  // Fonts
+  ipcMain.handle('fonts:system', () => fonts.listSystemFonts())
+  ipcMain.handle('fonts:addSystem', (_e, family: string) => fonts.addSystemFont(family))
+  ipcMain.handle('fonts:addFile', () => wrap(() => fonts.addFontFile(win!)))
+  ipcMain.handle('fonts:read', (_e, file: string) => fonts.readFontFile(file))
+  ipcMain.handle('fonts:remove', (_e, family: string) => fonts.removeFont(family))
+
+  // Spelling
+  ipcMain.handle('spell:status', () => spell.spellStatus(win!))
+  ipcMain.handle('spell:enable', (_e, on: boolean) => (spell.setSpellEnabled(win!, on), spell.spellStatus(win!)))
+  ipcMain.handle('spell:add', (_e, word: string) => (spell.addWordQuiet(win!, word), spell.spellStatus(win!)))
+  ipcMain.handle('spell:remove', (_e, word: string) => (spell.removeWord(win!, word), spell.spellStatus(win!)))
+
   ipcMain.on('app:flushed', () => {
     allowClose = true
     win?.close()

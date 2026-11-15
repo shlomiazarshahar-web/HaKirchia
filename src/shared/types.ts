@@ -1,5 +1,6 @@
 // Types shared by the main process (disk, docx) and the window (UI).
 import type { PaneLayout } from './panes'
+import type { TypographySettings } from './hebrew'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -85,6 +86,28 @@ export interface Settings {
   splitLayout?: Record<string, PaneLayout>
   /** Size of the whole interface (1 = 100%) */
   zoom?: number
+  /** Fonts the user added (available in every book) */
+  customFonts?: CustomFont[]
+  /** Automatic Hebrew typography while typing */
+  typography?: TypographySettings
+  /** Red underline for spelling mistakes (default on) */
+  spellcheck?: boolean
+}
+
+/** A font the user added: installed in Windows, or a font file copied into the app's folder. */
+export interface CustomFont {
+  family: string
+  /** File name inside the app's fonts folder; missing for fonts installed in Windows */
+  file?: string
+}
+
+export interface SpellStatus {
+  enabled: boolean
+  /** Languages being checked, e.g. ["he", "en-US"] */
+  languages: string[]
+  /** Hebrew dictionary could not be downloaded (needs internet the first time) */
+  hebrewMissing: boolean
+  words: string[]
 }
 
 export const STATUS_LABELS: Record<ChapterStatus, string> = {

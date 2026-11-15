@@ -1,8 +1,11 @@
+import { useRef, useState } from 'react'
 import { useEditorState, type Editor } from '@tiptap/react'
 import { DEFAULT_FONT, DEFAULT_SIZE_PT } from '@shared/docx'
 import { EDITOR_FONTS, FONT_SIZES } from '../fonts'
 import { Icon } from './Icons'
 import type { Align } from '../editor'
+import { usePrefs } from '../prefs'
+import { FontPanel, NiqqudPanel, Popover } from './HebrewTools'
 
 
 export function FormatBar({ editor }: { editor: Editor | null }) {
@@ -31,12 +34,21 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
     }
   })
 
+  const { customFonts } = usePrefs()
+  const [pop, setPop] = useState<'font' | 'niqqud' | null>(null)
+  const fontRef = useRef<HTMLSelectElement>(null)
+  const nqRef = useRef<HTMLButtonElement>(null)
   const on = !!editor && !!s?.editable
   const chain = () => editor!.chain().focus()
 
   const setAlign = (a: Align) => chain().alignParagraphs(a).run()
   const toggleDir = () => chain().setParagraphDir(s?.dir === 'rtl' ? 'ltr' : 'rtl').run()
-  const fonts = s && !EDITOR_FONTS.includes(s.font) ? [s.font, ...EDITOR_FONTS] : EDITOR_FONTS
+  const added = customFonts.map((f) => f.family).filter((f) => !EDITOR_FONTS.includes(f))
+  const unknown = s && !EDITOR_FONTS.includes(s.font) && !added.includes(s.font) ? s.font : null
+  const applyFont = (f: string) => {
+    if (f === DEFAULT_FONT) chain().unsetFontFamily().run()
+    else chain().setFontFamily(f).run()
+  }
   const sizes = s && !FONT_SIZES.includes(s.size) ? [...FONT_SIZES, s.size].sort((a, b) => a - b) : FONT_SIZES
 
   return (
@@ -62,20 +74,39 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
         <option value="h3">כותרת משנה</option>
       </select>
       <select
+        ref={fontRef}
         aria-label="גופן"
         style={{ width: 160, fontFamily: s?.font }}
         value={s?.font ?? DEFAULT_FONT}
         onChange={(e) => {
           const f = e.target.value
-          if (f === DEFAULT_FONT) chain().unsetFontFamily().run()
-          else chain().setFontFamily(f).run()
+          if (f === '__add') setPop('font')
+          else applyFont(f)
         }}
       >
-        {fonts.map((f) => (
-          <option key={f} value={f} style={{ fontFamily: f }}>
-            {f}
+        {unknown && (
+          <option value={unknown} style={{ fontFamily: unknown }}>
+            {unknown}
           </option>
-        ))}
+        )}
+        <optgroup label="מובנים">
+          {EDITOR_FONTS.map((f) => (
+            <option key={f} value={f} style={{ fontFamily: f }}>
+              {f}
+            </option>
+          ))}
+        </optgroup>
+        {added.length > 0 && (
+          <optgroup label="שהוספתי">
+            {added.map((f) => (
+              <option key={f} value={f} style={{ fontFamily: `"${f}"` }}>
+                {f}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        <option disabled>──────────</option>
+        <option value="__add">הוספת גופן…</option>
       </select>
       <select
         aria-label="גודל"
@@ -120,6 +151,25 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
         <Icon name="dir" />
         {s?.dir === 'ltr' ? 'LTR' : 'RTL'}
       </button>
+      <span className="sep" />
+      <button ref={nqRef} className="ib" title="ניקוד, מקף, גרש וסימני כיוון" aria-pressed={pop === 'niqqud'} onClick={() => setPop(pop === 'niqqud' ? null : 'niqqud')}>
+        <span className="nq-btn">נִקּוּד</span>
+      </button>
+      {pop === 'font' && (
+        <Popover anchor={fontRef.current} label="הוספת גופן" width={330} onClose={() => setPop(null)}>
+          <FontPanel
+            onPick={(f) => {
+              setPop(null)
+              applyFont(f)
+            }}
+          />
+        </Popover>
+      )}
+      {pop === 'niqqud' && editor && (
+        <Popover anchor={nqRef.current} label="ניקוד" width={318} onClose={() => setPop(null)}>
+          <NiqqudPanel editor={editor} />
+        </Popover>
+      )}
     </div>
   )
 }

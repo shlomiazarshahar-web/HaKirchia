@@ -16,10 +16,12 @@ import { SplitView } from './components/SplitView'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
+import { WritingSettings } from './components/HebrewTools'
+import { initPrefs } from './prefs'
 import appIcon from './assets/icon.png'
 
 type Toast = { text: string; error?: boolean } | null
-type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
+type Dialog = { kind: 'newBook' } | { kind: 'settings' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
 type View = 'write' | 'master' | 'board'
 
@@ -63,6 +65,7 @@ export default function App() {
   useEffect(() => {
     api.getSettings().then((s) => {
       setTheme(s.theme)
+      initPrefs(s)
       lastChapter.current = s.lastChapter ?? {}
       savedLayouts.current = s.splitLayout ?? {}
       if (s.zoom && s.zoom !== 1) {
@@ -413,6 +416,10 @@ export default function App() {
           </>
         )}
         <span className="grow" />
+        <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים" onClick={() => setDialog({ kind: 'settings' })}>
+          <Icon name="gear" />
+          הגדרות כתיבה
+        </button>
         {inWrite && !empty && (
           <>
             <button
@@ -621,6 +628,7 @@ export default function App() {
         </div>
       )}
 
+      {dialog?.kind === 'settings' && <WritingSettings onClose={() => setDialog(null)} />}
       {dialog?.kind === 'newBook' && <NewBookDialog onCancel={() => setDialog(null)} onCreate={createBook} />}
       {dialog?.kind === 'delete' && (
         <ConfirmDialog
