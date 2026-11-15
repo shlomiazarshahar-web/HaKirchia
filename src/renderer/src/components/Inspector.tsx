@@ -43,7 +43,7 @@ export function Inspector({ book, chapter, onMeta, onShowFile }: Props) {
           </select>
         </label>
         <label className="field">
-          תקציר (יופיע בלוח השעם)
+          תקציר (מופיע בלוח השעם)
           <textarea
             value={syn}
             dir="auto"

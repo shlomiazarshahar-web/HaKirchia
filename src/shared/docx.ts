@@ -452,6 +452,14 @@ export function emptyDoc(): PMNode {
   return { type: 'doc', content: [{ type: 'paragraph', attrs: { dir: 'rtl', textAlign: null } }] }
 }
 
+/** The plain text of a document, one line per paragraph (for word counts outside the editor). */
+export function docText(node: PMNode): string {
+  if (typeof node.text === 'string') return node.text
+  if (node.type === 'hardBreak') return '\n'
+  const inner = (node.content ?? []).map(docText)
+  return node.type === 'doc' || node.type === 'blockquote' || node.type === 'bulletList' || node.type === 'orderedList' || node.type === 'listItem' ? inner.join('\n') : inner.join('')
+}
+
 /** Word count for the status bar: tokens that contain a letter or digit. */
 export function countWords(text: string): number {
   return text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length

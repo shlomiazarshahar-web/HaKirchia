@@ -9,6 +9,7 @@ import { Home } from './components/Home'
 import { Binder } from './components/Binder'
 import { ChapterEditor, type SaveState } from './components/ChapterEditor'
 import { MasterView } from './components/MasterView'
+import { CorkBoard } from './components/CorkBoard'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
@@ -17,7 +18,7 @@ import appIcon from './assets/icon.png'
 type Toast = { text: string; error?: boolean } | null
 type Dialog = { kind: 'newBook' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
-type View = 'write' | 'master'
+type View = 'write' | 'master' | 'board'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
 
@@ -232,6 +233,7 @@ export default function App() {
 
   const active = book?.chapters.find((c) => c.id === activeId) ?? null
   const inMaster = !!book && view === 'master'
+  const inBoard = !!book && view === 'board'
   const masterFocus = inMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
   const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : active
   const overlay = api.platform === 'win32' || api.platform === 'linux'
@@ -245,7 +247,7 @@ export default function App() {
         {book && (
           <span className="crumb">
             {book.title}
-            {inMaster ? ' · מאסטר' : active ? ` · ${active.title}` : ''}
+            {inMaster ? ' · מאסטר' : inBoard ? ' · לוח שעם' : active ? ` · ${active.title}` : ''}
           </span>
         )}
       </div>
@@ -271,7 +273,7 @@ export default function App() {
                 <Icon name="split" />
                 מפוצל
               </button>
-              <button className="tab" role="tab" aria-selected="false" disabled title="יגיע בהמשך">
+              <button className="tab" role="tab" aria-selected={view === 'board'} title="כרטיס לכל פרק, עם תקציר וסטטוס" onClick={() => switchView('board')}>
                 <Icon name="grid" />
                 לוח שעם
               </button>
@@ -285,11 +287,27 @@ export default function App() {
         <span className="grow" />
       </div>
 
-      {book && <FormatBar editor={editor} />}
+      {book && !inBoard && <FormatBar editor={editor} />}
 
       <div className="body">
         {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
-        {book && (
+        {inBoard && (
+          <CorkBoard
+            key={book!.path}
+            book={book!}
+            onOpen={openChapter}
+            onMeta={updateMeta}
+            onOutline={saveOutline}
+            onAdd={(partId) => addChapter(partId)}
+            onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })}
+            onPartMenu={(part, x, y) => setMenu({ part, x, y })}
+            onWords={setWords}
+            renamingId={renamingId}
+            onRename={renameChapter}
+            onStartRename={setRenamingId}
+          />
+        )}
+        {book && !inBoard && (
           <>
             <Binder
               book={book}
@@ -348,7 +366,7 @@ export default function App() {
       </div>
 
       <div className="statusbar">
-        {book && (inMaster ? book.chapters.length > 0 : active) && (
+        {book && !inBoard && (inMaster ? book.chapters.length > 0 : active) && (
           <span className={`saved ${saveState}`}>
             <i />
             <span>{SAVE_LABEL[saveState]}</span>
@@ -362,12 +380,14 @@ export default function App() {
           ) : (
             <span>מאסטר · {book!.chapters.length} קבצים מקושרים</span>
           )
+        ) : inBoard ? (
+          <span>לוח שעם · לחיצה כפולה על כרטיס פותחת את הפרק</span>
         ) : (
           book && active && <span className="fname">{active.file}</span>
         )}
         <span className="grow" />
-        {inMaster && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
-        {book && !inMaster && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
+        {(inMaster || inBoard) && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {book && view === 'write' && active && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
         {book && (
           <span>
             {book.chapters.length} פרקים
