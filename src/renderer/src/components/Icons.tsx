@@ -34,6 +34,11 @@ export function IconSprite() {
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
       <symbol id="i-gear" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></symbol>
       <symbol id="i-rename" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5" /></symbol>
+      <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" /></symbol>
+      <symbol id="i-scene" viewBox="0 0 24 24"><path d="M4 6h16M4 18h16M7 12h.01M12 12h.01M17 12h.01" /></symbol>
+      <symbol id="i-jump" viewBox="0 0 24 24"><path d="M5 12h11M12 7l5 5-5 5M20 5v14" /></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" /></symbol>
     </svg>
   )
 }

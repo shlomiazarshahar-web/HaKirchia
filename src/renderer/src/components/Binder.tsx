@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react'
+import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { Book, Chapter, PartNode } from '@shared/types'
 import { moveNode, updatePart, type Dragged, type DropTarget } from '@shared/outline'
 import type { OutlineNode } from '@shared/types'
@@ -21,6 +21,11 @@ interface Props {
   onOutline: (outline: OutlineNode[]) => void
   onContextMenu: (ch: Chapter, x: number, y: number) => void
   onPartMenu: (part: PartNode, x: number, y: number) => void
+  /** The scenes of the chapter being written, listed under it (feature 29) */
+  scenes?: { chapterId: string; items: { label: string; pos: number }[]; current: number } | null
+  onScene?: (pos: number) => void
+  /** Shown under the chapters: the list of bookmarks */
+  bookmarks?: ReactNode
 }
 
 /** Where a drop would land, for drawing the line / highlight */
@@ -103,9 +108,10 @@ export function Binder(props: Props) {
     if (ch.id === activeId && !masterActive) cls.push('active')
     if (drag?.type === 'chapter' && ch.id === drag.id) cls.push('dragging')
     if (over?.id === ch.id) cls.push(`over-${over.mark}`)
+    const sc = props.scenes && props.scenes.chapterId === ch.id && props.scenes.items.length > 1 ? props.scenes : null
     return (
+      <Fragment key={ch.id}>
       <div
-        key={ch.id}
         className={cls.join(' ')}
         role="treeitem"
         aria-level={inPart ? 2 : 1}
@@ -140,7 +146,24 @@ export function Binder(props: Props) {
         ) : (
           <span className="name">{ch.title}</span>
         )}
+        {sc && <span className="count" title={`${sc.items.length} סצנות`}>{sc.items.length}</span>}
       </div>
+      {sc && (
+        <div className={`bscenes${inPart ? ' bsub' : ''}`} role="group" aria-label={`הסצנות של ${ch.title}`}>
+          {sc.items.map((s, i) => (
+            <button
+              key={i}
+              className={`bscene${i === sc.current ? ' cur' : ''}`}
+              title={`סצנה ${i + 1} (Alt+PageDown / Alt+PageUp למעבר בין סצנות)`}
+              onClick={() => props.onScene?.(s.pos)}
+            >
+              <span className="sn">{i + 1}</span>
+              <span className="name" dir="auto">{s.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      </Fragment>
     )
   }
 
@@ -273,6 +296,7 @@ export function Binder(props: Props) {
           </div>
         )}
       </div>
+      {props.bookmarks}
       <div className="bsec">
         <div className="bhead">חומרי רקע</div>
         <div className="bempty">דפי דמויות, מקומות ומחקר יגיעו בפיצ'ר נפרד.</div>

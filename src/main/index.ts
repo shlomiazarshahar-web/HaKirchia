@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import type { Book, FocusSettings, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
+import type { Book, Bookmark, FocusSettings, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
 import type { StopPoint } from '../shared/stoppoint'
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
@@ -136,6 +136,7 @@ function registerIpc(): void {
   ipcMain.handle('settings:askStopNote', (_e, on: boolean) => {
     updateSettings({ askStopNote: on })
   })
+  ipcMain.handle('book:bookmarks', (_e, bookPath: string, list: Bookmark[]) => wrap(() => project.setBookmarks(bookPath, list)))
   ipcMain.handle('book:stopPoint', (_e, bookPath: string, sp: StopPoint | null) => wrap(() => project.setStopPoint(bookPath, sp)))
 
   ipcMain.on('app:flushed', () => {

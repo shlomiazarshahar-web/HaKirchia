@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PaneLayout } from '../shared/panes'
-import type { Book, ChapterStatus, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
+import type { Book, Bookmark, ChapterStatus, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 
@@ -22,6 +22,8 @@ const api = {
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   /** Remembers where the writer stopped in this book, or forgets it (null) */
   setStopPoint: (bookPath: string, sp: StopPoint | null): Promise<OpResult<void>> => ipcRenderer.invoke('book:stopPoint', bookPath, sp),
+  /** Saves the book's "come back here" bookmarks (the whole list) */
+  setBookmarks: (bookPath: string, list: Bookmark[]): Promise<OpResult<void>> => ipcRenderer.invoke('book:bookmarks', bookPath, list),
   /** Font families installed in Windows */
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('fonts:system'),
   addSystemFont: (family: string): Promise<CustomFont[]> => ipcRenderer.invoke('fonts:addSystem', family),

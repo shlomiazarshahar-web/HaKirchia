@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
-import type { Book, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
+import type { Book, Bookmark, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
 import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, type PaneLayout } from '@shared/panes'
@@ -19,7 +19,11 @@ import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
 import { NiqqudAtCursor, WritingSettings } from './components/HebrewTools'
 import { FocusBar, StopCard, StopDialog } from './components/Focus'
 import { getPrefs, initPrefs, setTypewriterNow, usePrefs } from './prefs'
-import { stopHere } from './editor'
+import { stopHere, centerCursor } from './editor'
+import { addBookmark, applyJump, bookmarkAt, bookmarkPos, bookmarkText, editorChapter, editorsFor, getBookmarks, loadBookmarks, removeBookmark, sceneAt, scenesIn, setPendingJump, useBookmarks, useEditorsVersion, type JumpTarget, type SceneItem } from './nav'
+import { SearchPanel } from './components/SearchPanel'
+import { QuickOpen, type QuickEntry } from './components/QuickOpen'
+import { BookmarkList, BookmarkNamer } from './components/Bookmarks'
 import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 
@@ -63,6 +67,16 @@ export default function App() {
   /** Asking "what next?" before closing the book (going to the library) or the app */
   const [stopAsk, setStopAsk] = useState<{ closingApp: boolean; resolve: (close: boolean) => void } | null>(null)
   const [niqqudOpen, setNiqqudOpen] = useState(false)
+  /** Find and replace panel (feature 24): open with the replace field or not, and the text to look for */
+  const [find, setFind] = useState<{ replace: boolean; seed: { text: string; n: number } } | null>(null)
+  /** Ctrl+P quick jump (feature 33) */
+  const [quick, setQuick] = useState(false)
+  /** A bookmark just added, asking for its name (feature 30) */
+  const [namer, setNamer] = useState<Bookmark | null>(null)
+  /** Scenes of the chapter being written (feature 29), listed in the binder */
+  const [scenes, setScenes] = useState<{ chapterId: string; items: SceneItem[]; current: number } | null>(null)
+  const bookmarks = useBookmarks()
+  const editorsVersion = useEditorsVersion()
   const prefs = usePrefs()
   const splitSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedLayouts = useRef<Record<string, PaneLayout>>({})
@@ -126,6 +140,41 @@ export default function App() {
     }
   }, [editor])
 
+  // Scenes of the chapter being written, and which one the cursor is in. Before the text was clicked,
+  // the editor of the chapter in the pane in focus.
+  const focusedChapterId = (() => {
+    const p = split?.panes.find((x) => x.key === focusKey)
+    return p?.content.kind === 'chapter' ? p.content.id : null
+  })()
+  const sceneEditor = editor ?? (book && focusedChapterId ? (editorsFor(book.path, focusedChapterId).find((e) => e.view.dom.closest(`[data-pane="${focusKey}"]`)) ?? null) : null)
+  useEffect(() => {
+    const editor = sceneEditor
+    const ch = editorChapter(editor)
+    if (!editor || !ch || view !== 'write') return setScenes(null)
+    let t: ReturnType<typeof setTimeout> | null = null
+    const upd = () => {
+      if (editor.isDestroyed) return
+      const items = scenesIn(editor.state.doc)
+      const current = sceneAt(items, editor.state.selection.head)
+      setScenes((old) =>
+        old && old.chapterId === ch.chapterId && old.current === current && JSON.stringify(old.items) === JSON.stringify(items) ? old : { chapterId: ch.chapterId, items, current }
+      )
+    }
+    const later = () => {
+      if (t) clearTimeout(t)
+      t = setTimeout(upd, 250)
+    }
+    upd()
+    editor.on('update', later)
+    editor.on('selectionUpdate', later)
+    return () => {
+      if (t) clearTimeout(t)
+      editor.off('update', later)
+      editor.off('selectionUpdate', later)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneEditor, view, editorsVersion])
+
   // The "what next" note steps aside once writing starts
   useEffect(() => {
     if (saveState === 'dirty') setStopCard(null)
@@ -172,6 +221,9 @@ export default function App() {
     setFocusKey((pane ?? l.panes[0]).key)
     setPendingStop(b.path, sp)
     setStopCard(sp && sp.note ? sp : null)
+    loadBookmarks(b.path, b.bookmarks ?? [])
+    setFind(null)
+    setNamer(null)
   }
 
   /** Remembers where the writer is now (the chapter and the cursor), with an optional note. */
@@ -307,6 +359,120 @@ export default function App() {
     void api.setLastChapter(book.path, id)
   }
 
+  /**
+   * Goes to a chapter, and to a place in it (a search result, a bookmark, a scene): in the pane that
+   * already shows it, or in the whole-book view when that is what is on screen, or opens it.
+   */
+  const goTo = async (chapterId: string, target?: JumpTarget, bookmarkId?: string) => {
+    if (!book || !book.chapters.some((c) => c.id === chapterId)) return
+    const jumpIn = (ed: ReturnType<typeof editorsFor>[number]) => {
+      if (!target) return ed.commands.focus()
+      const exact = bookmarkId !== undefined ? bookmarkPos(ed, bookmarkId) : undefined
+      applyJump(ed, exact !== undefined ? { pos: exact, focus: target.focus } : target)
+    }
+    if (view === 'board') {
+      await flushAll()
+      setEditor(null)
+      setView('write')
+    } else {
+      const pane = split?.panes.find((p) => p.key === focusKey)
+      const masterNow = view === 'master' || (view === 'write' && pane?.content.kind === 'master')
+      if (masterNow) {
+        const scope = view === 'master' ? '#master-desk' : `[data-pane="${pane!.key}"]`
+        const ed = editorsFor(book.path, chapterId).find((e) => e.view.dom.closest(scope))
+        setMasterFocusId(chapterId)
+        if (ed) return jumpIn(ed)
+        document.getElementById(`m-${chapterId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
+      }
+      // already on screen in one of the panes: jump there
+      const shownIn = split?.panes.find((p) => p.content.kind === 'chapter' && p.content.id === chapterId)
+      if (shownIn) {
+        const ed = editorsFor(book.path, chapterId).find((e) => e.view.dom.closest(`[data-pane="${shownIn.key}"]`))
+        if (ed) {
+          if (shownIn.key !== focusKey) focusPane(shownIn.key)
+          return jumpIn(ed)
+        }
+      }
+    }
+    if (target) setPendingJump(book.path, chapterId, target)
+    showInSplit(chapterId)
+  }
+
+  /** Adds a bookmark at the cursor, or removes the one that is there already (Ctrl+Shift+ל) */
+  const toggleBookmark = () => {
+    if (!book || !editor || editor.isDestroyed || !editorChapter(editor)) return
+    const here = bookmarkAt(editor)
+    if (here) {
+      removeBookmark(here.id)
+      return show(`הסימנייה "${bookmarkText(here)}" הוסרה`)
+    }
+    const b = addBookmark(editor)
+    if (b) setNamer(b)
+  }
+
+  const openFind = (replace: boolean) => {
+    if (!book) return
+    if (focusMode) exitFocus()
+    let text = ''
+    if (editor && !editor.isDestroyed) {
+      const { from, to, empty } = editor.state.selection
+      const t = empty ? '' : editor.state.doc.textBetween(from, to, ' ')
+      if (t.length <= 80 && !t.includes('\n')) text = t.trim()
+    }
+    setFind((f) => ({ replace: replace || (f?.replace ?? false), seed: { text, n: (f?.seed.n ?? 0) + 1 } }))
+  }
+
+  const closeFind = () => {
+    setFind(null)
+    if (editor && !editor.isDestroyed) editor.commands.focus()
+  }
+
+  /** Everything Ctrl+P can jump to */
+  const quickEntries = (): QuickEntry[] => {
+    if (!book) return []
+    const out: QuickEntry[] = []
+    const partTitle = new Map<string, string>()
+    for (const p of parts(book.outline)) for (const id of p.children) partTitle.set(id, p.title)
+    book.chapters.forEach((c, i) =>
+      out.push({ kind: 'chapter', id: c.id, label: c.title, extra: `פרק ${i + 1}${partTitle.has(c.id) ? ` · ${partTitle.get(c.id)}` : ''}`, run: () => void goTo(c.id) })
+    )
+    for (const p of parts(book.outline)) {
+      if (!p.children.length) continue
+      out.push({
+        kind: 'part',
+        id: p.id,
+        label: p.title,
+        extra: `${p.children.length} פרקים`,
+        run: () => {
+          if (view === 'master') document.getElementById(`m-${p.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          else void goTo(p.children[0])
+        }
+      })
+    }
+    const titles = new Map(book.chapters.map((c) => [c.id, c.title]))
+    for (const b of getBookmarks()) {
+      if (!titles.has(b.chapterId)) continue
+      out.push({ kind: 'bookmark', id: b.id, label: bookmarkText(b), extra: titles.get(b.chapterId), run: () => void goTo(b.chapterId, { pos: b.pos, before: b.before, after: b.after }, b.id) })
+    }
+    if (scenes && scenes.items.length > 1) {
+      const ed = sceneEditor
+      scenes.items.forEach((sc, i) =>
+        out.push({ kind: 'scene', id: `${scenes.chapterId}-${i}`, label: sc.label, extra: `סצנה ${i + 1} · ${titles.get(scenes.chapterId) ?? ''}`, run: () => ed && !ed.isDestroyed && applyJump(ed, { pos: sc.pos }) })
+      )
+    }
+    out.push({ kind: 'view', id: 'master', label: MASTER_LABEL, extra: 'כל הפרקים ברצף', run: () => void switchView('master') })
+    out.push({ kind: 'view', id: 'board', label: 'לוח שעם', extra: 'כרטיס לכל פרק', run: () => void switchView('board') })
+    return out
+  }
+
+  const goToScene = (pos: number) => {
+    const ed = sceneEditor
+    if (!ed || ed.isDestroyed) return
+    ed.chain().focus().setTextSelection(pos).run()
+    requestAnimationFrame(() => centerCursor(ed.view, true))
+  }
+
   const addPaneNow = () => {
     if (!book || !split || split.panes.length >= MAX_PANES) return
     if (view !== 'write') void switchView('write')
@@ -340,8 +506,19 @@ export default function App() {
   keys.current = (e: KeyboardEvent) => {
     if (e.code === 'F11' && !e.ctrlKey && !e.altKey) return e.preventDefault(), toggleFocus()
     if (e.key === 'Escape' && focusMode && !document.querySelector('.pop, .scrim, .pdrawer')) return e.preventDefault(), exitFocus()
+    if (e.code === 'F3' && find && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      document.querySelector<HTMLButtonElement>(e.shiftKey ? '.findpanel [aria-label="המופע הקודם"]' : '.findpanel [aria-label="המופע הבא"]')?.click()
+      return
+    }
     if (!e.ctrlKey || e.altKey || e.metaKey) return
+    if (book && !e.shiftKey && !document.querySelector('.scrim')) {
+      if (e.code === 'KeyF') return e.preventDefault(), openFind(false)
+      if (e.code === 'KeyH') return e.preventDefault(), openFind(true)
+      if (e.code === 'KeyP') return e.preventDefault(), setQuick((q) => !q)
+    }
     if (e.shiftKey) {
+      if (e.code === 'KeyK' && book && editor && !editor.isDestroyed) return e.preventDefault(), toggleBookmark()
       if (e.code === 'KeyD') return e.preventDefault(), toggleTheme()
       if (e.code === 'KeyF' && book) return e.preventDefault(), toggleFocus()
       if (e.code === 'KeyB' && editor && editor.isEditable && !editor.isDestroyed) return e.preventDefault(), setNiqqudOpen((o) => !o)
@@ -570,10 +747,23 @@ export default function App() {
           </>
         )}
         <span className="grow" />
+        {book && !empty && (
+          <>
+            <button className="searchbox" title="חיפוש והחלפה בכל הספר (Ctrl+F, החלפה: Ctrl+H)" aria-pressed={!!find} onClick={() => (find ? closeFind() : openFind(false))}>
+              <Icon name="search" />
+              <span>חיפוש<span className="lbl"> בכל הספר</span></span>
+              <kbd>Ctrl+F</kbd>
+            </button>
+            <button className="ib" title="מעבר מהיר לפרק, חלק או סימנייה (Ctrl+P)" onClick={() => setQuick(true)}>
+              <Icon name="jump" />
+              <span className="lbl">מעבר מהיר</span>
+            </button>
+          </>
+        )}
         {inWrite && !empty && (
           <button className="ib" title="מצב כתיבה ממוקדת: רק הטקסט, על כל המסך (F11 או Ctrl+Shift+כ)" onClick={toggleFocus}>
             <Icon name="focus" />
-            כתיבה ממוקדת
+            <span className="lbl">כתיבה ממוקדת</span>
           </button>
         )}
         <button className="ib theme-btn" title={`${themeLabel} (Ctrl+Shift+ג)`} aria-label={themeLabel} onClick={toggleTheme}>
@@ -582,7 +772,7 @@ export default function App() {
         </button>
         <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים, נקודת עצירה" onClick={() => setDialog({ kind: 'settings' })}>
           <Icon name="gear" />
-          הגדרות כתיבה
+          <span className="lbl">הגדרות כתיבה</span>
         </button>
         {inWrite && !empty && (
           <>
@@ -593,13 +783,13 @@ export default function App() {
               onClick={addPaneNow}
             >
               <Icon name="pane-plus" />
-              חלון נוסף
+              <span className="lbl">חלון נוסף</span>
             </button>
           </>
         )}
       </div>
 
-      {book && !inBoard && <FormatBar editor={editor} />}
+      {book && !inBoard && <FormatBar editor={editor} onBookmark={toggleBookmark} />}
 
       <div className="body">
         {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
@@ -635,6 +825,9 @@ export default function App() {
               onOutline={saveOutline}
               onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })}
               onPartMenu={(part, x, y) => setMenu({ part, x, y })}
+              scenes={inWrite ? scenes : null}
+              onScene={goToScene}
+              bookmarks={<BookmarkList book={book} list={bookmarks} onGo={(b) => void goTo(b.chapterId, { pos: b.pos, before: b.before, after: b.after }, b.id)} onRemove={(b) => removeBookmark(b.id)} />}
             />
             {inMaster ? (
               <MasterView
@@ -682,8 +875,21 @@ export default function App() {
               </main>
             )}
             {stopCard && stopChapter && inWrite && <StopCard sp={stopCard} chapterTitle={stopChapter.title} onClose={() => setStopCard(null)} />}
-            {inspected && !multi && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
+            {inspected && !multi && !find && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
           </>
+        )}
+        {book && find && !focusOn && (
+          <SearchPanel
+            key={book.path}
+            book={book}
+            replace={find.replace}
+            seed={find.seed}
+            currentId={inWrite ? (writeChapter?.id ?? null) : inMaster || writeMaster ? (masterFocusId ?? null) : null}
+            onGo={(id, t) => void goTo(id, t)}
+            onClose={closeFind}
+            onChanged={() => void refreshWords(book.path)}
+            onError={(m) => show(m, true)}
+          />
         )}
       </div>
 
@@ -739,6 +945,8 @@ export default function App() {
 
       {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} />}
       {niqqudOpen && editor && !editor.isDestroyed && <NiqqudAtCursor editor={editor} onClose={() => setNiqqudOpen(false)} />}
+      {quick && book && <QuickOpen entries={quickEntries()} onClose={() => setQuick(false)} />}
+      {namer && editor && !editor.isDestroyed && <BookmarkNamer editor={editor} bookmark={namer} onClose={() => setNamer(null)} />}
       {stopAsk && (
         <StopDialog
           previous={book?.stopPoint}

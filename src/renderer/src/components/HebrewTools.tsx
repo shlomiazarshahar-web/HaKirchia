@@ -132,6 +132,8 @@ const MARKS_EXTRA = [
 
 /** The keyboard shortcut that opens the niqqud panel at the cursor */
 export const NIQQUD_SHORTCUT = 'Ctrl+Shift+נ'
+/** Width of the niqqud panel: big enough to read the marks easily */
+export const NIQQUD_WIDTH = 460
 
 /**
  * Niqqud marks: a click adds the mark to the letter before the cursor. Opened from the keyboard
@@ -226,7 +228,7 @@ export function NiqqudAtCursor({ editor, onClose }: { editor: Editor; onClose: (
     }
   }, [editor])
   return (
-    <Popover anchor={null} at={at} label="ניקוד" width={318} onClose={onClose}>
+    <Popover anchor={null} at={at} label="ניקוד" width={NIQQUD_WIDTH} onClose={onClose}>
       <NiqqudPanel editor={editor} keyboard onClose={onClose} />
     </Popover>
   )

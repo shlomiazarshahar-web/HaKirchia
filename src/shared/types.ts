@@ -40,6 +40,24 @@ export interface Book {
   outline: OutlineNode[]
   /** Where the writer stopped last time, with the "what next" note */
   stopPoint?: StopPoint
+  /** "Come back here" bookmarks (feature 30), in the order they were added */
+  bookmarks: Bookmark[]
+}
+
+/**
+ * A "come back here" bookmark (feature 30). Like the stopping point, the place is a position plus
+ * the text around it, so it is found again after edits (also edits made in Word).
+ */
+export interface Bookmark {
+  id: string
+  chapterId: string
+  pos: number
+  before: string
+  after: string
+  /** What to come back for; may be empty (then the text around it is shown) */
+  label: string
+  /** When it was added (ms since 1970) */
+  at: number
 }
 
 export interface RecentBook {
