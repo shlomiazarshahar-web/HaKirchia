@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
 import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher, reportWords, takePendingStop } from '../api'
 import { editorExtensions, restoreStop } from '../editor'
+import { applyJump, bookmarkFlags, refreshBookmarkPlaces, registerEditor, SceneBreaks, searchHighlight, takePendingJump } from '../nav'
 import { Icon } from './Icons'
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
@@ -151,7 +152,11 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
         dirty.current = true
         cb.current.onSaveState('error')
         cb.current.onError(r.error ?? 'השמירה נכשלה')
-      } else cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
+      } else {
+        cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
+        // bookmarks in this chapter may have moved with the text
+        if (editorRef.current && !editorRef.current.isDestroyed) refreshBookmarkPlaces(editorRef.current)
+      }
     })()
     saving.current = run
     await run
@@ -172,8 +177,10 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     publishLiveEdit(ids.current.bookPath, ids.current.chapterId, latest.current, me.current)
   }
 
+  const extensions = useMemo(() => [...editorExtensions, SceneBreaks, searchHighlight(bookPath, chapterId), bookmarkFlags(bookPath, chapterId)], [bookPath, chapterId])
+  const editorRef = useRef<Editor | null>(null)
   const editor = useEditor({
-    extensions: editorExtensions,
+    extensions,
     content: initial,
     editable: !readOnly,
     autofocus: autoFocus ? 'end' : false,
@@ -209,6 +216,11 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     // The book opened where the writer stopped: the cursor goes back to that spot
     const stop = takePendingStop(ids.current.bookPath, ids.current.chapterId)
     if (stop) setTimeout(() => !editor.isDestroyed && restoreStop(editor, stop), 60)
+    // A jump to a place in this chapter (a search result, a bookmark, a scene) opened it
+    const jump = takePendingJump(ids.current.bookPath, ids.current.chapterId)
+    if (jump) setTimeout(() => !editor.isDestroyed && applyJump(editor, jump), 60)
+    editorRef.current = editor
+    const unregisterNav = registerEditor(ids.current.bookPath, ids.current.chapterId, editor)
     const unregister = registerFlusher(() => saveRef.current())
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -250,6 +262,8 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     return () => {
       if (liveTimer.current) publishLive()
       stopLive()
+      if (dirty.current && !editor.isDestroyed) refreshBookmarkPlaces(editor)
+      unregisterNav()
       stopListening()
       window.removeEventListener('keydown', onKey)
       unregister()

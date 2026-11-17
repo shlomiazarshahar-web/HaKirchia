@@ -8,7 +8,7 @@ import { join, basename } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
-import type { Book, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
+import type { Book, Bookmark, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
@@ -25,6 +25,8 @@ interface Manifest {
   outline?: OutlineNode[]
   /** Where the writer stopped, with the "what next" note (feature 32) */
   stopPoint?: StopPoint
+  /** "Come back here" bookmarks (feature 30) */
+  bookmarks?: Bookmark[]
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -87,6 +89,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   title: m.title,
   chapters: m.chapters,
   outline: m.outline ?? [],
+  bookmarks: (m.bookmarks ?? []).filter((b) => m.chapters.some((c) => c.id === b.chapterId)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
 
@@ -266,6 +269,16 @@ export function setStopPoint(bookPath: string, sp: StopPoint | null) {
     const m = await readManifest(bookPath)
     if (sp) m.stopPoint = sp
     else delete m.stopPoint
+    await writeManifest(bookPath, m)
+  })
+}
+
+/** Saves the book's bookmarks (the whole list). */
+export function setBookmarks(bookPath: string, list: Bookmark[]) {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (list.length) m.bookmarks = list
+    else delete m.bookmarks
     await writeManifest(bookPath, m)
   })
 }

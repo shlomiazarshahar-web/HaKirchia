@@ -6,6 +6,7 @@ import { TextStyle, FontFamily, FontSize } from '@tiptap/extension-text-style'
 import { Focus, Placeholder } from '@tiptap/extensions'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Editor } from '@tiptap/core'
+import type { Node as PMDoc } from '@tiptap/pm/model'
 import { locateStop, type StopPoint, type TextPiece } from '@shared/stoppoint'
 import { doubleQuoteFor, GERSHAYIM, MAQAF, NIQQUD_CLASS, singleQuoteFor, stripNiqqud } from '@shared/hebrew'
 import { getPrefs } from './prefs'
@@ -229,13 +230,13 @@ const HebrewTypography = Extension.create({
   }
 })
 
-/** Scrolls the writing desk so the cursor's line is in the middle of it. */
-export function centerCursor(view: EditorView, smooth = false): void {
+/** Scrolls the writing desk so the cursor's line (or the given position) is in the middle of it. */
+export function centerCursor(view: EditorView, smooth = false, at?: number): void {
   const desk = (view.dom as HTMLElement).closest('.desk') as HTMLElement | null
   if (!desk) return
   let c: { top: number; bottom: number }
   try {
-    c = view.coordsAtPos(view.state.selection.head)
+    c = view.coordsAtPos(at ?? view.state.selection.head)
   } catch {
     return
   }
@@ -282,27 +283,35 @@ const Typewriter = Extension.create({
 
 const CONTEXT = 40
 
-/** Where the cursor is now, with the text around it, to be found again next time. */
-export function stopHere(editor: Editor): Pick<StopPoint, 'pos' | 'before' | 'after'> {
-  const { doc, selection } = editor.state
-  const pos = selection.head
+/** The text right before and after a position, inside its own paragraph, to find the spot again. */
+export function contextAt(doc: PMDoc, pos: number): Pick<StopPoint, 'pos' | 'before' | 'after'> {
   const before = doc.textBetween(Math.max(0, pos - CONTEXT), pos, '\n', '\ufffc')
   const after = doc.textBetween(pos, Math.min(doc.content.size, pos + CONTEXT), '\n', '\ufffc')
   // only the text of the cursor's own paragraph: the paragraph breaks are not in the pieces below
   return { pos, before: before.split('\n').pop() ?? '', after: after.split('\n')[0] ?? '' }
 }
 
-/** Puts the cursor back at a stopping point, and shows that line in the middle of the screen. */
-export function restoreStop(editor: Editor, sp: Pick<StopPoint, 'pos' | 'before' | 'after'>): void {
+/** Where the cursor is now, with the text around it, to be found again next time. */
+export function stopHere(editor: Editor): Pick<StopPoint, 'pos' | 'before' | 'after'> {
+  return contextAt(editor.state.doc, editor.state.selection.head)
+}
+
+/** Finds a remembered place (position + text around it) in the chapter as it is now. */
+export function locatePlace(doc: PMDoc, sp: Pick<StopPoint, 'pos' | 'before' | 'after'>): number {
   const pieces: TextPiece[] = []
-  editor.state.doc.descendants((node, pos) => {
+  doc.descendants((node, pos) => {
     if (node.isText && node.text) pieces.push({ text: node.text, pos })
     else if (node.isBlock && pieces.length) pieces.push({ text: '\n', pos: -1 })
     return true
   })
   // the "\n" pieces keep text of two paragraphs from matching as one; they never become a position
   const clean = pieces.map((p) => (p.pos < 0 ? { text: '\u0000', pos: 0 } : p))
-  const at = locateStop(clean, sp, editor.state.doc.content.size - 1)
+  return locateStop(clean, sp, doc.content.size - 1)
+}
+
+/** Puts the cursor back at a stopping point, and shows that line in the middle of the screen. */
+export function restoreStop(editor: Editor, sp: Pick<StopPoint, 'pos' | 'before' | 'after'>): void {
+  const at = locatePlace(editor.state.doc, sp)
   editor.chain().focus().setTextSelection(at).run()
   requestAnimationFrame(() => centerCursor(editor.view))
 }

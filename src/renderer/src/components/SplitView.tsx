@@ -81,6 +81,7 @@ export function SplitView(props: Props) {
         return (
           <PaneFrame
             key={pane.key}
+            paneKey={pane.key}
             focused={focused && n > 1 && !props.only}
             bare={n === 1 || !!props.only}
             onFocus={() => onFocusPane(pane.key)}
@@ -213,6 +214,7 @@ export function PaneFrame({
   focused,
   bare = false,
   drawer,
+  paneKey,
   onFocus,
   onDropChapter,
   children
@@ -224,6 +226,8 @@ export function PaneFrame({
   bare?: boolean
   /** a side panel that slides out inside this pane, over its content */
   drawer?: ReactNode
+  /** data-pane on the pane, so an editor can be told apart by the pane it is in */
+  paneKey?: string
   onFocus: () => void
   onDropChapter?: (id: string) => void
   children: ReactNode
@@ -233,6 +237,7 @@ export function PaneFrame({
   return (
     <section
       className={`pane${focused ? ' focused' : ''}${bare ? ' bare' : ''}${dropOn ? ' drop' : ''}`}
+      data-pane={paneKey}
       onFocusCapture={onFocus}
       onMouseDown={onFocus}
       onDragOver={(e) => {

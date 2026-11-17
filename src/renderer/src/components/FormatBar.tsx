@@ -5,10 +5,10 @@ import { EDITOR_FONTS, FONT_SIZES } from '../fonts'
 import { Icon } from './Icons'
 import type { Align } from '../editor'
 import { usePrefs } from '../prefs'
-import { FontPanel, NIQQUD_SHORTCUT, NiqqudPanel, Popover } from './HebrewTools'
+import { FontPanel, NIQQUD_SHORTCUT, NIQQUD_WIDTH, NiqqudPanel, Popover } from './HebrewTools'
 
 
-export function FormatBar({ editor }: { editor: Editor | null }) {
+export function FormatBar({ editor, onBookmark }: { editor: Editor | null; onBookmark: () => void }) {
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => {
@@ -155,6 +155,15 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
       <button ref={nqRef} className="ib" title={`ניקוד, מקף, גרש וסימני כיוון (${NIQQUD_SHORTCUT}, ואז האות הראשונה של שם הסימן)`} aria-pressed={pop === 'niqqud'} onClick={() => setPop(pop === 'niqqud' ? null : 'niqqud')}>
         <span className="nq-btn">נִקּוּד</span>
       </button>
+      <span className="sep" />
+      <button className="ib" title="מעבר סצנה: * * * באמצע השורה (Ctrl+Shift+Enter, או להקליד *** בשורה ריקה). מעבר בין סצנות: Alt+PageDown / Alt+PageUp" onClick={() => chain().insertSceneBreak().run()}>
+        <Icon name="scene" />
+        סצנה
+      </button>
+      <button className="ib" title="סימנייה: לחזור לכאן אחר כך (Ctrl+Shift+ל). באותו מקום שוב: הסרה" disabled={!editor} onMouseDown={(e) => e.preventDefault()} onClick={onBookmark}>
+        <Icon name="bookmark" />
+        סימנייה
+      </button>
       {pop === 'font' && (
         <Popover anchor={fontRef.current} label="הוספת גופן" width={330} onClose={() => setPop(null)}>
           <FontPanel
@@ -166,7 +175,7 @@ export function FormatBar({ editor }: { editor: Editor | null }) {
         </Popover>
       )}
       {pop === 'niqqud' && editor && (
-        <Popover anchor={nqRef.current} label="ניקוד" width={318} onClose={() => setPop(null)}>
+        <Popover anchor={nqRef.current} label="ניקוד" width={NIQQUD_WIDTH} onClose={() => setPop(null)}>
           <NiqqudPanel editor={editor} />
         </Popover>
       )}
