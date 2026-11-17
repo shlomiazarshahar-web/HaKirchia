@@ -4,7 +4,8 @@
 
 import type { Book } from './types'
 
-export type PaneContent = { kind: 'chapter'; id: string } | { kind: 'master' }
+/** 'alt': an alternative draft (feature 35), written next to its chapter */
+export type PaneContent = { kind: 'chapter'; id: string } | { kind: 'master' } | { kind: 'alt'; id: string }
 
 export interface Pane {
   /** Stable id, so moving a pane does not reload its editor */
@@ -27,7 +28,7 @@ export const MIN_WIDTH = 0.2
 let counter = 0
 export const newPaneKey = (): string => `p${Date.now().toString(36)}${(counter++).toString(36)}`
 
-const same = (a: PaneContent, b: PaneContent) => a.kind === b.kind && (a.kind !== 'chapter' || (b.kind === 'chapter' && a.id === b.id))
+const same = (a: PaneContent, b: PaneContent) => a.kind === b.kind && (a.kind === 'master' || (b.kind !== 'master' && a.id === b.id))
 
 export const evenWidths = (n: number): number[] => Array.from({ length: n }, () => 1 / n)
 
@@ -51,16 +52,18 @@ export function defaultLayout(book: Book, activeId: string | null): PaneLayout {
 export function normalizeLayout(layout: PaneLayout | undefined, book: Book, activeId: string | null): PaneLayout {
   if (!layout?.panes?.length) return defaultLayout(book, activeId)
   const ids = new Set(book.chapters.map((c) => c.id))
+  const alts = new Set((book.alts ?? []).map((a) => a.id))
   const keep: number[] = []
   let master = false
   layout.panes.forEach((p, i) => {
     if (keep.length >= MAX_PANES || !p?.content) return
     if (p.content.kind === 'chapter' && !ids.has(p.content.id)) return
+    if (p.content.kind === 'alt' && !alts.has(p.content.id)) return
     if (p.content.kind === 'master') {
       if (master) return
       master = true
     }
-    if (p.content.kind !== 'chapter' && p.content.kind !== 'master') return
+    if (p.content.kind !== 'chapter' && p.content.kind !== 'master' && p.content.kind !== 'alt') return
     keep.push(i)
   })
   if (!keep.length) return defaultLayout(book, activeId)

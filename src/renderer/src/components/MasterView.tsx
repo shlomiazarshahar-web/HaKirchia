@@ -171,6 +171,7 @@ function MasterChapter({ bookPath, chapter, onEditor, onRelease, onFocus, onOpen
         <ChapterBody
           bookPath={bookPath}
           chapterId={chapter.id}
+          title={chapter.title}
           initial={loaded.doc}
           warnings={loaded.warnings}
           autoFocus={false}

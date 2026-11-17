@@ -42,6 +42,10 @@ export interface Book {
   stopPoint?: StopPoint
   /** "Come back here" bookmarks (feature 30), in the order they were added */
   bookmarks: Bookmark[]
+  /** Private notes (feature 15) */
+  notes: PrivateNote[]
+  /** Alternative drafts of chapters and scenes (feature 35) */
+  alts: AltDraft[]
 }
 
 /**
@@ -149,4 +153,60 @@ export const STATUS_LABELS: Record<ChapterStatus, string> = {
   writing: 'בכתיבה',
   editing: 'בעריכה',
   done: 'גמור'
+}
+
+// ---------------------------------------------------------------------------
+// Saving and drafts (features 14, 15, 27, 35)
+// ---------------------------------------------------------------------------
+
+/** A saved copy of a chapter (feature 14). The copy itself is a Word file in the "גרסאות" folder. */
+export interface Version {
+  id: string
+  chapterId: string
+  /** When it was taken (ms since 1970) */
+  at: number
+  /** The writer's name for it; empty for automatic versions */
+  label: string
+  /** Taken by the app (while writing, before a restore) rather than by the writer */
+  auto: boolean
+  /** Why the app took it, e.g. "לפני שחזור" */
+  reason?: string
+  words: number
+}
+
+/** A private note (feature 15): never part of the chapter file or an export. */
+export interface PrivateNote {
+  id: string
+  chapterId: string
+  text: string
+  at: number
+  /** The words it is attached to; missing for a note about the whole chapter */
+  anchor?: { pos: number; before: string; after: string; quote: string }
+}
+
+/** A piece of text that was cut or deleted, kept in the book's drawer (feature 27) */
+export interface DrawerItem {
+  id: string
+  /** Plain text, for the list and for search */
+  text: string
+  /** The piece with its formatting (editor JSON of the slice content), to put back as it was */
+  content: PMNode[]
+  /** How open the piece's ends are (ProseMirror slice openStart/openEnd), to put it back like a paste */
+  open?: [number, number]
+  chapterId: string | null
+  chapterTitle: string
+  at: number
+  how: 'cut' | 'delete' | 'manual'
+}
+
+/** An alternative draft of a chapter or of one scene in it (feature 35). A Word file of its own. */
+export interface AltDraft {
+  id: string
+  chapterId: string
+  name: string
+  /** File name inside the "טיוטות חלופיות" folder */
+  file: string
+  at: number
+  /** Set when the draft is of one scene: which scene, and its first words when it was made */
+  scene?: { index: number; label: string }
 }

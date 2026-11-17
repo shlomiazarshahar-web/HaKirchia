@@ -132,7 +132,8 @@ export function SearchPanel({ book, replace, seed, currentId, onGo, onClose, onC
       const list = only ? now.filter((m) => m.from === only.from && m.to === only.to) : now
       if (!list.length) return { count: 0 }
       const before = ed.getJSON() as PMNode
-      const tr = ed.state.tr
+      // a replace is not a deletion: nothing goes to the drawer
+      const tr = ed.state.tr.setMeta('noDrawer', true)
       for (const m of [...list].reverse()) {
         if (rep) tr.insertText(rep, m.from, m.to)
         else tr.delete(m.from, m.to)
@@ -211,7 +212,7 @@ export function SearchPanel({ book, replace, seed, currentId, onGo, onClose, onC
       const ed = editorsFor(book.path, c.id)[0]
       if (ed) {
         const content = ed.schema.nodeFromJSON(c.before).content
-        ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, content))
+        ed.view.dispatch(ed.state.tr.replaceWith(0, ed.state.doc.content.size, content).setMeta('noDrawer', true))
       } else {
         const s = await api.saveChapter(book.path, c.id, c.before)
         if (!s.ok) onError(s.error ?? 'השמירה נכשלה')

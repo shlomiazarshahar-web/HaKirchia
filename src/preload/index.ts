@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PaneLayout } from '../shared/panes'
-import type { Book, Bookmark, ChapterStatus, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
+import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 
@@ -24,6 +24,28 @@ const api = {
   setStopPoint: (bookPath: string, sp: StopPoint | null): Promise<OpResult<void>> => ipcRenderer.invoke('book:stopPoint', bookPath, sp),
   /** Saves the book's "come back here" bookmarks (the whole list) */
   setBookmarks: (bookPath: string, list: Bookmark[]): Promise<OpResult<void>> => ipcRenderer.invoke('book:bookmarks', bookPath, list),
+  /** Saves the book's private notes (the whole list) */
+  setNotes: (bookPath: string, list: PrivateNote[]): Promise<OpResult<void>> => ipcRenderer.invoke('book:notes', bookPath, list),
+  /** Versions of a chapter, newest first (feature 14) */
+  listVersions: (bookPath: string, chapterId: string): Promise<OpResult<Version[]>> => ipcRenderer.invoke('versions:list', bookPath, chapterId),
+  /** Keeps a copy of the chapter as saved now. Empty label = automatic (reason says why). */
+  takeVersion: (bookPath: string, chapterId: string, label: string, reason?: string): Promise<OpResult<Version>> =>
+    ipcRenderer.invoke('versions:take', bookPath, chapterId, label, reason),
+  loadVersion: (bookPath: string, chapterId: string, versionId: string): Promise<OpResult<PMNode>> => ipcRenderer.invoke('versions:load', bookPath, chapterId, versionId),
+  deleteVersion: (bookPath: string, chapterId: string, versionId: string): Promise<OpResult<void>> => ipcRenderer.invoke('versions:delete', bookPath, chapterId, versionId),
+  renameVersion: (bookPath: string, chapterId: string, versionId: string, label: string): Promise<OpResult<void>> =>
+    ipcRenderer.invoke('versions:rename', bookPath, chapterId, versionId, label),
+  /** The book's drawer of cut and deleted text (feature 27), newest first */
+  listDrawer: (bookPath: string): Promise<OpResult<DrawerItem[]>> => ipcRenderer.invoke('drawer:list', bookPath),
+  addToDrawer: (bookPath: string, item: DrawerItem): Promise<OpResult<DrawerItem[]>> => ipcRenderer.invoke('drawer:add', bookPath, item),
+  removeFromDrawer: (bookPath: string, ids: string[]): Promise<OpResult<DrawerItem[]>> => ipcRenderer.invoke('drawer:remove', bookPath, ids),
+  /** Alternative drafts (feature 35) */
+  createAlt: (bookPath: string, chapterId: string, name: string, doc: PMNode, scene?: AltDraft['scene']): Promise<OpResult<{ book: Book; altId: string }>> =>
+    ipcRenderer.invoke('alt:create', bookPath, chapterId, name, doc, scene),
+  loadAlt: (bookPath: string, altId: string): Promise<OpResult<LoadedChapter>> => ipcRenderer.invoke('alt:load', bookPath, altId),
+  saveAlt: (bookPath: string, altId: string, doc: PMNode): Promise<OpResult<void>> => ipcRenderer.invoke('alt:save', bookPath, altId, doc),
+  renameAlt: (bookPath: string, altId: string, name: string): Promise<OpResult<Book>> => ipcRenderer.invoke('alt:rename', bookPath, altId, name),
+  deleteAlt: (bookPath: string, altId: string): Promise<OpResult<Book>> => ipcRenderer.invoke('alt:delete', bookPath, altId),
   /** Font families installed in Windows */
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('fonts:system'),
   addSystemFont: (family: string): Promise<CustomFont[]> => ipcRenderer.invoke('fonts:addSystem', family),

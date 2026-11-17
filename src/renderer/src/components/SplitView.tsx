@@ -9,7 +9,7 @@ import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode }
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
 import { CHAPTER_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
-import { ChapterEditor, type SaveState } from './ChapterEditor'
+import { AltEditor, ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
 import { Icon } from './Icons'
 import { MASTER_LABEL } from '../labels'
@@ -77,6 +77,8 @@ export function SplitView(props: Props) {
       {layout.panes.map((pane, i) => {
         const c = pane.content
         const ch = c.kind === 'chapter' ? byId.get(c.id) : undefined
+        const alt = c.kind === 'alt' ? book.alts?.find((a) => a.id === c.id) : undefined
+        const altOf = alt ? byId.get(alt.chapterId) : undefined
         const focused = pane.key === focusKey
         return (
           <PaneFrame
@@ -91,7 +93,7 @@ export function SplitView(props: Props) {
             }}
             head={
               <>
-                <Icon name={c.kind === 'master' ? 'master' : 'file'} />
+                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
                 {shown[pane.key] !== undefined && (
                   <small className="pstat" title={ch ? ch.file : undefined}>
@@ -140,6 +142,20 @@ export function SplitView(props: Props) {
                 onRelease={props.onRelease}
                 onFocusChapter={props.onMasterFocus}
                 onOpenChapter={props.onOpenFromMaster}
+                onWords={(w) => setWords(pane.key, w)}
+                onSaveState={(s) => setState(pane.key, s)}
+                onError={props.onError}
+              />
+            ) : alt && altOf ? (
+              <AltEditor
+                key={`${book.path}|alt|${alt.id}`}
+                book={book}
+                alt={alt}
+                chapter={altOf}
+                activateOn="focus"
+                autoFocus={false}
+                onEditor={props.onEditor}
+                onRelease={props.onRelease}
                 onWords={(w) => setWords(pane.key, w)}
                 onSaveState={(s) => setState(pane.key, s)}
                 onError={props.onError}
@@ -194,15 +210,24 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       className="ppick"
       aria-label={label}
       title="בחירת מה להציג בחלון הזה"
-      value={value.kind === 'master' ? 'master' : `c:${value.id}`}
+      value={value.kind === 'master' ? 'master' : value.kind === 'alt' ? `a:${value.id}` : `c:${value.id}`}
       onChange={(e) => {
         const v = e.target.value
-        onChange(v === 'master' ? { kind: 'master' } : { kind: 'chapter', id: v.slice(2) })
+        onChange(v === 'master' ? { kind: 'master' } : v.startsWith('a:') ? { kind: 'alt', id: v.slice(2) } : { kind: 'chapter', id: v.slice(2) })
       }}
     >
       <option value="master">{MASTER_LABEL}</option>
       {loose.length > 0 && <optgroup label="פרקים">{loose}</optgroup>}
       {groups}
+      {(book.alts ?? []).length > 0 && (
+        <optgroup label="טיוטות חלופיות">
+          {(book.alts ?? []).map((a) => (
+            <option key={a.id} value={`a:${a.id}`}>
+              {a.name} ({byId.get(a.chapterId)?.title ?? ''})
+            </option>
+          ))}
+        </optgroup>
+      )}
     </select>
   )
 }

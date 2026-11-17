@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import type { Book, Bookmark, FocusSettings, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
+import type { AltDraft, Book, Bookmark, DrawerItem, FocusSettings, OpResult, OutlineNode, PMNode, PrivateNote, RecentBook, Theme } from '../shared/types'
 import type { StopPoint } from '../shared/stoppoint'
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
@@ -137,6 +137,28 @@ function registerIpc(): void {
     updateSettings({ askStopNote: on })
   })
   ipcMain.handle('book:bookmarks', (_e, bookPath: string, list: Bookmark[]) => wrap(() => project.setBookmarks(bookPath, list)))
+  ipcMain.handle('book:notes', (_e, bookPath: string, list: PrivateNote[]) => wrap(() => project.setNotes(bookPath, list)))
+  // Versions (feature 14)
+  ipcMain.handle('versions:list', (_e, b: string, id: string) => wrap(() => project.listVersions(b, id)))
+  ipcMain.handle('versions:take', (_e, b: string, id: string, label: string, reason?: string) => wrap(() => project.takeVersion(b, id, label, reason)))
+  ipcMain.handle('versions:load', (_e, b: string, id: string, v: string) => wrap(() => project.loadVersion(b, id, v)))
+  ipcMain.handle('versions:delete', (_e, b: string, id: string, v: string) => wrap(() => project.deleteVersion(b, id, v)))
+  ipcMain.handle('versions:rename', (_e, b: string, id: string, v: string, label: string) => wrap(() => project.renameVersion(b, id, v, label)))
+  // Drawer (feature 27)
+  ipcMain.handle('drawer:list', (_e, b: string) => wrap(() => project.readDrawer(b)))
+  ipcMain.handle('drawer:add', (_e, b: string, item: DrawerItem) => wrap(() => project.addToDrawer(b, item)))
+  ipcMain.handle('drawer:remove', (_e, b: string, ids: string[]) => wrap(() => project.removeFromDrawer(b, ids)))
+  // Alternative drafts (feature 35)
+  ipcMain.handle('alt:create', (_e, b: string, chapterId: string, name: string, doc: PMNode, scene?: AltDraft['scene']) =>
+    wrap(async () => {
+      const r = await project.createAlt(b, chapterId, name, doc, scene)
+      return { book: r.book, altId: r.alt.id }
+    })
+  )
+  ipcMain.handle('alt:load', (_e, b: string, id: string) => wrap(() => project.loadAlt(b, id)))
+  ipcMain.handle('alt:save', (_e, b: string, id: string, doc: PMNode) => wrap(() => project.saveAlt(b, id, doc)))
+  ipcMain.handle('alt:rename', (_e, b: string, id: string, name: string) => wrap(() => project.renameAlt(b, id, name)))
+  ipcMain.handle('alt:delete', (_e, b: string, id: string) => wrap(() => project.deleteAlt(b, id)))
   ipcMain.handle('book:stopPoint', (_e, bookPath: string, sp: StopPoint | null) => wrap(() => project.setStopPoint(bookPath, sp)))
 
   ipcMain.on('app:flushed', () => {
