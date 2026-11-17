@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webFrame } from 'electron'
 import type { PaneLayout } from '../shared/panes'
-import type { Book, ChapterStatus, CustomFont, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
+import type { Book, ChapterStatus, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
+import type { StopPoint } from '../shared/stoppoint'
 
 const api = {
   platform: process.platform,
@@ -15,6 +16,12 @@ const api = {
     return ipcRenderer.invoke('settings:zoom', zoom)
   },
   setTypography: (t: TypographySettings): Promise<void> => ipcRenderer.invoke('settings:typography', t),
+  setFocusSettings: (f: FocusSettings): Promise<void> => ipcRenderer.invoke('settings:focus', f),
+  setAskStopNote: (on: boolean): Promise<void> => ipcRenderer.invoke('settings:askStopNote', on),
+  /** Full screen on/off (focused writing mode) */
+  setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
+  /** Remembers where the writer stopped in this book, or forgets it (null) */
+  setStopPoint: (bookPath: string, sp: StopPoint | null): Promise<OpResult<void>> => ipcRenderer.invoke('book:stopPoint', bookPath, sp),
   /** Font families installed in Windows */
   systemFonts: (): Promise<string[]> => ipcRenderer.invoke('fonts:system'),
   addSystemFont: (family: string): Promise<CustomFont[]> => ipcRenderer.invoke('fonts:addSystem', family),
@@ -54,12 +61,17 @@ const api = {
       ipcRenderer.removeListener('chapter:disk-changed', h)
     }
   },
-  onFlushBeforeClose: (fn: () => Promise<void>) => {
+  /**
+   * The window is about to close. fn saves what is pending and returns true to close, or false when
+   * the writer changed their mind. fn calls wait() before asking anything, so there is no time limit.
+   */
+  onBeforeClose: (fn: (wait: () => void) => Promise<boolean>) => {
     ipcRenderer.on('app:flush-before-close', async () => {
+      let close = true
       try {
-        await fn()
+        close = await fn(() => ipcRenderer.send('app:close-wait'))
       } finally {
-        ipcRenderer.send('app:flushed')
+        ipcRenderer.send(close ? 'app:flushed' : 'app:close-cancelled')
       }
     })
   }

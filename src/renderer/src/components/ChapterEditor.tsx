@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
-import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher } from '../api'
-import { editorExtensions } from '../editor'
+import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher, reportWords, takePendingStop } from '../api'
+import { editorExtensions, restoreStop } from '../editor'
 import { Icon } from './Icons'
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
@@ -159,7 +159,11 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
   const saveRef = useRef(save)
   saveRef.current = save
 
-  const words = (e: Editor) => countWords(e.getText({ blockSeparator: '\n' }))
+  const words = (e: Editor) => {
+    const n = countWords(e.getText({ blockSeparator: '\n' }))
+    reportWords(ids.current.bookPath, ids.current.chapterId, n)
+    return n
+  }
 
   /** Passes the text on to other editors of the same chapter (split screen) */
   const publishLive = () => {
@@ -202,6 +206,9 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     if (activateOn === 'mount') cb.current.onEditor(editor)
     cb.current.onWords(words(editor))
     cb.current.onSaveState('saved')
+    // The book opened where the writer stopped: the cursor goes back to that spot
+    const stop = takePendingStop(ids.current.bookPath, ids.current.chapterId)
+    if (stop) setTimeout(() => !editor.isDestroyed && restoreStop(editor, stop), 60)
     const unregister = registerFlusher(() => saveRef.current())
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {

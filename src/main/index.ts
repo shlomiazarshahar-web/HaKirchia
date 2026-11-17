@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import type { Book, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
+import type { Book, FocusSettings, OpResult, OutlineNode, PMNode, RecentBook, Theme } from '../shared/types'
+import type { StopPoint } from '../shared/stoppoint'
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
@@ -11,6 +12,7 @@ import type { TypographySettings } from '../shared/hebrew'
 
 let win: BrowserWindow | null = null
 let allowClose = false
+let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 const overlayColors = (theme: Theme) =>
   theme === 'dark' ? { color: '#121716', symbolColor: '#E2E8E5', height: 34 } : { color: '#DDE3E0', symbolColor: '#1B2321', height: 34 }
@@ -43,12 +45,14 @@ function createWindow(): void {
     shell.openExternal(url)
     return { action: 'deny' }
   })
-  // Before closing, ask the window to save anything still pending
+  // Before closing, ask the window to save anything still pending. The window may first ask
+  // "what next?" (stopping point); it says so ('app:close-wait'), and then there is no time limit.
   win.on('close', (e) => {
     if (allowClose) return
     e.preventDefault()
+    if (closeTimer) return
     win?.webContents.send('app:flush-before-close')
-    setTimeout(() => {
+    closeTimer = setTimeout(() => {
       allowClose = true
       win?.close()
     }, 4000)
@@ -115,6 +119,24 @@ function registerIpc(): void {
   ipcMain.handle('spell:enable', (_e, on: boolean) => (spell.setSpellEnabled(win!, on), spell.spellStatus(win!)))
   ipcMain.handle('spell:add', (_e, word: string) => (spell.addWordQuiet(win!, word), spell.spellStatus(win!)))
   ipcMain.handle('spell:remove', (_e, word: string) => (spell.removeWord(win!, word), spell.spellStatus(win!)))
+
+  ipcMain.on('app:close-wait', () => {
+    if (closeTimer) clearTimeout(closeTimer)
+  })
+  ipcMain.on('app:close-cancelled', () => {
+    if (closeTimer) clearTimeout(closeTimer)
+    closeTimer = null
+  })
+  ipcMain.handle('window:fullscreen', (_e, on: boolean) => {
+    win?.setFullScreen(on)
+  })
+  ipcMain.handle('settings:focus', (_e, focus: FocusSettings) => {
+    updateSettings({ focus })
+  })
+  ipcMain.handle('settings:askStopNote', (_e, on: boolean) => {
+    updateSettings({ askStopNote: on })
+  })
+  ipcMain.handle('book:stopPoint', (_e, bookPath: string, sp: StopPoint | null) => wrap(() => project.setStopPoint(bookPath, sp)))
 
   ipcMain.on('app:flushed', () => {
     allowClose = true

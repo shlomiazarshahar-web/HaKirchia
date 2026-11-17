@@ -7,6 +7,7 @@ import { promises as fs, existsSync, watch, type FSWatcher } from 'fs'
 import { join, basename } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
+import type { StopPoint } from '../shared/stoppoint'
 import type { Book, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
@@ -22,6 +23,8 @@ interface Manifest {
   chapters: Chapter[]
   /** The binder tree with parts. Missing in books made before parts existed. */
   outline?: OutlineNode[]
+  /** Where the writer stopped, with the "what next" note (feature 32) */
+  stopPoint?: StopPoint
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -79,7 +82,13 @@ async function writeManifest(bookPath: string, m: Manifest): Promise<void> {
   await fs.rename(tmp, file)
 }
 
-const toBook = (bookPath: string, m: Manifest): Book => ({ path: bookPath, title: m.title, chapters: m.chapters, outline: m.outline ?? [] })
+const toBook = (bookPath: string, m: Manifest): Book => ({
+  path: bookPath,
+  title: m.title,
+  chapters: m.chapters,
+  outline: m.outline ?? [],
+  ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
+})
 
 export function isBookFolder(folder: string): boolean {
   return existsSync(join(folder, MANIFEST))
@@ -248,6 +257,16 @@ export function updateChapterMeta(bookPath: string, id: string, meta: { status?:
     if (typeof meta.synopsis === 'string') ch.synopsis = meta.synopsis
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
+  })
+}
+
+/** Remembers where the writer stopped (or forgets it, with null). Saved in the book's own file. */
+export function setStopPoint(bookPath: string, sp: StopPoint | null) {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (sp) m.stopPoint = sp
+    else delete m.stopPoint
+    await writeManifest(bookPath, m)
   })
 }
 

@@ -1,6 +1,7 @@
 // Types shared by the main process (disk, docx) and the window (UI).
 import type { PaneLayout } from './panes'
 import type { TypographySettings } from './hebrew'
+import type { StopPoint } from './stoppoint'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -37,6 +38,8 @@ export interface Book {
   /** All chapters, flat, in reading order (the order of the tree) */
   chapters: Chapter[]
   outline: OutlineNode[]
+  /** Where the writer stopped last time, with the "what next" note */
+  stopPoint?: StopPoint
 }
 
 export interface RecentBook {
@@ -92,7 +95,20 @@ export interface Settings {
   typography?: TypographySettings
   /** Red underline for spelling mistakes (default on) */
   spellcheck?: boolean
+  /** Focused writing mode: what it shows */
+  focus?: FocusSettings
+  /** Ask "what next?" when closing a book (default on) */
+  askStopNote?: boolean
 }
+
+export interface FocusSettings {
+  /** The line being written stays in the middle of the screen */
+  typewriter: boolean
+  /** Paragraphs other than the one being written are faded */
+  dim: boolean
+}
+
+export const DEFAULT_FOCUS: FocusSettings = { typewriter: true, dim: false }
 
 /** A font the user added: installed in Windows, or a font file copied into the app's folder. */
 export interface CustomFont {

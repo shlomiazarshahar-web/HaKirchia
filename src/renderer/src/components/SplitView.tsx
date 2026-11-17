@@ -24,6 +24,8 @@ interface Props {
   /** right after adding a chapter: its name is being typed in the binder, so don't grab the focus */
   renamingId: string | null
   onLayout: (l: PaneLayout) => void
+  /** focused writing mode: only this pane is shown (the others stay open, hidden) */
+  only?: string | null
   /** the pane whose "על הפרק" panel is open (slides out inside that pane), and how to draw it */
   infoKey: string | null
   onInfo: (key: string | null) => void
@@ -71,7 +73,7 @@ export function SplitView(props: Props) {
   }
 
   return (
-    <PaneRow widths={layout.widths} onWidths={(widths) => onLayout({ ...layout, widths })}>
+    <PaneRow widths={layout.widths} only={props.only ? layout.panes.findIndex((p) => p.key === props.only) : -1} onWidths={(widths) => onLayout({ ...layout, widths })}>
       {layout.panes.map((pane, i) => {
         const c = pane.content
         const ch = c.kind === 'chapter' ? byId.get(c.id) : undefined
@@ -79,8 +81,8 @@ export function SplitView(props: Props) {
         return (
           <PaneFrame
             key={pane.key}
-            focused={focused && n > 1}
-            bare={n === 1}
+            focused={focused && n > 1 && !props.only}
+            bare={n === 1 || !!props.only}
             onFocus={() => onFocusPane(pane.key)}
             onDropChapter={(id) => {
               onLayout(setPaneContent(layout, i, { kind: 'chapter', id }))
@@ -291,7 +293,7 @@ export function PaneDrawer({ label, onClose, children }: { label: string; onClos
 }
 
 /** Panes in a row with draggable borders between them. Widths are fractions that add up to 1. */
-export function PaneRow({ widths, onWidths, children }: { widths: number[]; onWidths: (w: number[]) => void; children: ReactNode[] }) {
+export function PaneRow({ widths, onWidths, only = -1, children }: { widths: number[]; onWidths: (w: number[]) => void; only?: number; children: ReactNode[] }) {
   const row = useRef<HTMLDivElement>(null)
   const drag = useRef<{ index: number; x: number; start: number[] } | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -327,7 +329,7 @@ export function PaneRow({ widths, onWidths, children }: { widths: number[]; onWi
     <div className={`panes${dragging ? ' resizing' : ''}`} ref={row}>
       {children.map((child, i) => (
         <Fragment key={(child as { key?: string }).key ?? i}>
-          {i > 0 && (
+          {i > 0 && only < 0 && (
             <div
               className="prz"
               role="separator"
@@ -343,7 +345,7 @@ export function PaneRow({ widths, onWidths, children }: { widths: number[]; onWi
               onKeyDown={nudge(i - 1)}
             />
           )}
-          <div className="pslot" style={{ flex: `${widths[i] ?? 1} 1 0` }}>
+          <div className="pslot" style={only < 0 ? { flex: `${widths[i] ?? 1} 1 0` } : only === i ? { flex: '1 1 0' } : { display: 'none' }}>
             {child}
           </div>
         </Fragment>

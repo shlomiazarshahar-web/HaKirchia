@@ -3,7 +3,10 @@ import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/p
 import StarterKit from '@tiptap/starter-kit'
 import TextAlign from '@tiptap/extension-text-align'
 import { TextStyle, FontFamily, FontSize } from '@tiptap/extension-text-style'
-import { Placeholder } from '@tiptap/extensions'
+import { Focus, Placeholder } from '@tiptap/extensions'
+import type { EditorView } from '@tiptap/pm/view'
+import type { Editor } from '@tiptap/core'
+import { locateStop, type StopPoint, type TextPiece } from '@shared/stoppoint'
 import { doubleQuoteFor, GERSHAYIM, MAQAF, NIQQUD_CLASS, singleQuoteFor, stripNiqqud } from '@shared/hebrew'
 import { getPrefs } from './prefs'
 
@@ -226,6 +229,84 @@ const HebrewTypography = Extension.create({
   }
 })
 
+/** Scrolls the writing desk so the cursor's line is in the middle of it. */
+export function centerCursor(view: EditorView, smooth = false): void {
+  const desk = (view.dom as HTMLElement).closest('.desk') as HTMLElement | null
+  if (!desk) return
+  let c: { top: number; bottom: number }
+  try {
+    c = view.coordsAtPos(view.state.selection.head)
+  } catch {
+    return
+  }
+  const r = desk.getBoundingClientRect()
+  const delta = (c.top + c.bottom) / 2 - (r.top + desk.clientHeight / 2)
+  if (Math.abs(delta) < 2) return
+  desk.scrollBy({ top: delta, behavior: smooth ? 'smooth' : 'instant' })
+}
+
+/**
+ * Typewriter scrolling (feature 38): while focus mode wants it, the line being written stays in the
+ * middle of the screen, like paper in a typewriter. Follows typing and moving the cursor.
+ */
+const Typewriter = Extension.create({
+  name: 'typewriter',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('typewriter'),
+        view: () => ({
+          update: (view, prev) => {
+            if (!getPrefs().typewriterNow || !view.hasFocus()) return
+            if (prev.doc.eq(view.state.doc) && prev.selection.eq(view.state.selection)) return
+            // after the browser has laid out the new text
+            requestAnimationFrame(() => centerCursor(view))
+          }
+        }),
+        props: {
+          handleDOMEvents: {
+            focus: (view) => {
+              if (getPrefs().typewriterNow) requestAnimationFrame(() => centerCursor(view, true))
+              return false
+            }
+          }
+        }
+      })
+    ]
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Stopping point (feature 32)
+// ---------------------------------------------------------------------------
+
+const CONTEXT = 40
+
+/** Where the cursor is now, with the text around it, to be found again next time. */
+export function stopHere(editor: Editor): Pick<StopPoint, 'pos' | 'before' | 'after'> {
+  const { doc, selection } = editor.state
+  const pos = selection.head
+  const before = doc.textBetween(Math.max(0, pos - CONTEXT), pos, '\n', '\ufffc')
+  const after = doc.textBetween(pos, Math.min(doc.content.size, pos + CONTEXT), '\n', '\ufffc')
+  // only the text of the cursor's own paragraph: the paragraph breaks are not in the pieces below
+  return { pos, before: before.split('\n').pop() ?? '', after: after.split('\n')[0] ?? '' }
+}
+
+/** Puts the cursor back at a stopping point, and shows that line in the middle of the screen. */
+export function restoreStop(editor: Editor, sp: Pick<StopPoint, 'pos' | 'before' | 'after'>): void {
+  const pieces: TextPiece[] = []
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text) pieces.push({ text: node.text, pos })
+    else if (node.isBlock && pieces.length) pieces.push({ text: '\n', pos: -1 })
+    return true
+  })
+  // the "\n" pieces keep text of two paragraphs from matching as one; they never become a position
+  const clean = pieces.map((p) => (p.pos < 0 ? { text: '\u0000', pos: 0 } : p))
+  const at = locateStop(clean, sp, editor.state.doc.content.size - 1)
+  editor.chain().focus().setTextSelection(at).run()
+  requestAnimationFrame(() => centerCursor(editor.view))
+}
+
 export const editorExtensions = [
   HebrewTypography,
   TabKey,
@@ -247,5 +328,8 @@ export const editorExtensions = [
   FontFamily,
   FontSize,
   ParagraphDirection,
-  Placeholder.configure({ placeholder: 'כאן מתחילים לכתוב…' })
+  Placeholder.configure({ placeholder: 'כאן מתחילים לכתוב…' }),
+  // marks the paragraph being written ("has-focus"); focus mode can fade all the others
+  Focus.configure({ className: 'has-focus', mode: 'shallowest' }),
+  Typewriter
 ]
