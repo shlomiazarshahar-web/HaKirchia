@@ -577,6 +577,14 @@ export default function App() {
     if (e.key === 'Escape' && focusMode && !document.querySelector('.pop, .scrim, .pdrawer')) return e.preventDefault(), exitFocus()
     // Ctrl+Alt+M: private note (as Word's new comment)
     if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.code === 'KeyM' && book && editor) return e.preventDefault(), addNoteHere()
+    // Ctrl+Alt+F: footnote (as in Word). Caught here by the key's place: on Windows Ctrl+Alt is also AltGr,
+    // and with a Hebrew keyboard the editor's own shortcut never sees an "f"
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.code === 'KeyF' && book && editor) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!editor.isDestroyed && editor.isEditable) editor.chain().focus().insertFootnote().run()
+      return
+    }
     if (e.code === 'F3' && find && !e.ctrlKey && !e.altKey) {
       e.preventDefault()
       document.querySelector<HTMLButtonElement>(e.shiftKey ? '.findpanel [aria-label="המופע הקודם"]' : '.findpanel [aria-label="המופע הבא"]')?.click()
