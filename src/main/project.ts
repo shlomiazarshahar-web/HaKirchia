@@ -8,7 +8,8 @@ import { join, basename } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
-import type { Book, Bookmark, Chapter, ChapterStatus, LoadedChapter, OutlineNode, PMNode } from '../shared/types'
+import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
+import * as drafts from './drafts'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
@@ -27,6 +28,10 @@ interface Manifest {
   stopPoint?: StopPoint
   /** "Come back here" bookmarks (feature 30) */
   bookmarks?: Bookmark[]
+  /** Private notes (feature 15) */
+  notes?: PrivateNote[]
+  /** Alternative drafts (feature 35); their files are in the "טיוטות חלופיות" folder */
+  alts?: AltDraft[]
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -90,6 +95,8 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   chapters: m.chapters,
   outline: m.outline ?? [],
   bookmarks: (m.bookmarks ?? []).filter((b) => m.chapters.some((c) => c.id === b.chapterId)),
+  notes: (m.notes ?? []).filter((n) => m.chapters.some((c) => c.id === n.chapterId)),
+  alts: (m.alts ?? []).filter((a) => m.chapters.some((c) => c.id === a.chapterId)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
 
@@ -244,6 +251,13 @@ export function deleteChapter(bookPath: string, id: string) {
       // To the Windows Recycle Bin, so it can be restored from there
       await shell.trashItem(file)
     }
+    // its alternative drafts go to the Recycle Bin with it
+    for (const a of (m.alts ?? []).filter((x) => x.chapterId === id)) {
+      const f = join(bookPath, drafts.ALTS_DIR, a.file)
+      if (existsSync(f)) await shell.trashItem(f).catch(() => undefined)
+    }
+    m.alts = (m.alts ?? []).filter((x) => x.chapterId !== id)
+    m.notes = (m.notes ?? []).filter((x) => x.chapterId !== id)
     m.chapters = m.chapters.filter((c) => c.id !== id)
     fixup(m)
     const notice = await syncFileNames(bookPath, m)
@@ -280,6 +294,140 @@ export function setBookmarks(bookPath: string, list: Bookmark[]) {
     if (list.length) m.bookmarks = list
     else delete m.bookmarks
     await writeManifest(bookPath, m)
+  })
+}
+
+/** Saves the book's private notes (the whole list). */
+export function setNotes(bookPath: string, list: PrivateNote[]) {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (list.length) m.notes = list
+    else delete m.notes
+    await writeManifest(bookPath, m)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Versions (feature 14)
+// ---------------------------------------------------------------------------
+
+export function listVersions(bookPath: string, chapterId: string): Promise<Version[]> {
+  return serial(bookPath, () => drafts.listVersions(bookPath, chapterId))
+}
+
+/** Keeps a copy of the chapter as it is saved on disk now (the window saves pending typing first). */
+export function takeVersion(bookPath: string, chapterId: string, label: string, reason?: string): Promise<Version> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const ch = m.chapters.find((c) => c.id === chapterId)
+    if (!ch) throw new Error('הפרק לא נמצא')
+    const file = chapterPath(bookPath, ch)
+    const bytes = existsSync(file) ? new Uint8Array(await fs.readFile(file)) : await docToDocx(emptyDoc(), ch.title)
+    return drafts.snapshot(bookPath, chapterId, bytes, { label, auto: !label, reason })
+  })
+}
+
+export function loadVersion(bookPath: string, chapterId: string, versionId: string): Promise<PMNode> {
+  return serial(bookPath, () => drafts.loadVersion(bookPath, chapterId, versionId))
+}
+export function deleteVersion(bookPath: string, chapterId: string, versionId: string): Promise<void> {
+  return serial(bookPath, () => drafts.deleteVersion(bookPath, chapterId, versionId))
+}
+export function renameVersion(bookPath: string, chapterId: string, versionId: string, label: string): Promise<void> {
+  return serial(bookPath, () => drafts.renameVersion(bookPath, chapterId, versionId, label))
+}
+
+// ---------------------------------------------------------------------------
+// Drawer (feature 27)
+// ---------------------------------------------------------------------------
+
+export function readDrawer(bookPath: string): Promise<DrawerItem[]> {
+  return serial(bookPath, () => drafts.readDrawer(bookPath))
+}
+export function addToDrawer(bookPath: string, item: DrawerItem): Promise<DrawerItem[]> {
+  return serial(bookPath, () => drafts.addToDrawer(bookPath, item))
+}
+export function removeFromDrawer(bookPath: string, ids: string[]): Promise<DrawerItem[]> {
+  return serial(bookPath, () => drafts.removeFromDrawer(bookPath, ids))
+}
+
+// ---------------------------------------------------------------------------
+// Alternative drafts (feature 35)
+// ---------------------------------------------------------------------------
+
+const altPath = (bookPath: string, a: AltDraft) => join(bookPath, drafts.ALTS_DIR, a.file)
+const altTitle = (ch: Chapter, a: AltDraft) => `${ch.title} (טיוטה חלופית: ${a.name})`
+
+/** A new alternative draft of a chapter (or of one scene of it), starting from the given text. */
+export function createAlt(bookPath: string, chapterId: string, name: string, doc: PMNode, scene?: AltDraft['scene']): Promise<{ book: Book; alt: AltDraft }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const ch = m.chapters.find((c) => c.id === chapterId)
+    if (!ch) throw new Error('הפרק לא נמצא')
+    const id = randomUUID()
+    const a: AltDraft = { id, chapterId, name: name.trim() || 'טיוטה חלופית', file: '', at: Date.now(), ...(scene ? { scene } : {}) }
+    a.file = `${safeName(ch.title).slice(0, 40)} - ${safeName(a.name).slice(0, 40)} ${id.slice(0, 6)}.docx`
+    await fs.mkdir(join(bookPath, drafts.ALTS_DIR), { recursive: true })
+    await fs.writeFile(altPath(bookPath, a), await docToDocx(doc, altTitle(ch, a)))
+    m.alts = [...(m.alts ?? []), a]
+    await writeManifest(bookPath, m)
+    return { book: toBook(bookPath, m), alt: a }
+  })
+}
+
+export function loadAlt(bookPath: string, altId: string): Promise<LoadedChapter> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const a = m.alts?.find((x) => x.id === altId)
+    if (!a) throw new Error('הטיוטה החלופית לא נמצאה')
+    const file = altPath(bookPath, a)
+    if (!existsSync(file)) return { doc: emptyDoc(), warnings: [] }
+    const res = await docxToDoc(new Uint8Array(await fs.readFile(file)))
+    return { doc: res.doc, warnings: res.warnings }
+  })
+}
+
+export function saveAlt(bookPath: string, altId: string, doc: PMNode): Promise<void> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const a = m.alts?.find((x) => x.id === altId)
+    const ch = a && m.chapters.find((c) => c.id === a.chapterId)
+    if (!a || !ch) throw new Error('הטיוטה החלופית לא נמצאה')
+    await fs.mkdir(join(bookPath, drafts.ALTS_DIR), { recursive: true })
+    const file = altPath(bookPath, a)
+    const tmp = file + '.saving'
+    await fs.writeFile(tmp, await docToDocx(doc, altTitle(ch, a)))
+    try {
+      await fs.rename(tmp, file)
+    } catch {
+      await fs.rm(tmp, { force: true })
+      throw new Error('השמירה נכשלה. אם הקובץ פתוח ב-Word, יש לסגור אותו ולנסות שוב.')
+    }
+  })
+}
+
+export function renameAlt(bookPath: string, altId: string, name: string): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const a = m.alts?.find((x) => x.id === altId)
+    if (a && name.trim()) a.name = name.trim()
+    await writeManifest(bookPath, m)
+    return toBook(bookPath, m)
+  })
+}
+
+/** Removes an alternative draft; its file goes to the Recycle Bin. */
+export function deleteAlt(bookPath: string, altId: string): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const a = m.alts?.find((x) => x.id === altId)
+    if (a) {
+      const f = altPath(bookPath, a)
+      if (existsSync(f)) await shell.trashItem(f)
+      m.alts = (m.alts ?? []).filter((x) => x.id !== altId)
+      await writeManifest(bookPath, m)
+    }
+    return toBook(bookPath, m)
   })
 }
 
@@ -325,6 +473,8 @@ export function saveChapter(bookPath: string, id: string, doc: PMNode): Promise<
     const file = chapterPath(bookPath, ch)
     if (existsSync(file)) {
       const old = new Uint8Array(await fs.readFile(file))
+      // a version of the text as it was, every so often (feature 14); never stops the save
+      await drafts.autoSnapshotBeforeSave(bookPath, ch.id, old).catch(() => undefined)
       if (!(await isOurFile(old))) {
         // First save over a file that came from Word: keep the original copy once
         const bdir = join(bookPath, BACKUP_DIR)

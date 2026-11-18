@@ -2,8 +2,9 @@
 //
 // Supported today: paragraphs, chapter title (Heading 1), headings (Heading 2/3),
 // bold, italic, underline, font, font size, alignment, paragraph direction (RTL/LTR),
-// line breaks and tabs. Anything else found in a file opened from Word (images, tables,
-// footnotes, comments, lists...) is reported in `warnings`, so the UI can protect it.
+// line breaks, tabs and footnotes (feature 15, plain text). Anything else found in a file opened
+// from Word (images, tables, endnotes, comments, lists...) is reported in `warnings`, so the UI can
+// protect it.
 
 import JSZip from 'jszip'
 import { DOMParser } from '@xmldom/xmldom'
@@ -117,7 +118,16 @@ function jcFor(align: Align, dir: Dir): string | null {
   return 'right'
 }
 
-function paragraphXml(node: PMNode, styleId: string | null): string {
+/** Footnote texts collected while writing a chapter; the n-th note gets id n (1, 2, ...). */
+type Notes = string[]
+
+function footnoteRun(notes: Notes | null, text: string): string {
+  if (!notes) return ''
+  notes.push(text)
+  return `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${notes.length}"/></w:r>`
+}
+
+function paragraphXml(node: PMNode, styleId: string | null, notes: Notes | null = null): string {
   const dir: Dir = node.attrs?.dir === 'ltr' ? 'ltr' : 'rtl'
   const align = (node.attrs?.textAlign as Align) ?? null
   const pPr: string[] = []
@@ -129,6 +139,7 @@ function paragraphXml(node: PMNode, styleId: string | null): string {
   for (const child of node.content ?? []) {
     if (child.type === 'text' && child.text) runs += textRuns(child.text, child.marks, dir === 'rtl')
     else if (child.type === 'hardBreak') runs += '<w:r><w:br/></w:r>'
+    else if (child.type === 'footnote') runs += footnoteRun(notes, String(child.attrs?.text ?? ''))
   }
   return `<w:p><w:pPr>${pPr.join('')}</w:pPr>${runs}</w:p>`
 }
@@ -147,7 +158,7 @@ export function isIndented(node: PMNode, prev: PMNode | undefined): boolean {
   return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev)
 }
 
-function bodyXml(doc: PMNode, title: string): string {
+function bodyXml(doc: PMNode, title: string, notes: Notes): string {
   const out: string[] = []
   out.push(
     paragraphXml(
@@ -157,18 +168,42 @@ function bodyXml(doc: PMNode, title: string): string {
   )
   let prev: PMNode | undefined
   for (const node of doc.content ?? []) {
-    if (node.type === 'paragraph') out.push(paragraphXml(node, isIndented(node, prev) ? null : FIRST_PARAGRAPH_STYLE))
+    if (node.type === 'paragraph') out.push(paragraphXml(node, isIndented(node, prev) ? null : FIRST_PARAGRAPH_STYLE, notes))
     else if (node.type === 'heading') {
       const level = Number(node.attrs?.level ?? 2)
-      out.push(paragraphXml(node, level <= 2 ? 'Heading2' : 'Heading3'))
+      out.push(paragraphXml(node, level <= 2 ? 'Heading2' : 'Heading3', notes))
     } else if (node.content) {
       // Unknown block (should not happen with our editor schema): keep its text
-      for (const c of node.content) if (c.type === 'paragraph' || c.type === 'heading') out.push(paragraphXml(c, null))
+      for (const c of node.content) if (c.type === 'paragraph' || c.type === 'heading') out.push(paragraphXml(c, null, notes))
     }
     prev = node
   }
   return out.join('')
 }
+
+/** word/footnotes.xml: the two separators Word expects, then one footnote per note. */
+function footnotesXml(notes: Notes): string {
+  const sep = `<w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>`
+  const body = notes
+    .map((text, i) => {
+      const lines = text.split('\n')
+      const paras = lines
+        .map((line, k) => {
+          const rtl = (guessDir(text) ?? 'rtl') === 'rtl'
+          const ref = k === 0 ? '<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteRef/></w:r><w:r><w:t xml:space="preserve"> </w:t></w:r>' : ''
+          return `<w:p><w:pPr><w:pStyle w:val="FootnoteText"/>${rtl ? '<w:bidi/>' : '<w:bidi w:val="0"/>'}</w:pPr>${ref}${line ? textRuns(line, undefined, rtl) : ''}</w:p>`
+        })
+        .join('')
+      return `<w:footnote w:id="${i + 1}">${paras}</w:footnote>`
+    })
+    .join('')
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="${W_NS}">${sep}${body}</w:footnotes>`
+}
+
+const FOOTNOTES_CT = '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>'
+const FOOTNOTES_REL = '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>'
+const FOOTNOTE_PR = '<w:footnotePr><w:footnote w:id="-1"/><w:footnote w:id="0"/></w:footnotePr>'
 
 const CONTENT_TYPES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`
@@ -180,7 +215,7 @@ const DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>`
 
 const SETTINGS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat><w:themeFontLang w:val="he-IL" w:bidi="he-IL"/></w:settings>`
+<w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>__FOOTNOTE_PR__<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat><w:themeFontLang w:val="he-IL" w:bidi="he-IL"/></w:settings>`
 
 function stylesXml(): string {
   const f = esc(DEFAULT_FONT)
@@ -188,7 +223,7 @@ function stylesXml(): string {
   const heading = (id: string, name: string, size: number, before: number, after: number, outline: number) =>
     `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${before}" w:after="${after}"/><w:ind w:firstLine="0"/><w:outlineLvl w:val="${outline}"/></w:pPr><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
+<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
 }
 
 function coreXml(title: string): string {
@@ -202,14 +237,18 @@ const APP_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 export async function docToDocx(doc: PMNode, title: string): Promise<Uint8Array> {
   const zip = new JSZip()
+  const notes: Notes = []
+  const body = bodyXml(doc, title, notes)
+  const hasNotes = notes.length > 0
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="${W_NS}"><w:body>${bodyXml(doc, title)}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/><w:bidi/></w:sectPr></w:body></w:document>`
-  zip.file('[Content_Types].xml', CONTENT_TYPES)
+<w:document xmlns:w="${W_NS}"><w:body>${body}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/><w:bidi/></w:sectPr></w:body></w:document>`
+  zip.file('[Content_Types].xml', hasNotes ? CONTENT_TYPES.replace('</Types>', `${FOOTNOTES_CT}</Types>`) : CONTENT_TYPES)
   zip.file('_rels/.rels', ROOT_RELS)
   zip.file('word/document.xml', documentXml)
-  zip.file('word/_rels/document.xml.rels', DOC_RELS)
+  zip.file('word/_rels/document.xml.rels', hasNotes ? DOC_RELS.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`) : DOC_RELS)
   zip.file('word/styles.xml', stylesXml())
-  zip.file('word/settings.xml', SETTINGS)
+  zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', hasNotes ? FOOTNOTE_PR : ''))
+  if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))
   zip.file('docProps/core.xml', coreXml(title))
   zip.file('docProps/app.xml', APP_XML)
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
@@ -337,6 +376,38 @@ function sameMarks(a?: PMMark[], b?: PMMark[]): boolean {
   return JSON.stringify(a ?? []) === JSON.stringify(b ?? [])
 }
 
+/** Footnotes of a Word file: id → plain text (paragraphs joined by line breaks). */
+async function readFootnotes(zip: JSZip): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const xml = await zip.file('word/footnotes.xml')?.async('string')
+  if (!xml) return out
+  const dom = new DOMParser().parseFromString(xml, 'text/xml') as unknown as Document
+  for (const fn of kids(dom.documentElement as unknown as El)) {
+    if (local(fn) !== 'footnote') continue
+    const type = wAttr(fn, 'type')
+    if (type && type !== 'normal') continue
+    const lines: string[] = []
+    const walk = (el: El, acc: { s: string }) => {
+      for (const k of kids(el)) {
+        const n = local(k)
+        if (n === 't') acc.s += k.textContent ?? ''
+        else if (n === 'tab') acc.s += '\t'
+        else if (n === 'br') acc.s += '\n'
+        else if (n !== 'rPr' && n !== 'pPr' && n !== 'footnoteRef') walk(k, acc)
+      }
+    }
+    for (const p of kids(fn)) {
+      if (local(p) !== 'p') continue
+      const acc = { s: '' }
+      walk(p, acc)
+      lines.push(acc.s)
+    }
+    // Word puts a space after the note's number; it is not part of the note
+    out.set(wAttr(fn, 'id') ?? '', lines.join('\n').replace(/^\s+/, '').replace(/\s+$/, ''))
+  }
+  return out
+}
+
 export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: PMNode; title: string | null; warnings: string[] }> {
   const zip = await JSZip.loadAsync(data)
   const docFile = zip.file('word/document.xml')
@@ -344,6 +415,7 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
   const xml = await docFile.async('string')
   const stylesXmlStr = (await zip.file('word/styles.xml')?.async('string')) ?? null
   const ctx = parseStyles(stylesXmlStr)
+  const footnotes = await readFootnotes(zip)
   const dom = new DOMParser().parseFromString(xml, 'text/xml') as unknown as Document
   const body = child(dom.documentElement as unknown as El, 'body')
   const warnings = new Set<string>()
@@ -376,7 +448,12 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
             else if (rn === 'br' || rn === 'cr') inline.push({ type: 'hardBreak' })
             else if (rn === 'noBreakHyphen') pushText('‑', marks)
             else if (rn === 'drawing' || rn === 'pict' || rn === 'object') warnings.add('תמונה או אובייקט')
-            else if (rn === 'footnoteReference' || rn === 'endnoteReference') warnings.add('הערת שוליים')
+            else if (rn === 'footnoteReference') {
+              const id = wAttr(rc, 'id') ?? ''
+              const text = footnotes.get(id)
+              if (text === undefined) warnings.add('הערת שוליים')
+              else inline.push({ type: 'footnote', attrs: { text } })
+            } else if (rn === 'endnoteReference') warnings.add('הערת סיום')
             else if (rn === 'commentReference') warnings.add('הערה של Word')
           }
         } else if (['hyperlink', 'ins', 'moveTo', 'smartTag', 'fldSimple', 'customXml', 'sdt', 'sdtContent'].includes(name)) {

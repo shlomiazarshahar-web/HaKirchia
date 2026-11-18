@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
-import type { Book, Chapter, PMNode } from '@shared/types'
+import type { AltDraft, Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
 import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher, reportWords, takePendingStop } from '../api'
 import { editorExtensions, restoreStop } from '../editor'
+import { drawerCapture, privateNotes, refreshNotePlaces } from '../drafts'
+import { FootnoteList } from './Footnotes'
 import { applyJump, bookmarkFlags, refreshBookmarkPlaces, registerEditor, SceneBreaks, searchHighlight, takePendingJump } from '../nav'
 import { Icon } from './Icons'
 
@@ -59,10 +61,60 @@ export function ChapterEditor(props: Props) {
           <ChapterBody
             bookPath={book.path}
             chapterId={chapter.id}
+            title={chapter.title}
             initial={loaded.doc}
             warnings={loaded.warnings}
             autoFocus={props.autoFocus}
             activateOn={props.activateOn ?? 'mount'}
+            onEditor={props.onEditor}
+            onRelease={props.onRelease}
+            onWords={props.onWords}
+            onSaveState={props.onSaveState}
+            onError={props.onError}
+          />
+        )}
+      </article>
+    </main>
+  )
+}
+
+/** An alternative draft (feature 35), written in a pane next to its chapter. Saved to its own Word file. */
+export function AltEditor(props: Omit<Props, 'chapter' | 'onRename'> & { alt: AltDraft; chapter: Chapter }) {
+  const { book, alt, chapter } = props
+  const [loaded, setLoaded] = useState<{ doc: PMNode; warnings: string[] } | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    api.loadAlt(book.path, alt.id).then((r) => {
+      if (!alive) return
+      if (r.ok && r.value) setLoaded(r.value)
+      else setLoadError(r.error ?? 'שגיאה בפתיחת הטיוטה')
+    })
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book.path, alt.id])
+  return (
+    <main className="desk">
+      <article className="paper altpaper">
+        <div className="docfile">
+          <Icon name="alt" />
+          <span className="fname">טיוטה חלופית {alt.scene ? `לסצנה ${alt.scene.index + 1} ב` : 'ל'}"{chapter.title}"</span>
+        </div>
+        <div className="ch-title alt-title">{alt.name}</div>
+        {loadError && <div className="paper-state">לא הצלחתי לפתוח את הטיוטה: {loadError}</div>}
+        {!loaded && !loadError && <div className="paper-state">פותח את הטיוטה…</div>}
+        {loaded && (
+          <ChapterBody
+            bookPath={book.path}
+            chapterId={chapter.id}
+            altId={alt.id}
+            title={`${chapter.title} (${alt.name})`}
+            initial={loaded.doc}
+            warnings={loaded.warnings}
+            autoFocus={false}
+            activateOn={props.activateOn ?? 'focus'}
             onEditor={props.onEditor}
             onRelease={props.onRelease}
             onWords={props.onWords}
@@ -117,20 +169,28 @@ export interface BodyProps {
   onWords: (n: number) => void
   onSaveState: (s: SaveState) => void
   onError: (msg: string) => void
+  /** An alternative draft of this chapter (feature 35): saved to its own file, not to the chapter */
+  altId?: string
+  /** The chapter's title, for pieces that go to the drawer */
+  title?: string
 }
 
 /**
  * The text of one chapter, saved automatically to its .docx file. Used by the writing view and,
  * once per chapter, by the master. Reloads itself when the file changes outside the app.
  */
-export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError }: BodyProps) {
+export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError, altId, title }: BodyProps) {
   const [readOnly, setReadOnly] = useState(warnings.length > 0)
   const [warn, setWarn] = useState(warnings)
   const dirty = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef<PMNode>(initial)
   const saving = useRef<Promise<void>>(Promise.resolve())
-  const ids = useRef({ bookPath, chapterId })
+  // an alternative draft is a document of its own: other editors of the chapter must not take its text
+  const docKey = altId ? `alt:${altId}` : chapterId
+  const ids = useRef({ bookPath, chapterId: docKey })
+  const titleRef = useRef(title ?? '')
+  titleRef.current = title ?? ''
   const me = useRef(Symbol('editor'))
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const cb = useRef({ onEditor, onRelease, onWords, onSaveState, onError })
@@ -147,7 +207,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     dirty.current = false
     cb.current.onSaveState('saving')
     const run = (async () => {
-      const r = await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
+      const r = altId ? await api.saveAlt(ids.current.bookPath, altId, latest.current) : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
       if (!r.ok) {
         dirty.current = true
         cb.current.onSaveState('error')
@@ -155,7 +215,10 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       } else {
         cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
         // bookmarks in this chapter may have moved with the text
-        if (editorRef.current && !editorRef.current.isDestroyed) refreshBookmarkPlaces(editorRef.current)
+        if (editorRef.current && !editorRef.current.isDestroyed && !altId) {
+          refreshBookmarkPlaces(editorRef.current)
+          refreshNotePlaces(editorRef.current)
+        }
       }
     })()
     saving.current = run
@@ -166,7 +229,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
 
   const words = (e: Editor) => {
     const n = countWords(e.getText({ blockSeparator: '\n' }))
-    reportWords(ids.current.bookPath, ids.current.chapterId, n)
+    if (!altId) reportWords(ids.current.bookPath, ids.current.chapterId, n)
     return n
   }
 
@@ -177,7 +240,18 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     publishLiveEdit(ids.current.bookPath, ids.current.chapterId, latest.current, me.current)
   }
 
-  const extensions = useMemo(() => [...editorExtensions, SceneBreaks, searchHighlight(bookPath, chapterId), bookmarkFlags(bookPath, chapterId)], [bookPath, chapterId])
+  const extensions = useMemo(
+    () => [
+      ...editorExtensions,
+      SceneBreaks,
+      searchHighlight(bookPath, docKey),
+      bookmarkFlags(bookPath, docKey),
+      privateNotes(bookPath, docKey),
+      drawerCapture(altId ? null : chapterId, () => titleRef.current)
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bookPath, docKey]
+  )
   const editorRef = useRef<Editor | null>(null)
   const editor = useEditor({
     extensions,
@@ -220,7 +294,8 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     const jump = takePendingJump(ids.current.bookPath, ids.current.chapterId)
     if (jump) setTimeout(() => !editor.isDestroyed && applyJump(editor, jump), 60)
     editorRef.current = editor
-    const unregisterNav = registerEditor(ids.current.bookPath, ids.current.chapterId, editor)
+    // alternative drafts are not part of the book: find, bookmarks and notes leave them alone
+    const unregisterNav = altId ? () => undefined : registerEditor(ids.current.bookPath, ids.current.chapterId, editor)
     const unregister = registerFlusher(() => saveRef.current())
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -262,7 +337,10 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     return () => {
       if (liveTimer.current) publishLive()
       stopLive()
-      if (dirty.current && !editor.isDestroyed) refreshBookmarkPlaces(editor)
+      if (dirty.current && !editor.isDestroyed && !altId) {
+        refreshBookmarkPlaces(editor)
+        refreshNotePlaces(editor)
+      }
       unregisterNav()
       stopListening()
       window.removeEventListener('keydown', onKey)
@@ -296,6 +374,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       <div className="prose">
         <EditorContent editor={editor} style={{ display: 'contents' }} />
       </div>
+      {editor && <FootnoteList editor={editor} />}
     </>
   )
 }

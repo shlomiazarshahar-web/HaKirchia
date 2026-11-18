@@ -26,6 +26,8 @@ import { QuickOpen, type QuickEntry } from './components/QuickOpen'
 import { BookmarkList, BookmarkNamer } from './components/Bookmarks'
 import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
+import { addNote, loadDrawer, loadNotes, moveSelectionToDrawer } from './drafts'
+import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Drafts'
 
 type Toast = { text: string; error?: boolean } | null
 type Dialog = { kind: 'newBook' } | { kind: 'settings' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
@@ -75,6 +77,10 @@ export default function App() {
   const [namer, setNamer] = useState<Bookmark | null>(null)
   /** Scenes of the chapter being written (feature 29), listed in the binder */
   const [scenes, setScenes] = useState<{ chapterId: string; items: SceneItem[]; current: number } | null>(null)
+  /** Round 4: a comparison on screen (versions, alternative drafts), the drawer panel, a note just added */
+  const [compare, setCompare] = useState<CompareRequest | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [focusNote, setFocusNote] = useState<string | null>(null)
   const bookmarks = useBookmarks()
   const editorsVersion = useEditorsVersion()
   const prefs = usePrefs()
@@ -222,6 +228,10 @@ export default function App() {
     setPendingStop(b.path, sp)
     setStopCard(sp && sp.note ? sp : null)
     loadBookmarks(b.path, b.bookmarks ?? [])
+    loadNotes(b.path, b.notes ?? [])
+    void loadDrawer(b.path)
+    setDrawerOpen(false)
+    setCompare(null)
     setFind(null)
     setNamer(null)
   }
@@ -343,7 +353,7 @@ export default function App() {
     let l = split
     let i = l.panes.findIndex((p) => p.key === focusKey)
     if (i < 0) i = 0
-    if (l.panes.length > 1 && (fromMaster || l.panes[i].content.kind === 'master')) {
+    if (l.panes.length > 1 && (fromMaster || l.panes[i].content.kind !== 'chapter')) {
       const other = l.panes.findIndex((p, j) => j !== i && p.content.kind === 'chapter')
       if (other >= 0) i = other
       else if (l.panes.length < MAX_PANES) {
@@ -414,6 +424,7 @@ export default function App() {
   const openFind = (replace: boolean) => {
     if (!book) return
     if (focusMode) exitFocus()
+    setDrawerOpen(false)
     let text = ''
     if (editor && !editor.isDestroyed) {
       const { from, to, empty } = editor.state.selection
@@ -482,6 +493,64 @@ export default function App() {
     focusPane(l.panes[i + 1].key)
   }
 
+  /** Opens an alternative draft (feature 35) in a pane next to the one in focus */
+  const openAlt = (altId: string) => {
+    if (!book || !split) return
+    const shown = split.panes.find((p) => p.content.kind === 'alt' && p.content.id === altId)
+    if (view !== 'write') {
+      void switchView('write')
+    }
+    if (shown) return focusPane(shown.key)
+    const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
+    let l: PaneLayout
+    let at: number
+    if (split.panes.length < MAX_PANES) {
+      l = addPane(split, { kind: 'alt', id: altId }, i)
+      at = i + 1
+    } else {
+      at = split.panes.findIndex((_, j) => j !== i)
+      l = setPaneContent(split, at, { kind: 'alt', id: altId })
+    }
+    updateSplit(l)
+    setFocusKey(l.panes[at].key)
+  }
+
+  /** A private note on the selected words, or about the chapter (Ctrl+Alt+M); its field opens */
+  const addNoteHere = () => {
+    if (!book || !editor || editor.isDestroyed) return
+    const ch = editorChapter(editor)
+    if (!ch || ch.bookPath !== book.path) return
+    if (focusMode) exitFocus()
+    const n = addNote(ch.chapterId, '', editor)
+    setFind(null)
+    setDrawerOpen(false)
+    if (split && split.panes.length > 1 && view === 'write') {
+      const pane = editor.view.dom.closest('[data-pane]')?.getAttribute('data-pane')
+      if (pane) setInfoKey(pane)
+    }
+    setFocusNote(n.id)
+    setTimeout(() => setFocusNote(null), 800)
+    show(n.anchor ? 'הערה פרטית חדשה על המילים המסומנות' : 'הערה פרטית חדשה לפרק')
+  }
+
+  const toggleDrawer = () => {
+    if (!book) return
+    if (focusMode) exitFocus()
+    setFind(null)
+    setDrawerOpen((o) => !o)
+  }
+
+  /** Moves the selected text to the drawer (Ctrl+Shift+M); without a selection, opens the drawer */
+  const toDrawer = () => {
+    if (!book) return
+    if (editor && !editor.isDestroyed && !editor.state.selection.empty) {
+      const ch = editorChapter(editor)
+      const title = book.chapters.find((c) => c.id === ch?.chapterId)?.title ?? ''
+      if (moveSelectionToDrawer(editor, title)) return show('הטקסט הועבר למגירה (בצד שמאל של המסך: מגירה)')
+    }
+    toggleDrawer()
+  }
+
   const closeFocusedPane = () => {
     if (!split || split.panes.length <= 1) return
     const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
@@ -506,6 +575,8 @@ export default function App() {
   keys.current = (e: KeyboardEvent) => {
     if (e.code === 'F11' && !e.ctrlKey && !e.altKey) return e.preventDefault(), toggleFocus()
     if (e.key === 'Escape' && focusMode && !document.querySelector('.pop, .scrim, .pdrawer')) return e.preventDefault(), exitFocus()
+    // Ctrl+Alt+M: private note (as Word's new comment)
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.code === 'KeyM' && book && editor) return e.preventDefault(), addNoteHere()
     if (e.code === 'F3' && find && !e.ctrlKey && !e.altKey) {
       e.preventDefault()
       document.querySelector<HTMLButtonElement>(e.shiftKey ? '.findpanel [aria-label="המופע הקודם"]' : '.findpanel [aria-label="המופע הבא"]')?.click()
@@ -516,16 +587,20 @@ export default function App() {
       if (e.code === 'KeyF') return e.preventDefault(), openFind(false)
       if (e.code === 'KeyH') return e.preventDefault(), openFind(true)
       if (e.code === 'KeyP') return e.preventDefault(), setQuick((q) => !q)
+      // Ctrl+W closes the pane in focus too (when there is more than one)
+      if (e.code === 'KeyW' && view === 'write' && !focusMode && split && split.panes.length > 1) return e.preventDefault(), closeFocusedPane()
     }
     if (e.shiftKey) {
       if (e.code === 'KeyK' && book && editor && !editor.isDestroyed) return e.preventDefault(), toggleBookmark()
+      if (e.code === 'KeyM' && book) return e.preventDefault(), toDrawer()
       if (e.code === 'KeyD') return e.preventDefault(), toggleTheme()
       if (e.code === 'KeyF' && book) return e.preventDefault(), toggleFocus()
       if (e.code === 'KeyB' && editor && editor.isEditable && !editor.isDestroyed) return e.preventDefault(), setNiqqudOpen((o) => !o)
     }
     if (e.shiftKey && book && view === 'write' && !focusMode) {
       if (e.code === 'KeyN') return e.preventDefault(), addPaneNow()
-      if (e.code === 'KeyX') return e.preventDefault(), closeFocusedPane()
+      // by the key's place, or by its letter (X, or ס on a Hebrew keyboard) in case the place is reported differently
+      if (e.code === 'KeyX' || e.key === 'x' || e.key === 'X' || e.key === 'ס') return e.preventDefault(), closeFocusedPane()
       if (e.code === 'KeyI' && split && split.panes.length > 1) {
         e.preventDefault()
         const p = split.panes.find((x) => x.key === focusKey)
@@ -551,7 +626,7 @@ export default function App() {
     const next = normalizeLayout(split, book, activeId)
     if (JSON.stringify(next) !== JSON.stringify(split)) updateSplit(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book?.chapters])
+  }, [book?.chapters, book?.alts])
 
   /** From the whole-book view: open one chapter in the writing view */
   const openChapter = async (id: string) => {
@@ -683,6 +758,8 @@ export default function App() {
     return [book!.path, CHAPTERS_DIR, ch.file].join(sep)
   }
 
+  const draftsCtx = { editor, onCompare: setCompare, onBook: (b: Book) => setBook(b), onOpenAlt: openAlt, show }
+
   const inMaster = !!book && view === 'master'
   const inBoard = !!book && view === 'board'
   const inWrite = !!book && view === 'write' && !!split
@@ -758,6 +835,10 @@ export default function App() {
               <Icon name="jump" />
               <span className="lbl">מעבר מהיר</span>
             </button>
+            <button className="ib" title="מגירה: טקסט שנחתך או נמחק, ואפשר להחזיר אותו (Ctrl+Shift+M מעביר את הטקסט המסומן)" aria-pressed={drawerOpen} onClick={toggleDrawer}>
+              <Icon name="drawer" />
+              <span className="lbl">מגירה</span>
+            </button>
           </>
         )}
         {inWrite && !empty && (
@@ -789,7 +870,7 @@ export default function App() {
         )}
       </div>
 
-      {book && !inBoard && <FormatBar editor={editor} onBookmark={toggleBookmark} />}
+      {book && !inBoard && <FormatBar editor={editor} onBookmark={toggleBookmark} onNote={addNoteHere} onDrawer={toDrawer} />}
 
       <div className="body">
         {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
@@ -851,7 +932,7 @@ export default function App() {
                 only={focusOn ? focusedPane!.key : null}
                 infoKey={multi && !focusOn ? infoKey : null}
                 onInfo={setInfoKey}
-                renderInfo={(ch) => <Inspector book={book} chapter={ch} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(ch))} />}
+                renderInfo={(ch) => <Inspector book={book} chapter={ch} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(ch))} drafts={draftsCtx} focusNote={focusNote} />}
                 onFocusPane={(k) => k !== focusKey && focusPane(k)}
                 onEditor={setEditor}
                 onRelease={(e) => setEditor((cur) => (cur === e ? null : cur))}
@@ -875,9 +956,12 @@ export default function App() {
               </main>
             )}
             {stopCard && stopChapter && inWrite && <StopCard sp={stopCard} chapterTitle={stopChapter.title} onClose={() => setStopCard(null)} />}
-            {inspected && !multi && !find && <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} />}
+            {inspected && !multi && !find && !drawerOpen && (
+              <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} drafts={draftsCtx} focusNote={focusNote} />
+            )}
           </>
         )}
+        {book && drawerOpen && !find && !focusOn && !inBoard && <DrawerPanel book={book} editor={editor} onClose={() => setDrawerOpen(false)} show={show} />}
         {book && find && !focusOn && (
           <SearchPanel
             key={book.path}
@@ -945,6 +1029,7 @@ export default function App() {
 
       {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} />}
       {niqqudOpen && editor && !editor.isDestroyed && <NiqqudAtCursor editor={editor} onClose={() => setNiqqudOpen(false)} />}
+      {compare && <CompareDialog req={compare} onClose={() => setCompare(null)} />}
       {quick && book && <QuickOpen entries={quickEntries()} onClose={() => setQuick(false)} />}
       {namer && editor && !editor.isDestroyed && <BookmarkNamer editor={editor} bookmark={namer} onClose={() => setNamer(null)} />}
       {stopAsk && (

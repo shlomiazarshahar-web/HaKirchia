@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import type { Book, Chapter, ChapterStatus } from '@shared/types'
 import { STATUS_LABELS } from '@shared/types'
 import { CHAPTERS_DIR } from '@shared/constants'
+import { AltsSection, NotesSection, VersionsSection, type DraftsContext } from './Drafts'
 
 interface Props {
   book: Book
   chapter: Chapter
   onMeta: (id: string, meta: { status?: ChapterStatus; synopsis?: string }) => void
   onShowFile: () => void
+  /** versions, notes and alternative drafts of the chapter (round 4) */
+  drafts: Omit<DraftsContext, 'book' | 'chapter'>
+  /** a note just added from the keyboard: its field gets the focus */
+  focusNote?: string | null
 }
 
-export function Inspector({ book, chapter, onMeta, onShowFile }: Props) {
+export function Inspector({ book, chapter, onMeta, onShowFile, drafts, focusNote }: Props) {
   const [syn, setSyn] = useState(chapter.synopsis)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pending = useRef<string | null>(null)
@@ -67,9 +72,9 @@ export function Inspector({ book, chapter, onMeta, onShowFile }: Props) {
           </button>
         </div>
       </div>
-      <div className="isec">
-        <div className="lp-note">הערות פרטיות וגרסאות יגיעו בפיצ'רים הבאים. כל פרק נשמר כקובץ Word רגיל, ואפשר לפתוח אותו גם ב-Word כשהכריכייה סגורה.</div>
-      </div>
+      <NotesSection book={book} chapter={chapter} {...drafts} focusNote={focusNote} />
+      <VersionsSection book={book} chapter={chapter} {...drafts} />
+      <AltsSection book={book} chapter={chapter} {...drafts} />
     </aside>
   )
 }

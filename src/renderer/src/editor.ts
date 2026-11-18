@@ -1,5 +1,5 @@
-import { Extension, InputRule } from '@tiptap/core'
-import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state'
+import { Extension, InputRule, Node, mergeAttributes } from '@tiptap/core'
+import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state'
 import StarterKit from '@tiptap/starter-kit'
 import TextAlign from '@tiptap/extension-text-align'
 import { TextStyle, FontFamily, FontSize } from '@tiptap/extension-text-style'
@@ -21,6 +21,12 @@ declare module '@tiptap/core' {
       alignParagraphs: (align: Align) => ReturnType
       /** Sets the direction of every selected paragraph (alignment goes back to the normal side). */
       setParagraphDir: (dir: Dir) => ReturnType
+    }
+    footnote: {
+      /** Adds a footnote at the cursor (Ctrl+Alt+F, as in Word); its text is typed below the chapter */
+      insertFootnote: (text?: string) => ReturnType
+      /** Changes the text of the footnote node at this position */
+      setFootnoteText: (pos: number, text: string) => ReturnType
     }
     hebrew: {
       /** Removes niqqud from the selected text (or from the whole chapter when nothing is selected) */
@@ -316,7 +322,70 @@ export function restoreStop(editor: Editor, sp: Pick<StopPoint, 'pos' | 'before'
   requestAnimationFrame(() => centerCursor(editor.view))
 }
 
+/** Fired on the window when a new footnote was added, so its text field below the chapter gets the keyboard */
+export const FOOTNOTE_ADDED = 'hakirchia:footnote-added'
+
+/**
+ * A footnote (feature 15): a small number in the text. The note's text is kept in the node and typed
+ * in the list under the chapter. Saved to Word as a real footnote. Numbers come from CSS (counter).
+ */
+export const Footnote = Node.create({
+  name: 'footnote',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      text: {
+        default: '',
+        parseHTML: (el) => el.getAttribute('data-text') ?? '',
+        renderHTML: (attrs) => ({ 'data-text': attrs.text, title: attrs.text ? `הערת שוליים: ${attrs.text}` : 'הערת שוליים (ריקה)' })
+      }
+    }
+  },
+  parseHTML() {
+    return [{ tag: 'sup[data-footnote]' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['sup', mergeAttributes(HTMLAttributes, { 'data-footnote': '', class: 'fn-ref' })]
+  },
+  renderText() {
+    return ''
+  },
+  addCommands() {
+    return {
+      insertFootnote:
+        (text = '') =>
+        ({ state, tr, dispatch, editor }) => {
+          if (!editor.isEditable) return false
+          const node = state.schema.nodes.footnote.create({ text })
+          if (dispatch) {
+            const at = state.selection.to
+            tr.insert(at, node)
+            // the number goes after the selected words; the cursor after the number
+            tr.setSelection(TextSelection.create(tr.doc, at + 1))
+            setTimeout(() => window.dispatchEvent(new CustomEvent(FOOTNOTE_ADDED, { detail: { editor, pos: at } })), 0)
+          }
+          return true
+        },
+      setFootnoteText:
+        (pos, text) =>
+        ({ state, tr, dispatch }) => {
+          const node = state.doc.nodeAt(pos)
+          if (!node || node.type.name !== 'footnote') return false
+          if (dispatch) tr.setNodeMarkup(pos, undefined, { ...node.attrs, text })
+          return true
+        }
+    }
+  },
+  addKeyboardShortcuts() {
+    return { 'Mod-Alt-f': () => this.editor.commands.insertFootnote() }
+  }
+})
+
 export const editorExtensions = [
+  Footnote,
   HebrewTypography,
   TabKey,
   StarterKit.configure({

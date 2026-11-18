@@ -8,7 +8,7 @@ import { usePrefs } from '../prefs'
 import { FontPanel, NIQQUD_SHORTCUT, NIQQUD_WIDTH, NiqqudPanel, Popover } from './HebrewTools'
 
 
-export function FormatBar({ editor, onBookmark }: { editor: Editor | null; onBookmark: () => void }) {
+export function FormatBar({ editor, onBookmark, onNote, onDrawer }: { editor: Editor | null; onBookmark: () => void; onNote: () => void; onDrawer: () => void }) {
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => {
@@ -163,6 +163,19 @@ export function FormatBar({ editor, onBookmark }: { editor: Editor | null; onBoo
       <button className="ib" title="סימנייה: לחזור לכאן אחר כך (Ctrl+Shift+ל). באותו מקום שוב: הסרה" disabled={!editor} onMouseDown={(e) => e.preventDefault()} onClick={onBookmark}>
         <Icon name="bookmark" />
         סימנייה
+      </button>
+      <span className="sep" />
+      <button className="ib" title="הערת שוליים במקום הסמן; הטקסט שלה נכתב מתחת לפרק (Ctrl+Alt+F, כמו ב-Word). נשמרת כהערת שוליים אמיתית של Word" disabled={!on} onMouseDown={(e) => e.preventDefault()} onClick={() => chain().insertFootnote().run()}>
+        <Icon name="footnote" />
+        <span className="lbl">הערת שוליים</span>
+      </button>
+      <button className="ib" title="הערה פרטית לעצמך, על המילים המסומנות או על הפרק (Ctrl+Alt+M). לא נכנסת לקובץ ולא לייצוא" disabled={!editor} onMouseDown={(e) => e.preventDefault()} onClick={onNote}>
+        <Icon name="note" />
+        <span className="lbl">הערה</span>
+      </button>
+      <button className="ib" title="העברת הטקסט המסומן למגירה (Ctrl+Shift+M). בלי סימון: פתיחת המגירה" disabled={!editor} onMouseDown={(e) => e.preventDefault()} onClick={onDrawer}>
+        <Icon name="drawer" />
+        <span className="lbl">למגירה</span>
       </button>
       {pop === 'font' && (
         <Popover anchor={fontRef.current} label="הוספת גופן" width={330} onClose={() => setPop(null)}>
