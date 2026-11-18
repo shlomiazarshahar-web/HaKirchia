@@ -54,3 +54,30 @@ describe('cork board word counts', () => {
     expect(await project.wordCounts(book.path)).toEqual({ [a]: 5, [b]: 0 })
   })
 })
+
+describe('translation sources (feature 12)', () => {
+  it('copies the PDF into the book, links a chapter, counts paragraphs, and forgets deleted chapters', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hk-'))
+    let book = await project.createBook(root, 'תרגום')
+    const id = book.chapters[0].id
+    const pdf = join(__dirname, 'fixtures', 'source.pdf')
+    const name = await project.addSourcePdf(book.path, pdf)
+    expect(name).toBe('source.pdf')
+    // the same file again is not copied twice
+    expect(await project.addSourcePdf(book.path, pdf)).toBe('source.pdf')
+    expect(await project.listSourcePdfs(book.path)).toEqual(['source.pdf'])
+    expect((await project.readSourcePdf(book.path, name)).length).toBe(readFileSync(pdf).length)
+    await expect(project.readSourcePdf(book.path, '../book.hakirchia.json')).rejects.toThrow()
+
+    book = await project.setSource(book.path, id, { pdf: name, start: { page: 1, para: 0 }, paras: 8 })
+    expect(book.sources[id]).toEqual({ pdf: name, start: { page: 1, para: 0 }, paras: 8 })
+    expect((await project.openBook(book.path)).sources[id].paras).toBe(8)
+
+    await project.saveChapter(book.path, id, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'אחת' }] }, { type: 'paragraph' }, { type: 'paragraph', content: [{ type: 'text', text: 'שתיים' }] }] })
+    expect((await project.paragraphCounts(book.path))[id]).toBe(3)
+
+    const other = (await project.addChapter(book.path, 'שני')).book
+    book = (await project.deleteChapter(other.path, id)).book
+    expect(book.sources).toEqual({})
+  })
+})

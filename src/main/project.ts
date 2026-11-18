@@ -4,13 +4,14 @@
 // File names follow the chapter number and title, and are renamed when chapters move or get renamed.
 
 import { promises as fs, existsSync, watch, type FSWatcher } from 'fs'
-import { join, basename } from 'path'
+import { join, basename, extname } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
 import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
 import * as drafts from './drafts'
 import { flatten, normalizeOutline } from '../shared/outline'
+import { chapterParagraphCount, SOURCES_DIR, type ChapterSource } from '../shared/translation'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
@@ -32,6 +33,8 @@ interface Manifest {
   notes?: PrivateNote[]
   /** Alternative drafts (feature 35); their files are in the "טיוטות חלופיות" folder */
   alts?: AltDraft[]
+  /** The original of each translated chapter (feature 12); the PDFs are in the "מקור" folder */
+  sources?: Record<string, ChapterSource>
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -97,6 +100,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   bookmarks: (m.bookmarks ?? []).filter((b) => m.chapters.some((c) => c.id === b.chapterId)),
   notes: (m.notes ?? []).filter((n) => m.chapters.some((c) => c.id === n.chapterId)),
   alts: (m.alts ?? []).filter((a) => m.chapters.some((c) => c.id === a.chapterId)),
+  sources: Object.fromEntries(Object.entries(m.sources ?? {}).filter(([id]) => m.chapters.some((c) => c.id === id))),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
 
@@ -445,6 +449,82 @@ export function wordCounts(bookPath: string): Promise<Record<string, number>> {
         out[ch.id] = countWords(docText(res.doc))
       } catch {
         // A damaged file shows 0 here; opening the chapter reports the problem
+      }
+    }
+    return out
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Translation (features 12, 28): the originals are PDF files copied into the book's "מקור" folder,
+// so the book folder stays complete when it is copied to another computer.
+// ---------------------------------------------------------------------------
+
+const sourcesDir = (bookPath: string) => join(bookPath, SOURCES_DIR)
+
+/** PDF files in the book's "מקור" folder, by name */
+export async function listSourcePdfs(bookPath: string): Promise<string[]> {
+  try {
+    const names = await fs.readdir(sourcesDir(bookPath))
+    return names.filter((n) => extname(n).toLowerCase() === '.pdf').sort((a, b) => a.localeCompare(b, 'he'))
+  } catch {
+    return []
+  }
+}
+
+/** Copies a PDF into the book's "מקור" folder (an identical file already there is reused). Returns its name there. */
+export async function addSourcePdf(bookPath: string, from: string): Promise<string> {
+  await fs.mkdir(sourcesDir(bookPath), { recursive: true })
+  const bytes = await fs.readFile(from)
+  const base = basename(from, extname(from))
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? `${base}.pdf` : `${base} (${n}).pdf`
+    const target = join(sourcesDir(bookPath), name)
+    if (!existsSync(target)) {
+      await fs.writeFile(target, bytes)
+      return name
+    }
+    const there = await fs.readFile(target)
+    if (there.equals(bytes)) return name
+  }
+}
+
+export async function readSourcePdf(bookPath: string, name: string): Promise<Uint8Array> {
+  if (basename(name) !== name) throw new Error('שם קובץ לא תקין')
+  const file = join(sourcesDir(bookPath), name)
+  if (!existsSync(file)) throw new Error(`הקובץ "${name}" לא נמצא בתיקייה "${SOURCES_DIR}" של הספר`)
+  return new Uint8Array(await fs.readFile(file))
+}
+
+/** Links a chapter to its original, changes its range, or (null) unlinks it. */
+export function setSource(bookPath: string, chapterId: string, src: ChapterSource | null): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (!m.chapters.some((c) => c.id === chapterId)) throw new Error('הפרק לא נמצא')
+    const all = { ...(m.sources ?? {}) }
+    if (src) all[chapterId] = src
+    else delete all[chapterId]
+    if (Object.keys(all).length) m.sources = all
+    else delete m.sources
+    await writeManifest(bookPath, m)
+    return toBook(bookPath, m)
+  })
+}
+
+/** Paragraphs in each chapter (the title counts as one), to compare with the original. */
+export function paragraphCounts(bookPath: string): Promise<Record<string, number>> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const out: Record<string, number> = {}
+    for (const ch of m.chapters) {
+      out[ch.id] = 1
+      const file = chapterPath(bookPath, ch)
+      if (!existsSync(file)) continue
+      try {
+        const res = await docxToDoc(new Uint8Array(await fs.readFile(file)))
+        out[ch.id] = chapterParagraphCount(res.doc)
+      } catch {
+        // counted as just the title
       }
     }
     return out

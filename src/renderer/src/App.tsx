@@ -3,7 +3,9 @@ import type { Editor } from '@tiptap/react'
 import type { Book, Bookmark, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
-import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, type PaneLayout } from '@shared/panes'
+import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, translationLayout, type PaneLayout } from '@shared/panes'
+import { loadParagraphCounts, sendToTranslate, useParagraphCounts } from './translate'
+import { bookProgress } from '@shared/translation'
 import { MASTER_LABEL } from './labels'
 import { api, flushAll, onWordsReport, setPendingStop } from './api'
 import { IconSprite, Icon } from './components/Icons'
@@ -84,8 +86,12 @@ export default function App() {
   const bookmarks = useBookmarks()
   const editorsVersion = useEditorsVersion()
   const prefs = usePrefs()
+  const paraCounts = useParagraphCounts(book?.path)
   const splitSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const savedLayouts = useRef<Record<string, PaneLayout>>({})
+  // The translation screen (feature 12): the writing view with its own panes (chapter, PDF, Google Translate)
+  const [trMode, setTrMode] = useState(false)
+  const savedTr = useRef<Record<string, PaneLayout>>({})
   const lastChapter = useRef<Record<string, string>>({})
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -103,6 +109,7 @@ export default function App() {
       initPrefs(s)
       lastChapter.current = s.lastChapter ?? {}
       savedLayouts.current = s.splitLayout ?? {}
+      savedTr.current = s.translateLayout ?? {}
       if (s.zoom && s.zoom !== 1) {
         setZoomState(s.zoom)
         void api.setZoom(s.zoom)
@@ -124,10 +131,12 @@ export default function App() {
       }),
     []
   )
-  const refreshWords = (path: string) =>
-    api.wordCounts(path).then((r) => {
+  const refreshWords = (path: string) => {
+    void loadParagraphCounts(path)
+    return api.wordCounts(path).then((r) => {
       if (r.ok && r.value && bookPathRef.current === path) setBookWords((m) => ({ ...r.value, ...pickOpen(m) }))
     })
+  }
   // counts reported by editors that are open now are newer than the files on disk
   const openCounts = useRef<Set<string>>(new Set())
   const pickOpen = (m: Record<string, number>) => Object.fromEntries(Object.entries(m).filter(([id]) => openCounts.current.has(id)))
@@ -209,6 +218,7 @@ export default function App() {
     openCounts.current = new Set()
     void refreshWords(b.path)
     setView('write')
+    setTrMode(false)
     setMasterFocusId(null)
     setInfoKey(null)
     // Where the writer stopped last time wins over the last chapter shown
@@ -299,14 +309,72 @@ export default function App() {
     void refreshLibrary()
   }
 
+  /**
+   * The panes of the writing view (tr = false) or of the translation screen (tr = true), as they
+   * were last left in this book, showing the chapter being worked on.
+   */
+  const layoutFor = (b: Book, tr: boolean, active: string | null): { layout: PaneLayout; focus: string } => {
+    const saved = (tr ? savedTr : savedLayouts).current[b.path]
+    let l = normalizeLayout(saved, b, active)
+    if (tr && !saved) l = translationLayout(b, active)
+    let pane = l.panes.find((p) => p.content.kind === 'chapter' && p.content.id === active)
+    if (!pane && active) {
+      const at = l.panes.findIndex((p) => p.content.kind === 'chapter')
+      l = setPaneContent(l, Math.max(0, at), { kind: 'chapter', id: active })
+      pane = l.panes[Math.max(0, at)]
+    }
+    return { layout: l, focus: (pane ?? l.panes[0]).key }
+  }
+
   const switchView = async (v: View) => {
-    if (v === view || !book) return
+    if (!book || (v === view && !(v === 'write' && trMode))) return
     // Save everything first, so the other view reads the files exactly as they are now
     await flushAll()
     setEditor(null)
     setMasterFocusId(null)
+    if (trMode) {
+      // leaving the translation screen: the writing view comes back as it was
+      const { layout, focus } = layoutFor(book, false, activeId)
+      setTrMode(false)
+      setSplit(layout)
+      setFocusKey(focus)
+      setInfoKey(null)
+    }
     setView(v)
     void refreshWords(book.path)
+  }
+
+  /** The translation screen: the chapter, its original (PDF) and Google Translate side by side */
+  const openTranslate = async () => {
+    if (!book || book.chapters.length === 0 || (view === 'write' && trMode)) return
+    await flushAll()
+    setEditor(null)
+    setMasterFocusId(null)
+    setInfoKey(null)
+    const { layout, focus } = layoutFor(book, true, activeId)
+    setTrMode(true)
+    setSplit(layout)
+    setFocusKey(focus)
+    setView('write')
+    void refreshWords(book.path)
+  }
+
+  /** Text was sent to Google Translate but no such pane is open: open one */
+  const needTranslatePane = () => {
+    if (!book || !split || split.panes.some((p) => p.content.kind === 'web')) return
+    if (split.panes.length < MAX_PANES) updateSplit(addPane(split, { kind: 'web' }))
+    else {
+      const at = [...split.panes.keys()].reverse().find((i) => split.panes[i].key !== focusKey && split.panes[i].content.kind !== 'pdf') ?? split.panes.length - 1
+      updateSplit(setPaneContent(split, at, { kind: 'web' }))
+    }
+    show('נפתח חלון של גוגל תרגום')
+  }
+
+  /** Ctrl+Shift+T: the selected text (in the PDF or in a chapter) goes to Google Translate */
+  const sendSelection = () => {
+    const text = window.getSelection()?.toString() ?? ''
+    if (!text.trim()) return show('סמנו קודם את הטקסט שרוצים לתרגם')
+    if (!sendToTranslate(text)) needTranslatePane()
   }
 
   const exitFocus = () => {
@@ -331,9 +399,10 @@ export default function App() {
     setSplit(l)
     if (!l.panes.some((p) => p.key === focusKey)) setFocusKey(l.panes[0].key)
     const path = book.path
-    savedLayouts.current[path] = l
+    const tr = trMode
+    ;(tr ? savedTr : savedLayouts).current[path] = l
     if (splitSaveTimer.current) clearTimeout(splitSaveTimer.current)
-    splitSaveTimer.current = setTimeout(() => void api.setSplitLayout(path, l), 400)
+    splitSaveTimer.current = setTimeout(() => void (tr ? api.setTranslateLayout(path, l) : api.setSplitLayout(path, l)), 400)
   }
 
   const focusPane = (key: string) => {
@@ -604,6 +673,7 @@ export default function App() {
       if (e.code === 'KeyD') return e.preventDefault(), toggleTheme()
       if (e.code === 'KeyF' && book) return e.preventDefault(), toggleFocus()
       if (e.code === 'KeyB' && editor && editor.isEditable && !editor.isDestroyed) return e.preventDefault(), setNiqqudOpen((o) => !o)
+      if (e.code === 'KeyT' && book) return e.preventDefault(), sendSelection()
     }
     if (e.shiftKey && book && view === 'write' && !focusMode) {
       if (e.code === 'KeyN') return e.preventDefault(), addPaneNow()
@@ -783,6 +853,7 @@ export default function App() {
   const focusOn = focusMode && inWrite && !empty
   const stopChapter = stopCard ? book?.chapters.find((c) => c.id === stopCard.chapterId) : undefined
   const themeLabel = theme === 'light' ? 'מצב כהה' : 'מצב בהיר'
+  const bookTr = book ? bookProgress(book.chapters.filter((c) => book.sources?.[c.id]).map((c) => ({ chapterParas: paraCounts[c.id] ?? 1, sourceParas: book.sources[c.id].paras }))) : null
 
   return (
     <div
@@ -798,6 +869,7 @@ export default function App() {
         {book && (
           <span className="crumb">
             {book.title}
+            {inWrite && trMode ? ' · תרגום' : ''}
             {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · לוח שעם' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
           </span>
         )}
@@ -812,7 +884,7 @@ export default function App() {
           <>
             <span className="sep" />
             <div className="tabs" role="tablist">
-              <button className="tab" role="tab" aria-selected={view === 'write'} onClick={() => switchView('write')}>
+              <button className="tab" role="tab" aria-selected={view === 'write' && !trMode} onClick={() => switchView('write')}>
                 <Icon name="pen" />
                 כתיבה
               </button>
@@ -824,7 +896,14 @@ export default function App() {
                 <Icon name="grid" />
                 לוח שעם
               </button>
-              <button className="tab" role="tab" aria-selected="false" disabled title="יגיע בהמשך">
+              <button
+                className="tab"
+                role="tab"
+                aria-selected={view === 'write' && trMode}
+                disabled={empty}
+                title="הפרק, המקור שלו (PDF) וגוגל תרגום זה לצד זה. החלונות והרוחב ניתנים לשינוי כמו בכתיבה"
+                onClick={() => void openTranslate()}
+              >
                 <Icon name="translate" />
                 תרגום
               </button>
@@ -950,6 +1029,10 @@ export default function App() {
                 onWords={setWords}
                 onSaveState={setSaveState}
                 onError={(m) => show(m, true)}
+                activeChapterId={activeId}
+                onBook={setBook}
+                onNotice={(m) => show(m)}
+                onNeedTranslatePane={needTranslatePane}
               />
             ) : (
               <main className="desk">
@@ -1014,6 +1097,11 @@ export default function App() {
         {book && !inBoard && !empty && (
           <span className="wc" title="סטטיסטיקה בלבד">
             {totalWords.toLocaleString('he-IL')} מילים בספר
+          </span>
+        )}
+        {bookTr && (
+          <span className="wc" title={`בפרקים שיש להם מקור: ${bookTr.done} מתוך ${bookTr.total} פסקאות של המקור כבר מתורגמות (נתון בלבד)`}>
+            תורגם {bookTr.percent}% מהספר
           </span>
         )}
         {book && (

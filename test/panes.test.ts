@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addPane, closePane, defaultLayout, nextContent, normalizeLayout, resizeBorder, setPaneContent, swapPanes, type PaneLayout } from '../src/shared/panes'
+import { translationLayout, addPane, closePane, defaultLayout, nextContent, normalizeLayout, resizeBorder, setPaneContent, swapPanes, type PaneLayout } from '../src/shared/panes'
 import type { Book, Chapter } from '../src/shared/types'
 
 const ch = (id: string): Chapter => ({ id, title: id, file: `${id}.docx`, status: 'draft', synopsis: '' })
@@ -71,5 +71,16 @@ describe('panes', () => {
     expect(resizeBorder([0.5, 0.5], 0, 0.1)).toEqual([0.6, 0.4])
     expect(resizeBorder([0.5, 0.5], 0, 0.9)).toEqual([0.8, 0.19999999999999996])
     expect(resizeBorder([0.4, 0.3, 0.3], 1, -0.5).map((w) => +w.toFixed(2))).toEqual([0.4, 0.2, 0.4])
+  })
+
+  it('translation: chapter, PDF and Google Translate, each of the last two at most once', () => {
+    const t = translationLayout(book, 'b')
+    expect(t.panes.map((p) => p.content)).toEqual([{ kind: 'chapter', id: 'b' }, { kind: 'pdf' }, { kind: 'web' }])
+    expect(sum(t.widths)).toBeCloseTo(1)
+    const twice: PaneLayout = { panes: [...t.panes.slice(1), { key: 'x', content: { kind: 'pdf' } }], widths: [0.3, 0.3, 0.4] }
+    expect(normalizeLayout(twice, book, 'a').panes.map((p) => p.content.kind)).toEqual(['pdf', 'web'])
+    // putting the PDF in another pane moves it there (swap), so it is never shown twice
+    const swapped = setPaneContent(t, 0, { kind: 'pdf' })
+    expect(swapped.panes.map((p) => p.content.kind)).toEqual(['pdf', 'chapter', 'web'])
   })
 })

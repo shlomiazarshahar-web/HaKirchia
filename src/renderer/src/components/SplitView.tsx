@@ -11,6 +11,8 @@ import type { Book, Chapter } from '@shared/types'
 import { CHAPTER_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
 import { AltEditor, ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
+import { PdfPane } from './PdfPane'
+import { WebPane } from './WebPane'
 import { Icon } from './Icons'
 import { MASTER_LABEL } from '../labels'
 
@@ -41,6 +43,11 @@ interface Props {
   onWords: (n: number) => void
   onSaveState: (s: SaveState) => void
   onError: (msg: string) => void
+  /** Translation (features 12, 13): the chapter the PDF pane follows, and what it needs */
+  activeChapterId: string | null
+  onBook: (b: Book) => void
+  onNotice: (msg: string) => void
+  onNeedTranslatePane: () => void
 }
 
 export function SplitView(props: Props) {
@@ -51,6 +58,10 @@ export function SplitView(props: Props) {
   const states = useRef(new Map<string, SaveState>())
   const byId = new Map(book.chapters.map((c) => [c.id, c]))
   const n = layout.panes.length
+  // The PDF pane shows the original of the chapter in focus (or else of the first chapter on screen)
+  const shownChapters = layout.panes.flatMap((p) => (p.content.kind === 'chapter' ? [p.content.id] : []))
+  const pdfChapterId = props.activeChapterId && shownChapters.includes(props.activeChapterId) ? props.activeChapterId : (shownChapters[0] ?? null)
+  const pdfChapter = pdfChapterId ? (byId.get(pdfChapterId) ?? null) : null
 
   const report = () => {
     props.onWords(words.current.get(focusKey) ?? 0)
@@ -93,9 +104,10 @@ export function SplitView(props: Props) {
             }}
             head={
               <>
-                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : 'file'} />
+                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
-                {shown[pane.key] !== undefined && (
+                {c.kind === 'pdf' && pdfChapter && <small className="pstat">של {pdfChapter.title}</small>}
+                {shown[pane.key] !== undefined && c.kind !== 'pdf' && c.kind !== 'web' && (
                   <small className="pstat" title={ch ? ch.file : undefined}>
                     {shown[pane.key].toLocaleString('he-IL')} מילים{c.kind === 'master' ? ' בספר' : ''}
                   </small>
@@ -134,7 +146,11 @@ export function SplitView(props: Props) {
               </>
             }
           >
-            {c.kind === 'master' ? (
+            {c.kind === 'pdf' ? (
+              <PdfPane book={book} chapter={pdfChapter} onBook={props.onBook} onError={props.onError} onNotice={props.onNotice} onNeedTranslatePane={props.onNeedTranslatePane} />
+            ) : c.kind === 'web' ? (
+              <WebPane />
+            ) : c.kind === 'master' ? (
               <MasterView
                 key={`${book.path}|master`}
                 book={book}
@@ -210,13 +226,19 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       className="ppick"
       aria-label={label}
       title="בחירת מה להציג בחלון הזה"
-      value={value.kind === 'master' ? 'master' : value.kind === 'alt' ? `a:${value.id}` : `c:${value.id}`}
+      value={value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' ? value.kind : value.kind === 'alt' ? `a:${value.id}` : `c:${value.id}`}
       onChange={(e) => {
         const v = e.target.value
-        onChange(v === 'master' ? { kind: 'master' } : v.startsWith('a:') ? { kind: 'alt', id: v.slice(2) } : { kind: 'chapter', id: v.slice(2) })
+        onChange(
+          v === 'master' || v === 'pdf' || v === 'web' ? { kind: v } : v.startsWith('a:') ? { kind: 'alt', id: v.slice(2) } : { kind: 'chapter', id: v.slice(2) }
+        )
       }}
     >
       <option value="master">{MASTER_LABEL}</option>
+      <optgroup label="תרגום">
+        <option value="pdf">המקור (PDF) של הפרק</option>
+        <option value="web">גוגל תרגום</option>
+      </optgroup>
       {loose.length > 0 && <optgroup label="פרקים">{loose}</optgroup>}
       {groups}
       {(book.alts ?? []).length > 0 && (

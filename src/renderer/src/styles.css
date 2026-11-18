@@ -617,3 +617,51 @@ body { background: #dde3e0; overflow: hidden; }
 .dw-actions .ib { padding: 3px 6px; font-size: 12px; }
 .dw-actions .ib.icon { margin-inline-start: auto; color: var(--w-muted); }
 .app.focusmode .footnotes .fn-h { opacity: 0.6; }
+
+/* ---------- Translation (features 12, 13, 28) ---------- */
+.pdfpane, .webpane { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.pdf-bar { display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: var(--w-bar); border-bottom: 1px solid var(--w-line); flex-wrap: wrap; font-size: 12.5px; }
+.pdf-bar.sub { background: var(--w-panel); }
+.pdf-bar .grow { flex: 1; }
+.pdf-bar .ib { font-size: 12.5px; padding: 3px 6px; }
+.pdf-bar .ib.on { color: var(--w-accent); }
+.pdf-bar .ppick { max-width: 45%; }
+.pdf-bar .pstat { color: var(--w-muted); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pslot > .pane .pdf-bar .lbl2 { display: inline; }
+@container (max-width: 380px) { .pdf-bar .lbl2 { display: none; } }
+.pdf-progress { position: relative; display: inline-flex; align-items: center; min-width: 120px; height: 18px; border-radius: 9px; background: var(--w-line); overflow: hidden; font-size: 11px; font-variant-numeric: tabular-nums; }
+.pdf-progress.wide { display: flex; width: 100%; margin-top: 4px; }
+.pdf-progress > i { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--w-soft); border-inline-end: 2px solid var(--w-accent); }
+.pdf-progress > span { position: relative; padding: 0 8px; white-space: nowrap; color: var(--w-ink); }
+.pdfview { flex: 1; min-height: 0; overflow: auto; background: #7e8784; padding: 18px 0 40px; display: flex; flex-direction: column; align-items: safe center; gap: 14px; }
+.app[data-mode='dark'] .pdfview { background: #0b0e0e; }
+.pdfpage { position: relative; flex: none; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25); --scale-round-x: 1px; --scale-round-y: 1px; }
+.pdfpage canvas { position: absolute; inset: 0; display: block; }
+/* dark mode: the page is shown inverted so it does not dazzle (as in the approved design) */
+.app[data-mode='dark'] .pdfpage { filter: invert(0.88) hue-rotate(180deg); }
+.pdfpage .textLayer { z-index: 1; }
+.pdfpage .sp { position: absolute; z-index: 2; pointer-events: none; border-radius: 3px; mix-blend-mode: multiply; }
+.pdfpage .sp.out { background: rgba(126, 135, 132, 0.16); }
+.pdfpage .sp.pair { background: #fcefc4; }
+.pdfpage .sp.picked { outline: 2px solid #0f3b33; outline-offset: 1px; }
+.pdfpage .sp.here { box-shadow: inset 3px 0 0 #d19a1e; }
+.sp-flag { position: absolute; font: 600 10.5px/1 var(--w-ui); direction: rtl; padding: 3px 7px; border-radius: 9px; white-space: nowrap; }
+/* in the page's margins, so they never cover the text */
+.sp-flag.start { top: 0; left: calc(100% + 3px); padding: 3px 5px; background: #0f3b33; color: #fff; }
+.sp-flag.end { bottom: 0; left: calc(100% + 3px); padding: 3px 5px; background: #0f3b33; color: #fff; }
+.sp-flag.here { top: 0; right: calc(100% + 3px); padding: 3px 5px; background: #d19a1e; color: #1b1404; }
+.pdf-empty { margin: auto; max-width: 340px; padding: 24px; text-align: center; color: var(--w-muted); display: flex; flex-direction: column; align-items: center; gap: 12px; line-height: 1.6; }
+.pdfview .pdf-empty { color: #f2f5f3; }
+.pdf-files { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.pdf-files .btn { display: inline-flex; align-items: center; gap: 6px; justify-content: center; }
+.pdf-empty svg, .pdf-files svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.pdf-empty > svg { width: 28px; height: 28px; }
+/* the pair of the paragraph under the mouse, in the chapter */
+.ProseMirror > .tr-pair, .ch-title.tr-pair { background: var(--w-hl); box-shadow: 0 0 0 3px var(--w-hl); border-radius: 2px; }
+.webpane .urlbar { display: flex; align-items: center; gap: 4px; padding: 5px 8px; background: var(--w-bar); border-bottom: 1px solid var(--w-line); }
+.webpane .urlbar .u { flex: 1; text-align: left; font-size: 12.5px; background: var(--w-paper); border: 1px solid var(--w-line); border-radius: 20px; padding: 3px 12px; color: var(--w-muted); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.webpane .webview { flex: 1; min-height: 0; width: 100%; background: #fff; }
+.web-error { padding: 10px 12px; background: var(--w-hl); color: var(--w-ink); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gthint { font-size: 12px; color: var(--w-muted); padding: 7px 10px; background: var(--w-panel); border-top: 1px solid var(--w-line); line-height: 1.5; }
+.bitem .trp { font-size: 10.5px; color: var(--w-muted); font-variant-numeric: tabular-nums; padding: 0 5px; border-radius: 8px; background: var(--w-line); }
+.bitem .trp.full { background: var(--w-soft); color: var(--w-accent); }

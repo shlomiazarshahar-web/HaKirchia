@@ -44,6 +44,12 @@ export function IconSprite() {
       <symbol id="i-footnote" viewBox="0 0 24 24"><path d="M4 7h10M4 11h10M4 15h6M17 4v6M15.5 5.5L17 4M4 20h16" /></symbol>
       <symbol id="i-alt" viewBox="0 0 24 24"><path d="M6 3h8l4 4v10H6zM9 21h11V9M9 9h6M9 13h6" /></symbol>
       <symbol id="i-compare" viewBox="0 0 24 24"><path d="M4 4h6v16H4zM14 4h6v16h-6M7 8v.01M17 8h0M16 12h2M6 12h2" /></symbol>
+      <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" /></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" /></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="M20 4L3 11l7 2 2 7zM10 13l4-4" /></symbol>
+      <symbol id="i-start" viewBox="0 0 24 24"><path d="M5 4v16M5 5h11l-2.5 3.5L16 12H5" /></symbol>
+      <symbol id="i-end" viewBox="0 0 24 24"><path d="M4 18h16M7 6l5 5 5-5M12 11V3" /></symbol>
+      <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-2.3-5.7M20 4v5h-5" /></symbol>
       <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" /></symbol>
     </svg>
   )
