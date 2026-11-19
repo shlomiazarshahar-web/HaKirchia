@@ -10,10 +10,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TextLayer } from 'pdfjs-dist'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
-import { chapterRange, countsAsParagraph, translationProgress, type ChapterSource, type SourcePara, type SourceRef } from '@shared/translation'
+import { chapterRange, countsAsParagraph, imageScenes, suggestChapter, translationProgress, type ChapterSource, type PdfImage, type SourceRef, type SourceStructure } from '@shared/translation'
 import { api } from '../api'
 import { editorsFor, useEditorsVersion } from '../nav'
-import { loadPdf, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
+import { loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
 import { Icon } from './Icons'
 
 interface Props {
@@ -28,6 +28,7 @@ interface Props {
 }
 
 const SYNC_KEY = 'hakirchia.pdfSync'
+const DISMISS_KEY = 'hakirchia.pdfSuggestDismissed'
 const ZOOM_KEY = 'hakirchia.pdfZoom'
 const readPref = (k: string, d: string) => {
   try {
@@ -177,7 +178,10 @@ const topIn = (el: HTMLElement, scroller: HTMLElement) => el.getBoundingClientRe
 
 function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onError, onNotice, onNeedTranslatePane }: ReaderProps) {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null)
-  const [paras, setParas] = useState<SourcePara[] | null>(null)
+  const [structure, setStructure] = useState<SourceStructure | null>(null)
+  const paras = structure?.paras ?? null
+  const [images, setImages] = useState<PdfImage[] | null>(null)
+  const [dismissed, setDismissed] = useState(() => readPref(DISMISS_KEY, '').split('|'))
   const [failed, setFailed] = useState<string | null>(null)
   const [width, setWidth] = useState(0)
   const [zoom, setZoom] = useState(() => Number(readPref(ZOOM_KEY, '1')) || 1)
@@ -199,8 +203,16 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
       (e) => alive && setFailed(e instanceof Error ? e.message : String(e))
     )
     pdfParagraphs(book.path, src.pdf).then(
-      (p) => alive && setParas(p),
-      () => alive && setParas([])
+      (p) => {
+        if (!alive) return
+        setStructure(p)
+        // pictures (ornaments that mark scene breaks) are looked for after the text, it takes longer
+        pdfImages(book.path, src.pdf).then(
+          (im) => alive && setImages(im),
+          () => alive && setImages([])
+        )
+      },
+      () => alive && setStructure({ paras: [], scenes: [], chapters: [] })
     )
     return () => {
       alive = false
@@ -220,6 +232,39 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
   const scale = Math.max(0.3, ((Math.max(200, width) - 36) / maxW) * zoom)
 
   const [from, to] = useMemo(() => (paras ? chapterRange(paras, src) : [0, -1]), [paras, src])
+
+  // Scene breaks in the original: lines of signs, and small pictures standing alone between paragraphs
+  const scenes = useMemo(() => {
+    if (!structure || !pdf) return []
+    const fromImages = images ? imageScenes(images, structure.paras, structure.chapters, (n) => pdf.sizes[n - 1] ?? { w: 600, h: 800 }, pdf.doc.numPages) : []
+    return [...structure.scenes, ...fromImages]
+  }, [structure, images, pdf])
+  const chapterStarts = structure?.chapters ?? []
+  const scenesHere = scenes.filter((m) => m.after >= from && m.after < to).length
+
+  // Where the chapter seems to start and end in the original (suggested until the writer marks the end)
+  const suggestion = useMemo(() => {
+    if (!paras?.length || src.end) return null
+    const sg = suggestChapter(chapterStarts, paras.length, from, !!src.start)
+    if (!sg) return null
+    const end = sg.end < 0 ? paras.length - 1 : sg.end
+    if (sg.start === from && end === to) return null
+    return { ...sg, endIdx: end }
+  }, [paras, chapterStarts, from, to, src.start, src.end])
+  const sgKey = suggestion ? `${chapter.id}:${suggestion.start}:${suggestion.end}` : ''
+  const applySuggestion = () => {
+    if (!suggestion || !paras) return
+    const next: ChapterSource = { ...src, start: paras[suggestion.start].ref }
+    if (suggestion.end >= 0) next.end = paras[suggestion.end].ref
+    else delete next.end
+    void onSave(next)
+    onNotice(`גבולות הפרק נקבעו: מ"${opening(paras[suggestion.start].text)}"${suggestion.end >= 0 ? ` עד "${opening(paras[suggestion.end].text)}"` : ' עד סוף הקובץ'}`)
+  }
+  const dismiss = () => {
+    const next = [...dismissed.slice(-50), sgKey]
+    setDismissed(next)
+    writePref(DISMISS_KEY, next.join('|'))
+  }
   const total = paras ? Math.max(0, to - from + 1) : (src.paras ?? 0)
   const chapterParas = counts[chapter.id] ?? 1
   const progress = translationProgress(chapterParas, total)
@@ -253,11 +298,11 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
 
   // Paragraph boxes on each page, with their index in `paras`
   const boxesByPage = useMemo(() => {
-    const m = new Map<number, { i: number; x: number; y: number; w: number; h: number }[]>()
+    const m = new Map<number, { i: number; k: number; last: boolean; x: number; y: number; w: number; h: number }[]>()
     paras?.forEach((p, i) =>
-      p.boxes.forEach((b) => {
+      p.boxes.forEach((b, k) => {
         if (!m.has(b.page)) m.set(b.page, [])
-        m.get(b.page)!.push({ i, x: b.x, y: b.y, w: b.w, h: b.h })
+        m.get(b.page)!.push({ i, k, last: k === p.boxes.length - 1, x: b.x, y: b.y, w: b.w, h: b.h })
       })
     )
     return m
@@ -489,6 +534,11 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
           כאן נגמר הפרק
         </button>
         <span className="grow" />
+        {scenesHere > 0 && (
+          <small className="pstat" title="מעברי סצנה שזוהו במקור בתוך הפרק: שורת כוכביות, כוכבית אחת או קישוט קטן בין פסקאות">
+            {scenesHere} מעברי סצנה
+          </small>
+        )}
         {progress ? (
           <small className="pdf-progress" title="כמה פסקאות של הפרק המקורי כבר יש בתרגום (נתון בלבד)">
             <i style={{ width: `${progress.percent}%` }} />
@@ -506,6 +556,29 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
           <Icon name="plus" />
         </button>
       </div>
+      {suggestion && !dismissed.includes(sgKey) && paras && (
+        <div className="pdf-suggest" role="status">
+          <span>
+            נראה שהפרק מתחיל ב<b>"{opening(paras[suggestion.start].text)}"</b> (עמ' {paras[suggestion.start].boxes[0].page})
+            {suggestion.end >= 0 ? (
+              <>
+                {' '}ונגמר לפני <b>"{opening(paras[suggestion.end + 1].text)}"</b> (עמ' {paras[suggestion.end + 1].boxes[0].page})
+              </>
+            ) : (
+              ' וממשיך עד סוף הקובץ'
+            )}
+          </span>
+          <button className="btn" onClick={applySuggestion}>
+            לקבוע כך
+          </button>
+          <button className="ib" onClick={() => scrollToPara(suggestion.start)}>
+            להראות
+          </button>
+          <button className="ib icon" aria-label="לא עכשיו" title="לא עכשיו" onClick={dismiss}>
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
       <div className="pdfview" ref={view} dir="ltr" onScroll={onPdfScroll}>
         {failed && <div className="pdf-empty">לא ניתן לפתוח את הקובץ: {failed}</div>}
         {!pdf && !failed && <div className="pdf-empty">פותח את הקובץ…</div>}
@@ -537,12 +610,38 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
                   const cls = ['sp', inside ? 'in' : 'out', hover === b.i ? 'pair' : '', picked === b.i ? 'picked' : '', b.i === reached && inside ? 'here' : ''].filter(Boolean).join(' ')
                   return (
                     <div key={`${b.i}-${b.y}`} className={cls} style={{ left: b.x * scale - 4, top: b.y * scale - 2, width: b.w * scale + 8, height: b.h * scale + 4 }}>
-                      {b.i === from && paras![b.i].boxes[0].page === n && <span className="sp-flag start" title="כאן מתחיל הפרק">התחלה</span>}
-                      {b.i === to && paras![b.i].boxes[paras![b.i].boxes.length - 1].page === n && src.end && <span className="sp-flag end" title="כאן נגמר הפרק">סוף</span>}
-                      {b.i === reached && inside && paras![b.i].boxes[0].page === n && <span className="sp-flag here" title="התרגום הגיע עד כאן">עד כאן</span>}
+                      {b.i === from && b.k === 0 && <span className="sp-flag start" title="כאן מתחיל הפרק">התחלה</span>}
+                      {b.i === to && b.last && src.end && <span className="sp-flag end" title="כאן נגמר הפרק">סוף</span>}
+                      {b.i === reached && inside && b.k === 0 && <span className="sp-flag here" title="התרגום הגיע עד כאן">עד כאן</span>}
                     </div>
                   )
                 })}
+                {chapterStarts
+                  .filter((i) => paras![i] && paras![i].boxes[0].page === n && i !== from)
+                  .map((i) => {
+                    const b = paras![i].boxes[0]
+                    return (
+                      <button
+                        key={`ch${i}`}
+                        className="sp-guess"
+                        style={{ left: 4, top: b.y * scale - 2 }}
+                        title="נראה כמו תחילת פרק. לחיצה בוחרת את הפסקה, ואז אפשר ללחוץ &quot;כאן מתחיל הפרק&quot;"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setPicked(i)
+                        }}
+                      >
+                        פרק?
+                      </button>
+                    )
+                  })}
+                {scenes
+                  .filter((m) => m.page === n)
+                  .map((m) => (
+                    <div key={`sc${m.y}`} className="sp-scene" style={{ top: m.y * scale }} title={m.kind === 'image' ? 'מעבר סצנה (קישוט בין פסקאות)' : 'מעבר סצנה'}>
+                      <span>סצנה</span>
+                    </div>
+                  ))}
               </div>
             )
           })}

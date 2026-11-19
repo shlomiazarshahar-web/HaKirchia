@@ -12,6 +12,7 @@ import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, Load
 import * as drafts from './drafts'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { chapterParagraphCount, SOURCES_DIR, type ChapterSource } from '../shared/translation'
+import { normalizePublish, type PublishSettings } from '../shared/publish'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
@@ -35,6 +36,8 @@ interface Manifest {
   alts?: AltDraft[]
   /** The original of each translated chapter (feature 12); the PDFs are in the "מקור" folder */
   sources?: Record<string, ChapterSource>
+  /** Front and back pages and page layout (features 31, 36, 16) */
+  publish?: PublishSettings
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -101,6 +104,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   notes: (m.notes ?? []).filter((n) => m.chapters.some((c) => c.id === n.chapterId)),
   alts: (m.alts ?? []).filter((a) => m.chapters.some((c) => c.id === a.chapterId)),
   sources: Object.fromEntries(Object.entries(m.sources ?? {}).filter(([id]) => m.chapters.some((c) => c.id === id))),
+  publish: normalizePublish(m.publish),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
 
@@ -288,6 +292,29 @@ export function setStopPoint(bookPath: string, sp: StopPoint | null) {
     if (sp) m.stopPoint = sp
     else delete m.stopPoint
     await writeManifest(bookPath, m)
+  })
+}
+
+/** Saves the front and back pages, the author and the page layout (features 31, 36, 16). */
+export function setPublish(bookPath: string, p: PublishSettings): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    m.publish = normalizePublish(p)
+    await writeManifest(bookPath, m)
+    return toBook(bookPath, m)
+  })
+}
+
+/** Everything an export needs: the book and every chapter's text, read from the files. */
+export function exportData(bookPath: string): Promise<{ book: Book; docs: Record<string, PMNode> }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const docs: Record<string, PMNode> = {}
+    for (const ch of m.chapters) {
+      const file = chapterPath(bookPath, ch)
+      docs[ch.id] = existsSync(file) ? (await docxToDoc(new Uint8Array(await fs.readFile(file)))).doc : emptyDoc()
+    }
+    return { book: toBook(bookPath, m), docs }
   })
 }
 

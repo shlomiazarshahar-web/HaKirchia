@@ -127,12 +127,14 @@ function footnoteRun(notes: Notes | null, text: string): string {
   return `<w:r><w:rPr><w:rStyle w:val="FootnoteReference"/></w:rPr><w:footnoteReference w:id="${notes.length}"/></w:r>`
 }
 
-function paragraphXml(node: PMNode, styleId: string | null, notes: Notes | null = null): string {
+function paragraphXml(node: PMNode, styleId: string | null, notes: Notes | null = null, opts: { pageBreak?: boolean; before?: number } = {}): string {
   const dir: Dir = node.attrs?.dir === 'ltr' ? 'ltr' : 'rtl'
   const align = (node.attrs?.textAlign as Align) ?? null
   const pPr: string[] = []
   if (styleId) pPr.push(`<w:pStyle w:val="${styleId}"/>`)
+  if (opts.pageBreak) pPr.push('<w:pageBreakBefore/>')
   pPr.push(dir === 'rtl' ? '<w:bidi/>' : '<w:bidi w:val="0"/>')
+  if (opts.before) pPr.push(`<w:spacing w:before="${opts.before}"/>`)
   const jc = jcFor(align, dir)
   if (jc) pPr.push(`<w:jc w:val="${jc}"/>`)
   let runs = ''
@@ -158,12 +160,14 @@ export function isIndented(node: PMNode, prev: PMNode | undefined): boolean {
   return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev)
 }
 
-function bodyXml(doc: PMNode, title: string, notes: Notes): string {
+function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false): string {
   const out: string[] = []
   out.push(
     paragraphXml(
       { type: 'heading', attrs: { dir: guessDir(title) === 'ltr' ? 'ltr' : 'rtl' }, content: title ? [{ type: 'text', text: title }] : [] },
-      'Heading1'
+      'Heading1',
+      null,
+      { pageBreak }
     )
   )
   let prev: PMNode | undefined
@@ -217,13 +221,13 @@ const DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const SETTINGS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>__FOOTNOTE_PR__<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat><w:themeFontLang w:val="he-IL" w:bidi="he-IL"/></w:settings>`
 
-function stylesXml(): string {
-  const f = esc(DEFAULT_FONT)
-  const sz = DEFAULT_SIZE_PT * 2
+function stylesXml(font = DEFAULT_FONT, sizePt = DEFAULT_SIZE_PT, extra = ''): string {
+  const f = esc(font)
+  const sz = Math.round(sizePt * 2)
   const heading = (id: string, name: string, size: number, before: number, after: number, outline: number) =>
     `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${before}" w:after="${after}"/><w:ind w:firstLine="0"/><w:outlineLvl w:val="${outline}"/></w:pPr><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style><w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
+<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>${extra}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
 }
 
 function coreXml(title: string): string {
@@ -251,6 +255,111 @@ export async function docToDocx(doc: PMNode, title: string): Promise<Uint8Array>
   if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))
   zip.file('docProps/core.xml', coreXml(title))
   zip.file('docProps/app.xml', APP_XML)
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
+}
+
+// ---------------------------------------------------------------------------
+// The whole book as one Word file (export, feature 16)
+// ---------------------------------------------------------------------------
+
+/** One piece of the exported book. Each piece starts on a new page. */
+export type DocxBookItem =
+  | { kind: 'title'; title: string; subtitle: string; author: string; extra: string[] }
+  | { kind: 'matter'; heading: string; lines: string[]; centered: boolean }
+  | { kind: 'toc'; heading: string; entries: string[] }
+  | { kind: 'part'; title: string }
+  | { kind: 'chapter'; title: string; doc: PMNode }
+
+export interface DocxBookOptions {
+  /** Page size in millimetres */
+  pageW: number
+  pageH: number
+  /** Margins in millimetres */
+  margin: { top: number; bottom: number; side: number }
+  font: string
+  fontSize: number
+}
+
+const BOOK_STYLES =
+  '<w:style w:type="paragraph" w:styleId="PartTitle"><w:name w:val="Part Title"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="3600" w:after="240"/><w:ind w:firstLine="0"/><w:jc w:val="center"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:sz w:val="52"/><w:szCs w:val="52"/></w:rPr></w:style>' +
+  '<w:style w:type="paragraph" w:styleId="BookTitle"><w:name w:val="Book Title Page"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="240"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:sz w:val="60"/><w:szCs w:val="60"/></w:rPr></w:style>' +
+  '<w:style w:type="paragraph" w:styleId="MatterHeading"><w:name w:val="Matter Heading"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="720" w:after="360"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:sz w:val="36"/><w:szCs w:val="36"/></w:rPr></w:style>' +
+  '<w:style w:type="paragraph" w:styleId="MatterText"><w:name w:val="Matter Text"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="120"/><w:ind w:firstLine="0"/></w:pPr></w:style>'
+
+const textPara = (text: string, styleId: string, opts: { pageBreak?: boolean; before?: number; center?: boolean } = {}) =>
+  paragraphXml(
+    { type: 'paragraph', attrs: { dir: guessDir(text) === 'ltr' ? 'ltr' : 'rtl', ...(opts.center ? { textAlign: 'center' } : {}) }, content: text ? [{ type: 'text', text }] : [] },
+    styleId,
+    null,
+    opts
+  )
+
+/**
+ * An empty paragraph that starts a new page and leaves room above what follows. (Space before a
+ * paragraph at the top of a page is dropped by some programs; space after an empty one is kept.)
+ */
+const spacer = (pageBreak: boolean, after: number) =>
+  `<w:p><w:pPr><w:pStyle w:val="MatterText"/>${pageBreak ? '<w:pageBreakBefore/>' : ''}<w:spacing w:before="0" w:after="${after}"/></w:pPr></w:p>`
+
+const mmToTwips = (mm: number) => Math.round(mm * 56.6929)
+
+function itemXml(item: DocxBookItem, first: boolean, notes: Notes): string {
+  const pageBreak = !first
+  switch (item.kind) {
+    case 'title': {
+      const out = [spacer(pageBreak, 2800), textPara(item.title, 'BookTitle')]
+      if (item.subtitle) out.push(textPara(item.subtitle, 'MatterText', { center: true }))
+      if (item.author) out.push(textPara(item.author, 'MatterText', { center: true, before: 1800 }))
+      item.extra.forEach((l, i) => out.push(textPara(l, 'MatterText', { center: true, before: i === 0 ? 1800 : 0 })))
+      return out.join('')
+    }
+    case 'matter': {
+      const out: string[] = []
+      if (item.heading) out.push(textPara(item.heading, 'MatterHeading', { pageBreak }))
+      else out.push(spacer(pageBreak, item.centered ? 3000 : 0))
+      item.lines.forEach((l) => out.push(textPara(l, 'MatterText', { center: item.centered })))
+      return out.join('')
+    }
+    case 'toc': {
+      // A real Word table of contents (a field); Word offers to update it, with page numbers, when the file opens
+      const head = textPara(item.heading, 'MatterHeading', { pageBreak })
+      const begin = '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-1" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+      const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+      const lines = item.entries.length ? item.entries : ['']
+      const paras = lines.map((l, i) => {
+        const rtl = guessDir(l) !== 'ltr'
+        return `<w:p><w:pPr><w:pStyle w:val="MatterText"/>${rtl ? '<w:bidi/>' : '<w:bidi w:val="0"/>'}</w:pPr>${i === 0 ? begin : ''}${l ? textRuns(l, undefined, rtl) : ''}${i === lines.length - 1 ? end : ''}</w:p>`
+      })
+      return head + paras.join('')
+    }
+    case 'part':
+      return textPara(item.title, 'PartTitle', { pageBreak })
+    case 'chapter':
+      return bodyXml(item.doc, item.title, notes, pageBreak)
+  }
+}
+
+export async function bookToDocx(items: DocxBookItem[], title: string, opts: DocxBookOptions): Promise<Uint8Array> {
+  const zip = new JSZip()
+  const notes: Notes = []
+  const body = items.map((it, i) => itemXml(it, i === 0, notes)).join('')
+  const hasNotes = notes.length > 0
+  const side = mmToTwips(opts.margin.side)
+  const sect = `<w:sectPr><w:pgSz w:w="${mmToTwips(opts.pageW)}" w:h="${mmToTwips(opts.pageH)}"/><w:pgMar w:top="${mmToTwips(opts.margin.top)}" w:right="${side}" w:bottom="${mmToTwips(opts.margin.bottom)}" w:left="${side}" w:header="567" w:footer="567" w:gutter="0"/><w:bidi/></w:sectPr>`
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W_NS}"><w:body>${body}${sect}</w:body></w:document>`
+  const hasToc = items.some((i) => i.kind === 'toc')
+  zip.file('[Content_Types].xml', hasNotes ? CONTENT_TYPES.replace('</Types>', `${FOOTNOTES_CT}</Types>`) : CONTENT_TYPES)
+  zip.file('_rels/.rels', ROOT_RELS)
+  zip.file('word/document.xml', documentXml)
+  zip.file('word/_rels/document.xml.rels', hasNotes ? DOC_RELS.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`) : DOC_RELS)
+  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES))
+  // updateFields: Word asks to update the table of contents (page numbers) when the file opens
+  zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', (hasToc ? '<w:updateFields w:val="true"/>' : '') + (hasNotes ? FOOTNOTE_PR : '')))
+  if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))
+  zip.file('docProps/core.xml', coreXml(title))
+  // Not marked as made by the app: this file is for others (and is not a chapter file)
+  zip.file('docProps/app.xml', APP_XML.replace(APP_MARKER, `${APP_MARKER} export`))
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
 }
 

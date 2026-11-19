@@ -32,7 +32,7 @@ export function usePrefs(): Prefs {
 
 const loaded = new Set<string>()
 /** Makes font files the user added usable in the window (fonts installed in Windows just work). */
-async function registerFonts(list: CustomFont[]): Promise<void> {
+export async function registerFonts(list: CustomFont[]): Promise<void> {
   for (const f of list) {
     if (!f.file || loaded.has(f.file)) continue
     loaded.add(f.file)
