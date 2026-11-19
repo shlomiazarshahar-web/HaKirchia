@@ -66,6 +66,8 @@ export interface PageBlock {
   runsOn: boolean
   /** Right-to-left text */
   rtl: boolean
+  /** A short line alone at the top of the page: a running head, or the heading of a chapter that starts at the top (see linkPages) */
+  band?: 'top'
 }
 
 interface Line {
@@ -142,16 +144,25 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
   if (!lines.length) return []
   const gapsAll = lines.slice(1).map((l, i) => lines[i].y - l.y)
   const typicalAll = median(gapsAll.filter((g) => g > 0 && g < 3 * lines[0].h)) || lines[0].h * 1.3
-  // Running heads and page numbers: in the top or bottom band, and short or only a number
+  // Running heads and page numbers: in the top or bottom band, and short or only a number. A short
+  // line alone at the top may also be a chapter heading: it is kept as a block of its own, marked,
+  // and linkPages decides (running heads repeat on many pages, headings do not).
+  const top = new Set<Line>()
   lines = lines.filter((l, i) => {
-    const top = pageH - (l.y + l.h)
-    const inBand = top < pageH * 0.09 || l.y < pageH * 0.09
+    const fromTop = pageH - (l.y + l.h)
+    const inTop = fromTop < pageH * 0.09
+    const inBand = inTop || l.y < pageH * 0.09
     if (!inBand) return true
     if (PAGE_NUMBER.test(l.text)) return false
     const before = i > 0 ? lines[i - 1].y - l.y : Infinity
     const after = i < lines.length - 1 ? l.y - lines[i + 1].y : Infinity
     const alone = Math.min(before, after) > typicalAll * 1.8
-    return !(alone && words(l.text) <= 8)
+    if (!(alone && words(l.text) <= 8)) return true
+    if (inTop && i === 0) {
+      top.add(l)
+      return true
+    }
+    return false
   })
   if (!lines.length) return []
 
@@ -175,7 +186,7 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
     const a = lines[i - 1]
     const b = lines[i]
     const gap = a.y - b.y
-    const brk = gap > typical * 1.35 || gap < 0 || indented(b) || short(a) || sizeChange(a, b)
+    const brk = gap > typical * 1.35 || gap < 0 || indented(b) || short(a) || sizeChange(a, b) || top.has(a)
     if (brk) blocks.push([b])
     else blocks[blocks.length - 1].push(b)
   }
@@ -197,7 +208,8 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
       size: median(ls.map((l) => l.h)),
       indented: indented(ls[0]),
       runsOn: !short(ls[ls.length - 1]) && !/[.!?…:"”’»)]$/.test(ls[ls.length - 1].text),
-      rtl
+      rtl,
+      ...(top.has(ls[0]) ? { band: 'top' as const } : {})
     }
   })
 }
@@ -217,6 +229,7 @@ export interface SourcePara {
  * `pages[i]` is page `first + i`.
  */
 export function linkPages(pages: PageBlock[][], first = 1): SourcePara[] {
+  pages = dropRunningHeads(pages)
   const out: SourcePara[] = []
   pages.forEach((blocks, i) => {
     const page = first + i
@@ -233,6 +246,35 @@ export function linkPages(pages: PageBlock[][], first = 1): SourcePara[] {
     })
   })
   return out
+}
+
+/**
+ * A short line alone at the top of a page is a running head when the same words (numbers aside)
+ * stand at the top of other pages too, unless it is bigger than they are (the chapter's own heading
+ * above its running heads). One that does not repeat is kept: a chapter that starts at the top.
+ * With only a page or two there is nothing to compare, so they are all left out.
+ */
+function dropRunningHeads(pages: PageBlock[][]): PageBlock[][] {
+  const key = (t: string) => t.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim()
+  const seen = new Map<string, { pages: Set<number>; min: number }>()
+  pages.forEach((blocks, i) =>
+    blocks.forEach((b) => {
+      if (b.band !== 'top') return
+      const k = key(b.text)
+      const e = seen.get(k) ?? { pages: new Set<number>(), min: Infinity }
+      e.pages.add(i)
+      e.min = Math.min(e.min, b.size)
+      seen.set(k, e)
+    })
+  )
+  return pages.map((blocks) =>
+    blocks.filter((b) => {
+      if (b.band !== 'top') return true
+      if (pages.length < 3) return false
+      const e = seen.get(key(b.text))!
+      return e.pages.size < 2 || b.size >= e.min * 1.15
+    })
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -319,13 +361,26 @@ export interface SourceStructure {
   scenes: SceneMark[]
   /** Indices in `paras` of the paragraphs that look like the start of a chapter */
   chapters: number[]
+  /** Weaker candidates too (short lines that could be headings), offered when choosing by hand */
+  candidates: number[]
 }
 
 const CHAPTER_WORD_RE =
   /^(chapter|chap\.|part|book|prologue|epilogue|interlude|afterword|foreword|פרק|פרולוג|אפילוג|חלק|глава|часть|пролог|эпилог|kapitel|teil|chapitre|partie|prologue|capítulo|capitulo|parte|capitolo|hoofdstuk|rozdział|kapitola)(\s|$|[.:\-–—])/iu
 const NUMBER_ALONE_RE = /^(?:[ivxlcdm]{1,8}|\d{1,3})[.:)]?$/i
 const NUMBER_FIRST_RE = /^(?:[ivxlcdm]{1,8}|\d{1,3})[.:)]?\s+\S/i
-const SPELLED_RE = /^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty)(\b|[-\s])/i
+const NUM_WORD = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred'
+/** A spelled number alone ("Twenty-One"), or before a joined heading ("One — The Crossing"); not "Nine Years Later" */
+const SPELLED_RE = new RegExp(`^(?:${NUM_WORD})(?:[-\\s](?:${NUM_WORD}))*\\s*(?:$|[.:—–])`, 'i')
+/** A heading in capitals: "THE BOY FROM MAKAPU", not a shout inside the text ("“RANGI! WAIT!”") */
+function isCapsHeading(t: string): boolean {
+  const s = t.trim()
+  if (/^["“”'‘’«»(\-–—]/.test(s) || /[!?"“”'‘’»,;]$/.test(s)) return false
+  const letters = s.match(/\p{L}/gu) ?? []
+  if (letters.length < 3 || wordsIn(s) > 8) return false
+  const cased = letters.filter((c) => c.toLowerCase() !== c.toUpperCase())
+  return cased.length >= 3 && cased.every((c) => c === c.toUpperCase())
+}
 
 /** Body text size: the usual size of the longer paragraphs */
 function bodySize(paras: SourcePara[]): number {
@@ -364,27 +419,41 @@ export function sourceStructure(all: SourcePara[], pageH: (page: number) => numb
     let s = 0
     const label = looksLikeChapterLabel(t)
     if (CHAPTER_WORD_RE.test(t)) s += 3
-    else if (NUMBER_ALONE_RE.test(t)) s += 3
+    else if (NUMBER_ALONE_RE.test(t) || SPELLED_RE.test(t)) s += 3
     else if (NUMBER_FIRST_RE.test(t) && words <= 10) s += 1
     if (words > 14 && !label) return 0
+    if (isCapsHeading(t)) s += 2
     if (big(p, 1.3)) s += 2
     else if (big(p, 1.12)) s += 1
     const b = p.boxes[0]
-    const firstOnPage = p.ref.para === 0 || !paras[i - 1] || paras[i - 1].boxes[paras[i - 1].boxes.length - 1].page !== b.page
+    const prev = paras[i - 1]
+    const prevBox = prev?.boxes[prev.boxes.length - 1]
+    const firstOnPage = p.ref.para === 0 || !prev || prevBox!.page !== b.page
+    // space under it, more than between paragraphs
+    const next = paras[i + 1]?.boxes[0]
+    const lastBox = p.boxes[p.boxes.length - 1]
+    if (next && next.page === lastBox.page && next.y - (lastBox.y + lastBox.h) > body * 1.6) s += 1
     if (firstOnPage && b.y > pageH(b.page) * 0.18) s += 1 // starts low on a fresh page
     if (firstOnPage) s += 1
+    // the page before ended early (or was empty): the previous chapter ended there
+    if (firstOnPage && prevBox && (prevBox.page < b.page - 1 || prevBox.y + prevBox.h < pageH(prevBox.page) * 0.7)) s += 1
     return s
   }
   const chapters: number[] = []
+  const candidates: number[] = []
+  const scores = paras.map((_, i) => score(i))
   for (let i = 0; i < paras.length; i++) {
-    if (score(i) < 4) continue
-    // two heading lines in a row (a title page): only the first
-    if (chapters.length && chapters[chapters.length - 1] === i - 1) continue
+    if (scores[i] >= 2 && wordsIn(paras[i].text) <= 14) candidates.push(i)
+    if (scores[i] < 4) continue
+    // a heading with nothing under it before the next one (a title page, a part page): only the last
+    if (chapters.length && chapters[chapters.length - 1] === i - 1) chapters.pop()
     chapters.push(i)
   }
   // When chapters are numbered or named "Chapter…", a big line without that (a title page, a dedication) is not one
+  // (only when most of them are like that: in a book of named chapters, "Foreword" alone says nothing)
   const labeled = chapters.filter((i) => looksLikeChapterLabel(paras[i].text))
-  return { paras, scenes, chapters: labeled.length >= 2 ? labeled : chapters }
+  const useLabeled = labeled.length >= 2 && labeled.length * 2 >= chapters.length
+  return { paras, scenes, chapters: useLabeled ? labeled : chapters, candidates }
 }
 
 function looksLikeChapterLabel(t: string): boolean {

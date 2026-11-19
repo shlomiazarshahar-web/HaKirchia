@@ -30,6 +30,19 @@ async function analyze(file: string) {
 }
 
 describe('structure of the original', () => {
+  it('finds named chapters in capitals at the top of a page, not running heads or shouts', async () => {
+    const st = await analyze(join(__dirname, 'fixtures', 'named.pdf'))
+    const starts = st.chapters.map((i) => st.paras[i].text)
+    expect(starts).toEqual(['FOREWORD', 'THE TEST', 'NINE YEARS LATER', 'THE BOY FROM MAKAPU', 'HONEST WORK'])
+    // running heads (the chapter's name on the next pages) are not paragraphs
+    expect(st.paras.filter((p) => p.text === 'THE TEST')).toHaveLength(1)
+    // the shout is a paragraph, but neither a chapter nor a candidate
+    const shout = st.paras.findIndex((p) => p.text.startsWith('THINK FAST'))
+    expect(shout).toBeGreaterThan(0)
+    expect(st.candidates).not.toContain(shout)
+    for (const c of st.chapters) expect(st.candidates).toContain(c)
+  })
+
   it('finds chapter starts: two-line headings, "CHAPTER 2", a roman numeral alone', async () => {
     const st = await analyze(join(__dirname, 'fixtures', 'structure.pdf'))
     const starts = st.chapters.map((i) => st.paras[i].text)

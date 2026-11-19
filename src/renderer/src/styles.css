@@ -752,9 +752,12 @@ body { background: #dde3e0; overflow: hidden; }
 
 .dialog.split { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 60px); }
 .split-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; max-height: 50vh; border: 1px solid var(--w-line); border-radius: var(--radius); padding: 4px; }
-.split-row { display: grid; grid-template-columns: auto 64px 1fr auto auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.split-row { display: grid; grid-template-columns: 104px 64px 1fr auto auto; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; font-size: 13px; }
 .split-row:hover { background: var(--w-soft); }
-.split-row.off { color: var(--w-muted); }
-.split-row.off .split-h { text-decoration: line-through; }
+.split-row select { font: inherit; font-size: 12px; padding: 2px 4px; border: 1px solid var(--w-line); border-radius: 6px; background: var(--w-paper, transparent); color: inherit; }
+.split-row.cont { color: var(--w-muted); }
+.split-row.skip .split-h { text-decoration: line-through; color: var(--w-muted); }
+.split-empty { margin: 12px; color: var(--w-muted); font-size: 13px; }
+.split-add { margin-top: 8px; }
 .split-h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .split-row small { color: var(--w-muted); white-space: nowrap; }

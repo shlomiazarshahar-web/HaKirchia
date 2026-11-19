@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TextLayer } from 'pdfjs-dist'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
-import { chapterRange, countsAsParagraph, imageScenes, splitPlan, suggestChapter, translationProgress, type ChapterSource, type PdfImage, type SourceRef, type SourceStructure } from '@shared/translation'
+import { chapterRange, countsAsParagraph, imageScenes, splitPlan, suggestChapter, translationProgress, type ChapterSource, type PdfImage, type SceneMark, type SourcePara, type SourceRef, type SourceStructure, type SplitItem } from '@shared/translation'
 import { api, flushAll, notifyDiskChange } from '../api'
 import { editorsFor, useEditorsVersion } from '../nav'
 import { loadParagraphCounts, loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
@@ -214,7 +214,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
           () => alive && setImages([])
         )
       },
-      () => alive && setStructure({ paras: [], scenes: [], chapters: [] })
+      () => alive && setStructure({ paras: [], scenes: [], chapters: [], candidates: [] })
     )
     return () => {
       alive = false
@@ -273,11 +273,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     setDismissed(next)
     writePref(DISMISS_KEY, next.join('|'))
   }
-  const doSplit = async (picked: number[]) => {
-    const items = picked.map((k, n) => {
-      const { from: _f, to: _t, page: _p, ...it } = plan[k]
-      return { ...it, title: `פרק ${n + 1}` }
-    })
+  const doSplit = async (items: SplitItem[]) => {
     // the chapter open now is empty and linked to this PDF: it becomes the first one
     const reuse = chapterParas <= 1 && src.pdf ? chapter.id : undefined
     await flushAll()
@@ -590,12 +586,10 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
           <Icon name="end" />
           כאן נגמר הפרק
         </button>
-        {plan.length >= 2 && (
-          <button className="ib" title="מסמך לכל פרק שזוהה ב־PDF, מקושר לחלק שלו במקור ועם מעברי הסצנה" onClick={() => setSplitOpen(true)}>
-            <Icon name="part-plus" />
-            חלוקה לפרקים
-          </button>
-        )}
+        <button className="ib" title="מראה אילו פרקים זוהו ב־PDF ומאפשר לבחור ולתקן, ואז ליצור מסמך לכל פרק" onClick={() => setSplitOpen(true)} disabled={!paras?.length}>
+          <Icon name="part-plus" />
+          זיהוי פרקים
+        </button>
         <span className="grow" />
         {scenesHere > 0 && (
           <small className="pstat" title="מעברי סצנה שזוהו במקור בתוך הפרק: שורת כוכביות, כוכבית אחת או קישוט קטן בין פסקאות">
@@ -632,7 +626,18 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
           </button>
         </div>
       )}
-      {splitOpen && <SplitDialog plan={plan} imagesReady={images !== null} reuseTitle={chapterParas <= 1 ? chapter.title : null} onCancel={() => setSplitOpen(false)} onCreate={doSplit} onShow={(i) => scrollToPara(i)} />}
+      {splitOpen && structure && (
+        <SplitDialog
+          structure={structure}
+          scenes={scenes}
+          picked={target()}
+          imagesReady={images !== null}
+          reuseTitle={chapterParas <= 1 ? chapter.title : null}
+          onCancel={() => setSplitOpen(false)}
+          onCreate={doSplit}
+          onShow={(i) => scrollToPara(i)}
+        />
+      )}
       {!offerSplit && suggestion && !dismissed.includes(sgKey) && paras && (
         <div className="pdf-suggest" role="status">
           <span>
@@ -796,44 +801,96 @@ function PageCanvas({ pdf, n, scale }: { pdf: LoadedPdf; n: number; scale: numbe
 }
 
 interface SplitProps {
-  plan: ReturnType<typeof splitPlan>
+  structure: SourceStructure
+  scenes: SceneMark[]
+  /** The paragraph clicked in the PDF (or the one at the top of the window), which can be added as a chapter start */
+  picked: number | null
   imagesReady: boolean
   /** The empty chapter open now, which becomes the first one */
   reuseTitle: string | null
   onCancel: () => void
-  onCreate: (picked: number[]) => Promise<void>
+  onCreate: (items: SplitItem[]) => Promise<void>
   onShow: (paraIndex: number) => void
 }
 
-/** Choosing which of the chapters found in the PDF become chapter files */
-function SplitDialog({ plan, imagesReady, reuseTitle, onCancel, onCreate, onShow }: SplitProps) {
-  const [on, setOn] = useState<boolean[]>(() => plan.map(() => true))
+type RowMode = 'new' | 'cont' | 'skip'
+const MODE_LABEL: Record<RowMode, string> = { new: 'פרק חדש', cont: 'לא כותרת', skip: 'לא לתרגם' }
+
+/** The chapters as the rows say: each "new" or "skip" row starts a range up to the next one */
+function planFromRows(paras: SourcePara[], rows: { i: number; mode: RowMode }[], scenes: SceneMark[]) {
+  const bounds = rows.filter((r) => r.mode !== 'cont').sort((a, b) => a.i - b.i)
+  const plan = splitPlan(
+    paras,
+    bounds.map((r) => r.i),
+    scenes
+  )
+  return plan.map((it, k) => ({ ...it, mode: bounds[k].mode }))
+}
+
+/**
+ * Finding the chapters in the PDF and making a chapter file for each: the headings found are
+ * marked "new chapter", weaker candidates (short lines that may be headings) are listed too, and
+ * any paragraph clicked in the PDF can be added. A range marked "don't translate" (thanks that
+ * looked like a chapter) gets no file.
+ */
+function SplitDialog({ structure, scenes, picked, imagesReady, reuseTitle, onCancel, onCreate, onShow }: SplitProps) {
+  const { paras } = structure
+  const [rows, setRows] = useState<{ i: number; mode: RowMode }[]>(() =>
+    [...new Set([...structure.chapters, ...structure.candidates])].sort((a, b) => a - b).map((i) => ({ i, mode: structure.chapters.includes(i) ? 'new' : 'cont' }))
+  )
   const [busy, setBusy] = useState(false)
-  const picked = plan.map((_, k) => k).filter((k) => on[k])
+  const plan = useMemo(() => planFromRows(paras, rows, scenes), [paras, rows, scenes])
+  const made = plan.filter((it) => it.mode === 'new')
+  const byStart = new Map(plan.map((it) => [it.from, it]))
+  const canAdd = picked !== null && paras[picked] && !rows.some((r) => r.i === picked)
+  const setMode = (i: number, mode: RowMode) => setRows((list) => list.map((r) => (r.i === i ? { ...r, mode } : r)))
+  const add = () => {
+    if (picked === null) return
+    setRows((list) => [...list, { i: picked, mode: 'new' as RowMode }].sort((a, b) => a.i - b.i))
+  }
+  const found = structure.chapters.length
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
-      <div className="dialog split" role="dialog" aria-label="חלוקה לפרקים לפי המקור" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
-        <h2>חלוקה לפרקים לפי המקור</h2>
+      <div className="dialog split" role="dialog" aria-label="זיהוי פרקים במקור" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+        <h2>זיהוי פרקים במקור</h2>
         <p>
-          לכל פרק שמסומן נוצר מסמך משלו, מקושר לחלק שלו ב־PDF, עם שורת * * * בכל מעבר סצנה של המקור ומקום ריק לתרגום ביניהן.
-          {reuseTitle ? ` הפרק הריק "${reuseTitle}" יהיה הראשון.` : ' הפרקים מתווספים בסוף הספר.'} מה שלא מסומן (למשל "תודות" שזוהה בטעות) פשוט לא מקושר לאף פרק.
+          {found >= 2 ? `זוהו ${found} פרקים.` : found === 1 ? 'זוהה רק פרק אחד בוודאות.' : 'לא זוהו פרקים בוודאות.'} ברשימה גם שורות קצרות שאולי הן כותרות: בוחרים לכל אחת אם היא מתחילה פרק חדש. לכל פרק נוצר מסמך משלו, מקושר לחלק שלו ב־PDF, עם שורת * * * בכל מעבר סצנה.
+          {reuseTitle ? ` הפרק הריק "${reuseTitle}" יהיה הראשון.` : ' הפרקים מתווספים בסוף הספר.'} חלק שמסומן "לא לתרגם" (למשל תודות) לא מקושר לאף פרק.
         </p>
         <div className="split-list">
-          {plan.map((it, k) => (
-            <label key={k} className={`split-row${on[k] ? '' : ' off'}`}>
-              <input type="checkbox" checked={on[k]} onChange={(e) => setOn(on.map((v, j) => (j === k ? e.target.checked : v)))} />
-              <b>{on[k] ? `פרק ${picked.indexOf(k) + 1}` : 'לא ייווצר'}</b>
-              <span className="split-h" dir="auto">
-                {it.synopsis}
-              </span>
-              <small>
-                עמ׳ {it.page} · {it.to - it.from + 1} פסקאות{it.scenes ? ` · ${it.scenes} מעברי סצנה` : ''}
-              </small>
-              <button type="button" className="ib" onClick={(e) => (e.preventDefault(), onShow(it.from))}>
-                להראות
-              </button>
-            </label>
-          ))}
+          {rows.length === 0 && <p className="split-empty">לא נמצאו שורות שנראות כמו כותרות. לוחצים על הכותרת של פרק ב־PDF ואז על "להוסיף".</p>}
+          {rows.map((r) => {
+            const it = byStart.get(r.i)
+            const n = it && it.mode === 'new' ? made.indexOf(it) + 1 : 0
+            return (
+              <div key={r.i} className={`split-row ${r.mode}`}>
+                <select value={r.mode} aria-label="מה השורה הזאת" onChange={(e) => setMode(r.i, e.target.value as RowMode)}>
+                  {(['new', 'cont', 'skip'] as RowMode[]).map((m) => (
+                    <option key={m} value={m}>
+                      {MODE_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+                <b>{n ? `פרק ${n}` : r.mode === 'skip' ? 'בלי מסמך' : ''}</b>
+                <span className="split-h" dir="auto" title={paras[r.i].text}>
+                  {paras[r.i].text}
+                </span>
+                <small>
+                  עמ׳ {paras[r.i].boxes[0].page}
+                  {it ? ` · ${it.to - it.from + 1} פסקאות${it.scenes ? ` · ${it.scenes} מעברי סצנה` : ''}` : ''}
+                </small>
+                <button type="button" className="ib" onClick={() => onShow(r.i)}>
+                  להראות
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <div className="split-add">
+          <button className="ib" onClick={add} disabled={!canAdd} title="כותרת שחסרה ברשימה: סוגרים את החלון, לוחצים עליה ב־PDF, ופותחים שוב את זיהוי הפרקים">
+            <Icon name="plus" />
+            {canAdd ? `להוסיף כתחילת פרק: "${paras[picked!].text.split(/\s+/).slice(0, 6).join(' ')}"` : 'כותרת חסרה? לוחצים עליה ב־PDF ופותחים שוב את החלון'}
+          </button>
         </div>
         {!imagesReady && <p className="lp-note">עדיין מחפש קישוטים שמסמנים מעברי סצנה…</p>}
         <div className="actions">
@@ -842,14 +899,14 @@ function SplitDialog({ plan, imagesReady, reuseTitle, onCancel, onCreate, onShow
           </button>
           <button
             className="btn"
-            disabled={!picked.length || busy || !imagesReady}
+            disabled={!made.length || busy || !imagesReady}
             onClick={async () => {
               setBusy(true)
-              await onCreate(picked)
+              await onCreate(made.map(({ from: _f, to: _t, page: _p, mode: _m, ...item }, n) => ({ ...item, title: `פרק ${n + 1}` })))
               setBusy(false)
             }}
           >
-            {busy ? 'יוצר…' : `יצירת ${picked.length} פרקים`}
+            {busy ? 'יוצר…' : made.length === 1 ? 'יצירת פרק אחד' : `יצירת ${made.length} פרקים`}
           </button>
         </div>
       </div>
