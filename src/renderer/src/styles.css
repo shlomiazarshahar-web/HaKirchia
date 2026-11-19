@@ -639,7 +639,16 @@ body { background: #dde3e0; overflow: hidden; }
 .pdfpage canvas { position: absolute; inset: 0; display: block; }
 /* dark mode: the page is shown inverted so it does not dazzle (as in the approved design) */
 .app[data-mode='dark'] .pdfpage { filter: invert(0.88) hue-rotate(180deg); }
-.pdfpage .textLayer { z-index: 1; }
+/* the PDF's text over the page picture: invisible, but it can be selected (rules from pdf.js's own viewer) */
+.pdfpage .textLayer { position: absolute; inset: 0; z-index: 1; overflow: clip; opacity: 1; line-height: 1; text-align: initial; letter-spacing: normal; word-spacing: normal; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.pdfpage .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; user-select: text; }
+.pdfpage .textLayer > :not(.markedContent), .pdfpage .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.pdfpage .textLayer .markedContent { display: contents; }
+.pdfpage .textLayer span[role='img'] { user-select: none; cursor: default; }
+.pdfpage .textLayer ::selection { background: rgba(15, 59, 51, 0.3); color: transparent; }
+.pdfpage .textLayer br::selection { background: transparent; }
+.pdfpage .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.pdfpage .textLayer.selecting .endOfContent { top: 0; }
 .pdfpage .sp { position: absolute; z-index: 2; pointer-events: none; border-radius: 3px; mix-blend-mode: multiply; }
 .pdfpage .sp.out { background: rgba(126, 135, 132, 0.16); }
 .pdfpage .sp.pair { background: #fcefc4; }

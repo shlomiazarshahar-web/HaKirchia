@@ -585,8 +585,13 @@ function PageCanvas({ pdf, n, scale }: { pdf: LoadedPdf; n: number; scale: numbe
       try {
         await layer.render()
       } catch {
-        /* cancelled */
+        return
       }
+      // As in pdf.js's own viewer: while selecting, an empty layer under the text catches the mouse
+      // between lines and words, so dragging over a gap keeps selecting instead of losing the selection
+      const end = document.createElement('div')
+      end.className = 'endOfContent'
+      textDiv.current?.append(end)
     })()
     return () => {
       cancelled = true
@@ -597,7 +602,19 @@ function PageCanvas({ pdf, n, scale }: { pdf: LoadedPdf; n: number; scale: numbe
   return (
     <>
       <canvas ref={canvas} />
-      <div className="textLayer" ref={textDiv} />
+      <div
+        className="textLayer"
+        ref={textDiv}
+        onPointerDown={(e) => {
+          const el = e.currentTarget
+          el.classList.add('selecting')
+          const up = () => {
+            el.classList.remove('selecting')
+            window.removeEventListener('pointerup', up)
+          }
+          window.addEventListener('pointerup', up)
+        }}
+      />
     </>
   )
 }
