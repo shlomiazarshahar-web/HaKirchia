@@ -11,7 +11,8 @@ import type { StopPoint } from '../shared/stoppoint'
 import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
 import * as drafts from './drafts'
 import { flatten, normalizeOutline } from '../shared/outline'
-import { chapterParagraphCount, SOURCES_DIR, type ChapterSource } from '../shared/translation'
+import { chapterParagraphCount, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
+import { SCENE_BREAK_TEXT } from '../shared/scenes'
 import { normalizePublish, type PublishSettings } from '../shared/publish'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
@@ -266,6 +267,8 @@ export function deleteChapter(bookPath: string, id: string) {
     }
     m.alts = (m.alts ?? []).filter((x) => x.chapterId !== id)
     m.notes = (m.notes ?? []).filter((x) => x.chapterId !== id)
+    // only its link to the original goes: the PDF and the other chapters' ranges stay as they are
+    if (m.sources?.[id]) delete m.sources[id]
     m.chapters = m.chapters.filter((c) => c.id !== id)
     fixup(m)
     const notice = await syncFileNames(bookPath, m)
@@ -535,6 +538,47 @@ export function setSource(bookPath: string, chapterId: string, src: ChapterSourc
     else delete m.sources
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
+  })
+}
+
+/**
+ * Splits a translated book into chapters by its original (round 6): one chapter file per chapter
+ * found in the PDF, each linked to its range there and opened with its scene breaks ready ("* * *"
+ * lines with room to write between them). `reuseId` is an empty chapter that becomes the first one.
+ */
+export function createChaptersFromSource(bookPath: string, pdf: string, items: SplitItem[], reuseId?: string): Promise<{ book: Book; notice?: string }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const sources = { ...(m.sources ?? {}) }
+    const docFor = (scenes: number): PMNode => {
+      const content: PMNode[] = [{ type: 'paragraph' }]
+      for (let k = 0; k < scenes; k++) content.push({ type: 'paragraph', attrs: { textAlign: 'center' }, content: [{ type: 'text', text: SCENE_BREAK_TEXT }] }, { type: 'paragraph' })
+      return { type: 'doc', content }
+    }
+    const write = async (ch: Chapter, it: SplitItem) => {
+      const bytes = await docToDocx(docFor(it.scenes), ch.title)
+      await fs.writeFile(chapterPath(bookPath, ch), bytes)
+      remember(bookPath, ch.id, bytes)
+      sources[ch.id] = { pdf, start: it.start, ...(it.end ? { end: it.end } : {}) }
+    }
+    let rest = items
+    const reuse = reuseId ? m.chapters.find((c) => c.id === reuseId) : undefined
+    if (reuse && items.length) {
+      reuse.title = items[0].title
+      if (items[0].synopsis && !reuse.synopsis) reuse.synopsis = items[0].synopsis
+      await write(reuse, items[0])
+      rest = items.slice(1)
+    }
+    for (const it of rest) {
+      const { chapter } = await addChapterUnlocked(bookPath, m, it.title)
+      chapter.synopsis = it.synopsis
+      await write(chapter, it)
+    }
+    m.sources = sources
+    await writeManifest(bookPath, m)
+    const notice = await syncFileNames(bookPath, m)
+    await writeManifest(bookPath, m)
+    return { book: toBook(bookPath, m), notice }
   })
 }
 

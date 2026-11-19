@@ -3,7 +3,7 @@ import type { PaneLayout } from '../shared/panes'
 import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
-import type { ChapterSource } from '../shared/translation'
+import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
 
 const api = {
@@ -20,6 +20,8 @@ const api = {
   readSourcePdf: (bookPath: string, name: string): Promise<OpResult<Uint8Array>> => ipcRenderer.invoke('source:read', bookPath, name),
   /** Links a chapter to its original and its range in it, or unlinks it (null) */
   setSource: (bookPath: string, chapterId: string, src: ChapterSource | null): Promise<OpResult<Book>> => ipcRenderer.invoke('source:set', bookPath, chapterId, src),
+  /** One chapter file per chapter of the original, each linked to its range, with its scene breaks ready */
+  splitBySource: (bookPath: string, pdf: string, items: SplitItem[], reuseId?: string): Promise<OpResult<Book>> => ipcRenderer.invoke('source:split', bookPath, pdf, items, reuseId),
   /** Paragraphs per chapter id, read from the files on disk (translation progress, feature 28) */
   paragraphCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:paraCounts', bookPath),
   /** Makes the whole interface bigger or smaller, and remembers it */

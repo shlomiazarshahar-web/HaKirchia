@@ -12,7 +12,7 @@ import * as exporter from './export'
 import type { PublishSettings } from '../shared/publish'
 import { promises as fsp } from 'fs'
 import type { TypographySettings } from '../shared/hebrew'
-import { allowedInTranslatePane, type ChapterSource } from '../shared/translation'
+import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../shared/translation'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -154,6 +154,7 @@ function registerIpc(): void {
     })
   )
   ipcMain.handle('source:read', (_e, b: string, name: string) => wrap(() => project.readSourcePdf(b, name)))
+  ipcMain.handle('source:split', (_e, b: string, pdf: string, items: SplitItem[], reuseId?: string) => wrapBook(() => project.createChaptersFromSource(b, pdf, items, reuseId)))
   ipcMain.handle('source:set', (_e, b: string, chapterId: string, src: ChapterSource | null) => wrap(() => project.setSource(b, chapterId, src)))
   ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {

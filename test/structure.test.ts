@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { imageScenes, imagesFromOperators, isSignSceneBreak, linkPages, pageBlocks, sourceStructure, suggestChapter, type PageBlock, type PdfImage, type TextPiece } from '../src/shared/translation'
+import { imageScenes, imagesFromOperators, splitPlan, isSignSceneBreak, linkPages, pageBlocks, sourceStructure, suggestChapter, type PageBlock, type PdfImage, type TextPiece } from '../src/shared/translation'
 
 /** Reads a PDF the way the window does: paragraphs, structure, and pictures */
 async function analyze(file: string) {
@@ -65,6 +65,18 @@ describe('structure of the original', () => {
     expect(suggestChapter(st.chapters, n, three, true)).toEqual({ start: three, end: -1 })
     // a start set far from any heading stays where it is
     expect(suggestChapter([0, 50], 60, 20, true)).toEqual({ start: 20, end: 49 })
+  })
+
+  it('plans the whole book: one chapter per heading, with its range and its scene breaks', async () => {
+    const st = await analyze(join(__dirname, 'fixtures', 'structure.pdf'))
+    const scenes = [...st.scenes, ...imageScenes(st.images, st.paras, st.chapters, (p) => st.sizes[p - 1], st.pages)]
+    const plan = splitPlan(st.paras, st.chapters, scenes)
+    expect(plan.map((p) => [p.title, p.synopsis, p.scenes, !!p.end])).toEqual([
+      ['פרק 1', 'Chapter One — The Crossing', 3, true],
+      ['פרק 2', 'CHAPTER 2', 0, true],
+      ['פרק 3', 'III', 0, false]
+    ])
+    expect(plan[0].end).toEqual(st.paras[st.chapters[1] - 1].ref)
   })
 
   it('knows scene-break signs', () => {

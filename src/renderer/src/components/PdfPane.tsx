@@ -10,10 +10,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { TextLayer } from 'pdfjs-dist'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
-import { chapterRange, countsAsParagraph, imageScenes, suggestChapter, translationProgress, type ChapterSource, type PdfImage, type SourceRef, type SourceStructure } from '@shared/translation'
-import { api } from '../api'
+import { chapterRange, countsAsParagraph, imageScenes, splitPlan, suggestChapter, translationProgress, type ChapterSource, type PdfImage, type SourceRef, type SourceStructure } from '@shared/translation'
+import { api, flushAll, notifyDiskChange } from '../api'
 import { editorsFor, useEditorsVersion } from '../nav'
-import { loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
+import { loadParagraphCounts, loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
 import { Icon } from './Icons'
 
 interface Props {
@@ -135,6 +135,7 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
       src={src}
       files={files ?? [src.pdf]}
       onSave={save}
+      onBook={onBook}
       onLink={link}
       onAddFile={addFile}
       onError={onError}
@@ -150,6 +151,7 @@ interface ReaderProps {
   src: ChapterSource
   files: string[]
   onSave: (s: ChapterSource | null) => Promise<void>
+  onBook: (b: Book) => void
   onLink: (pdf: string) => void
   onAddFile: () => Promise<void>
   onError: (msg: string) => void
@@ -176,7 +178,7 @@ function chapterSide(editor: Editor | undefined): { scroller: HTMLElement; block
 
 const topIn = (el: HTMLElement, scroller: HTMLElement) => el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
 
-function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onError, onNotice, onNeedTranslatePane }: ReaderProps) {
+function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFile, onError, onNotice, onNeedTranslatePane }: ReaderProps) {
   const [pdf, setPdf] = useState<LoadedPdf | null>(null)
   const [structure, setStructure] = useState<SourceStructure | null>(null)
   const paras = structure?.paras ?? null
@@ -260,6 +262,36 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
     void onSave(next)
     onNotice(`גבולות הפרק נקבעו: מ"${opening(paras[suggestion.start].text)}"${suggestion.end >= 0 ? ` עד "${opening(paras[suggestion.end].text)}"` : ' עד סוף הקובץ'}`)
   }
+  // The whole book by its original: one chapter file per chapter found in the PDF
+  const [splitOpen, setSplitOpen] = useState(false)
+  const plan = useMemo(() => (structure && structure.chapters.length >= 2 ? splitPlan(structure.paras, structure.chapters, scenes) : []), [structure, scenes])
+  const linkedHere = book.chapters.filter((c) => book.sources?.[c.id]?.pdf === src.pdf).length
+  const splitKey = `split:${book.path}:${src.pdf}`
+  const offerSplit = plan.length >= 2 && linkedHere * 2 < plan.length && !dismissed.includes(splitKey)
+  const dismissSplit = () => {
+    const next = [...dismissed.slice(-50), splitKey]
+    setDismissed(next)
+    writePref(DISMISS_KEY, next.join('|'))
+  }
+  const doSplit = async (picked: number[]) => {
+    const items = picked.map((k, n) => {
+      const { from: _f, to: _t, page: _p, ...it } = plan[k]
+      return { ...it, title: `פרק ${n + 1}` }
+    })
+    // the chapter open now is empty and linked to this PDF: it becomes the first one
+    const reuse = chapterParas <= 1 && src.pdf ? chapter.id : undefined
+    await flushAll()
+    const r = await api.splitBySource(book.path, src.pdf, items, reuse)
+    if (!r.ok || !r.value) return onError(r.error ?? 'יצירת הפרקים נכשלה')
+    onBook(r.value)
+    if (reuse) notifyDiskChange(book.path, reuse)
+    void loadParagraphCounts(book.path)
+    setSplitOpen(false)
+    const made = items.length - (reuse ? 1 : 0)
+    onNotice(`${made === 1 ? 'נוצר פרק חדש אחד' : `נוצרו ${made} פרקים חדשים`}${reuse ? ` (והפרק "${chapter.title}" הפך לראשון)` : ''}, כל אחד מקושר לחלק שלו במקור ועם מעברי הסצנה שלו`)
+    if (r.notice) onNotice(r.notice)
+  }
+
   const dismiss = () => {
     const next = [...dismissed.slice(-50), sgKey]
     setDismissed(next)
@@ -403,8 +435,14 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
     const onMove = (e: MouseEvent) => {
       const cur = chapterSide(editor)
       if (!cur) return
-      const t = e.target as HTMLElement
-      const k = cur.blocks.findIndex((b) => b === t || b.contains(t))
+      // the paragraph at the mouse's height (also between paragraphs and in the margins)
+      const y = e.clientY
+      let k = -1
+      for (let j = 0; j < cur.blocks.length; j++) {
+        if (cur.blocks[j].getBoundingClientRect().top <= y) k = j
+        else break
+      }
+      if (k >= 0 && y > cur.blocks[k].getBoundingClientRect().bottom + 24) k = -1
       setHover(k < 0 ? null : from + k)
     }
     const onLeave = () => setHover(null)
@@ -423,10 +461,29 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
     const s = side.current
     if (hover === null || !s) return
     const el = s.blocks[hover - from]
-    if (!el) return
-    el.classList.add('tr-pair')
-    return () => el.classList.remove('tr-pair')
-  }, [hover, from])
+    const paper = el?.closest('.paper') as HTMLElement | null
+    if (!el || !paper) return
+    // A mark drawn over the paragraph, outside the editor's own elements: the editor redraws its
+    // paragraphs and would drop a class added to them (that is why the mark used to come and go)
+    const mark = document.createElement('div')
+    mark.className = 'tr-pair-mark'
+    const place = () => {
+      const r = el.getBoundingClientRect()
+      const pr = paper.getBoundingClientRect()
+      mark.style.top = `${r.top - pr.top - 3}px`
+      mark.style.left = `${r.left - pr.left - 4}px`
+      mark.style.width = `${r.width + 8}px`
+      mark.style.height = `${r.height + 6}px`
+    }
+    place()
+    paper.append(mark)
+    const ro = new ResizeObserver(place)
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      mark.remove()
+    }
+  }, [hover, from, editorsVersion])
 
   // ---- the paragraph under the mouse in the PDF ----------------------------------------------
   const paraAt = (n: number, e: React.MouseEvent<HTMLDivElement>): number | null => {
@@ -533,6 +590,12 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
           <Icon name="end" />
           כאן נגמר הפרק
         </button>
+        {plan.length >= 2 && (
+          <button className="ib" title="מסמך לכל פרק שזוהה ב־PDF, מקושר לחלק שלו במקור ועם מעברי הסצנה" onClick={() => setSplitOpen(true)}>
+            <Icon name="part-plus" />
+            חלוקה לפרקים
+          </button>
+        )}
         <span className="grow" />
         {scenesHere > 0 && (
           <small className="pstat" title="מעברי סצנה שזוהו במקור בתוך הפרק: שורת כוכביות, כוכבית אחת או קישוט קטן בין פסקאות">
@@ -556,7 +619,21 @@ function PdfReader({ book, chapter, src, files, onSave, onLink, onAddFile, onErr
           <Icon name="plus" />
         </button>
       </div>
-      {suggestion && !dismissed.includes(sgKey) && paras && (
+      {offerSplit && (
+        <div className="pdf-suggest" role="status">
+          <span>
+            זוהו ב־PDF <b>{plan.length} פרקים</b>. אפשר ליצור מסמך לכל פרק, מקושר לחלק שלו במקור ועם מעברי הסצנה שלו.
+          </span>
+          <button className="btn" onClick={() => setSplitOpen(true)}>
+            חלוקה לפרקים…
+          </button>
+          <button className="ib icon" aria-label="לא עכשיו" title="לא עכשיו" onClick={dismissSplit}>
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
+      {splitOpen && <SplitDialog plan={plan} imagesReady={images !== null} reuseTitle={chapterParas <= 1 ? chapter.title : null} onCancel={() => setSplitOpen(false)} onCreate={doSplit} onShow={(i) => scrollToPara(i)} />}
+      {!offerSplit && suggestion && !dismissed.includes(sgKey) && paras && (
         <div className="pdf-suggest" role="status">
           <span>
             נראה שהפרק מתחיל ב<b>"{opening(paras[suggestion.start].text)}"</b> (עמ' {paras[suggestion.start].boxes[0].page})
@@ -715,5 +792,67 @@ function PageCanvas({ pdf, n, scale }: { pdf: LoadedPdf; n: number; scale: numbe
         }}
       />
     </>
+  )
+}
+
+interface SplitProps {
+  plan: ReturnType<typeof splitPlan>
+  imagesReady: boolean
+  /** The empty chapter open now, which becomes the first one */
+  reuseTitle: string | null
+  onCancel: () => void
+  onCreate: (picked: number[]) => Promise<void>
+  onShow: (paraIndex: number) => void
+}
+
+/** Choosing which of the chapters found in the PDF become chapter files */
+function SplitDialog({ plan, imagesReady, reuseTitle, onCancel, onCreate, onShow }: SplitProps) {
+  const [on, setOn] = useState<boolean[]>(() => plan.map(() => true))
+  const [busy, setBusy] = useState(false)
+  const picked = plan.map((_, k) => k).filter((k) => on[k])
+  return (
+    <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
+      <div className="dialog split" role="dialog" aria-label="חלוקה לפרקים לפי המקור" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+        <h2>חלוקה לפרקים לפי המקור</h2>
+        <p>
+          לכל פרק שמסומן נוצר מסמך משלו, מקושר לחלק שלו ב־PDF, עם שורת * * * בכל מעבר סצנה של המקור ומקום ריק לתרגום ביניהן.
+          {reuseTitle ? ` הפרק הריק "${reuseTitle}" יהיה הראשון.` : ' הפרקים מתווספים בסוף הספר.'} מה שלא מסומן (למשל "תודות" שזוהה בטעות) פשוט לא מקושר לאף פרק.
+        </p>
+        <div className="split-list">
+          {plan.map((it, k) => (
+            <label key={k} className={`split-row${on[k] ? '' : ' off'}`}>
+              <input type="checkbox" checked={on[k]} onChange={(e) => setOn(on.map((v, j) => (j === k ? e.target.checked : v)))} />
+              <b>{on[k] ? `פרק ${picked.indexOf(k) + 1}` : 'לא ייווצר'}</b>
+              <span className="split-h" dir="auto">
+                {it.synopsis}
+              </span>
+              <small>
+                עמ׳ {it.page} · {it.to - it.from + 1} פסקאות{it.scenes ? ` · ${it.scenes} מעברי סצנה` : ''}
+              </small>
+              <button type="button" className="ib" onClick={(e) => (e.preventDefault(), onShow(it.from))}>
+                להראות
+              </button>
+            </label>
+          ))}
+        </div>
+        {!imagesReady && <p className="lp-note">עדיין מחפש קישוטים שמסמנים מעברי סצנה…</p>}
+        <div className="actions">
+          <button className="btn ghost" onClick={onCancel}>
+            ביטול
+          </button>
+          <button
+            className="btn"
+            disabled={!picked.length || busy || !imagesReady}
+            onClick={async () => {
+              setBusy(true)
+              await onCreate(picked)
+              setBusy(false)
+            }}
+          >
+            {busy ? 'יוצר…' : `יצירת ${picked.length} פרקים`}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

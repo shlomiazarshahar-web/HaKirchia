@@ -666,7 +666,9 @@ body { background: #dde3e0; overflow: hidden; }
 .pdf-empty svg, .pdf-files svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .pdf-empty > svg { width: 28px; height: 28px; }
 /* the pair of the paragraph under the mouse, in the chapter */
-.ProseMirror > .tr-pair, .ch-title.tr-pair { background: var(--w-hl); box-shadow: 0 0 0 3px var(--w-hl); border-radius: 2px; }
+.paper:has(> .tr-pair-mark) { position: relative; }
+.tr-pair-mark { position: absolute; pointer-events: none; background: var(--w-hl); border-radius: 3px; mix-blend-mode: multiply; z-index: 2; }
+.app[data-mode='dark'] .tr-pair-mark { mix-blend-mode: lighten; }
 .webpane .urlbar { display: flex; align-items: center; gap: 4px; padding: 5px 8px; background: var(--w-bar); border-bottom: 1px solid var(--w-line); }
 .webpane .urlbar .u { flex: 1; text-align: left; font-size: 12.5px; background: var(--w-paper); border: 1px solid var(--w-line); border-radius: 20px; padding: 3px 12px; color: var(--w-muted); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .webpane .webview { flex: 1; min-height: 0; width: 100%; background: #fff; }
@@ -747,3 +749,12 @@ body { background: #dde3e0; overflow: hidden; }
 .sp-guess:hover { filter: brightness(1.1); }
 .sp-scene { position: absolute; left: 0; right: 0; height: 0; border-top: 1.5px dashed var(--w-thread); z-index: 2; pointer-events: none; opacity: 0.85; }
 .sp-scene span { position: absolute; right: 4px; top: -9px; font: 600 10.5px var(--w-ui); direction: rtl; background: var(--w-thread); color: #fff; border-radius: 8px; padding: 0 6px; }
+
+.dialog.split { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 60px); }
+.split-list { display: flex; flex-direction: column; gap: 2px; overflow: auto; max-height: 50vh; border: 1px solid var(--w-line); border-radius: var(--radius); padding: 4px; }
+.split-row { display: grid; grid-template-columns: auto 64px 1fr auto auto; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.split-row:hover { background: var(--w-soft); }
+.split-row.off { color: var(--w-muted); }
+.split-row.off .split-h { text-decoration: line-through; }
+.split-h { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-row small { color: var(--w-muted); white-space: nowrap; }

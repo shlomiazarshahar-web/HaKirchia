@@ -434,6 +434,39 @@ export function imageScenes(images: PdfImage[], paras: SourcePara[], chapters: n
   return out
 }
 
+/** One chapter to create when splitting the book by its original */
+export interface SplitItem {
+  title: string
+  /** The heading in the original, kept as the chapter's synopsis */
+  synopsis: string
+  start: SourceRef
+  /** Missing for the last chapter: to the end of the PDF */
+  end?: SourceRef
+  /** Scene breaks inside the chapter */
+  scenes: number
+}
+
+/**
+ * The chapters of the original, for splitting the book: each found chapter start up to the paragraph
+ * before the next one (what comes before the first, like a title page, is left out).
+ */
+export function splitPlan(paras: SourcePara[], chapters: number[], scenes: SceneMark[]): (SplitItem & { from: number; to: number; page: number })[] {
+  return chapters.map((start, k) => {
+    const next = chapters[k + 1]
+    const to = next === undefined ? paras.length - 1 : next - 1
+    return {
+      title: `פרק ${k + 1}`,
+      synopsis: paras[start].text,
+      start: paras[start].ref,
+      ...(next === undefined ? {} : { end: paras[to].ref }),
+      scenes: scenes.filter((m) => m.after >= start && m.after < to).length,
+      from: start,
+      to,
+      page: paras[start].boxes[0].page
+    }
+  })
+}
+
 export interface ChapterSuggestion {
   start: number
   /** Last paragraph, or -1 = to the end of the original */
