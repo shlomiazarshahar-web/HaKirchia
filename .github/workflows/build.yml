@@ -47,12 +47,28 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Upload for trying (from the Actions page)
+        # The Actions storage of a private repository is small; when it is full the test release
+        # below still has the files, so a full storage does not fail the build
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: HaKirchia-Windows
           path: |
-            dist/*.exe
-          retention-days: 30
+            dist/HaKirchia-Setup-*.exe
+          retention-days: 5
+      - name: Test version of a pull request (a pre-release on the Releases page, replaced on every push)
+        if: github.event_name == 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test-pr-${{ github.event.pull_request.number }}
+          target_commitish: ${{ github.event.pull_request.head.sha }}
+          name: "לבדיקה: ${{ github.event.pull_request.title }}"
+          body: |
+            גרסת בדיקה של בקשת השינוי #${{ github.event.pull_request.number }}, לפני מיזוג. מתעדכנת בכל שינוי.
+            להורדה: HaKirchia-Setup (התקנה רגילה) או HaKirchia-Portable (בלי התקנה).
+          files: dist/*.exe
+          prerelease: true
+          make_latest: false
       - name: Publish a release (only after merging to main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
