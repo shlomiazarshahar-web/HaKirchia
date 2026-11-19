@@ -1,7 +1,7 @@
 {
   "name": "hakirchia",
   "productName": "HaKirchia",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "הכריכייה: מעבד תמלילים לכתיבת ספרים",
   "main": "./out/main/index.js",
   "author": "shlomiazarshahar-web",
@@ -45,6 +45,7 @@
     "@tiptap/starter-kit": "^3.34.0",
     "@xmldom/xmldom": "^0.9.12",
     "jszip": "^3.10.2",
+    "pdfjs-dist": "^6.4.299",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   }

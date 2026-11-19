@@ -2,6 +2,7 @@
 import type { PaneLayout } from './panes'
 import type { TypographySettings } from './hebrew'
 import type { StopPoint } from './stoppoint'
+import type { ChapterSource } from './translation'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -46,6 +47,8 @@ export interface Book {
   notes: PrivateNote[]
   /** Alternative drafts of chapters and scenes (feature 35) */
   alts: AltDraft[]
+  /** The original (PDF) of each translated chapter, by chapter id (feature 12) */
+  sources: Record<string, ChapterSource>
 }
 
 /**
@@ -121,6 +124,8 @@ export interface Settings {
   focus?: FocusSettings
   /** Ask "what next?" when closing a book (default on) */
   askStopNote?: boolean
+  /** The translation screen's panes per book path (feature 12), as they were last left */
+  translateLayout?: Record<string, PaneLayout>
 }
 
 export interface FocusSettings {

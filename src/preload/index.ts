@@ -3,6 +3,7 @@ import type { PaneLayout } from '../shared/panes'
 import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
+import type { ChapterSource } from '../shared/translation'
 
 const api = {
   platform: process.platform,
@@ -10,6 +11,16 @@ const api = {
   setTheme: (t: Theme): Promise<boolean> => ipcRenderer.invoke('settings:theme', t),
   setLastChapter: (bookPath: string, id: string): Promise<void> => ipcRenderer.invoke('settings:lastChapter', bookPath, id),
   setSplitLayout: (bookPath: string, layout: PaneLayout): Promise<void> => ipcRenderer.invoke('settings:splitLayout', bookPath, layout),
+  setTranslateLayout: (bookPath: string, layout: PaneLayout): Promise<void> => ipcRenderer.invoke('settings:translateLayout', bookPath, layout),
+  /** PDF files in the book's "מקור" folder (feature 12) */
+  listSourcePdfs: (bookPath: string): Promise<string[]> => ipcRenderer.invoke('source:list', bookPath),
+  /** Asks for a PDF and copies it into the book's "מקור" folder. value is its name there, or null when cancelled. */
+  addSourcePdf: (bookPath: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('source:add', bookPath),
+  readSourcePdf: (bookPath: string, name: string): Promise<OpResult<Uint8Array>> => ipcRenderer.invoke('source:read', bookPath, name),
+  /** Links a chapter to its original and its range in it, or unlinks it (null) */
+  setSource: (bookPath: string, chapterId: string, src: ChapterSource | null): Promise<OpResult<Book>> => ipcRenderer.invoke('source:set', bookPath, chapterId, src),
+  /** Paragraphs per chapter id, read from the files on disk (translation progress, feature 28) */
+  paragraphCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:paraCounts', bookPath),
   /** Makes the whole interface bigger or smaller, and remembers it */
   setZoom: (zoom: number): Promise<void> => {
     webFrame.setZoomFactor(zoom)

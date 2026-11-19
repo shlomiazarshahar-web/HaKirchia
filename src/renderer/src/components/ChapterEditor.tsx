@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { AltDraft, Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
+import { editorParagraphCount, reportParagraphs } from '../translate'
 import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher, reportWords, takePendingStop } from '../api'
 import { editorExtensions, restoreStop } from '../editor'
 import { drawerCapture, privateNotes, refreshNotePlaces } from '../drafts'
@@ -229,7 +230,10 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
 
   const words = (e: Editor) => {
     const n = countWords(e.getText({ blockSeparator: '\n' }))
-    if (!altId) reportWords(ids.current.bookPath, ids.current.chapterId, n)
+    if (!altId) {
+      reportWords(ids.current.bookPath, ids.current.chapterId, n)
+      reportParagraphs(ids.current.bookPath, ids.current.chapterId, editorParagraphCount(e.state.doc))
+    }
     return n
   }
 

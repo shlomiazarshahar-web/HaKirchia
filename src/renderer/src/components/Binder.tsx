@@ -5,6 +5,8 @@ import type { OutlineNode } from '@shared/types'
 import { Icon } from './Icons'
 import { CHAPTER_DRAG_TYPE } from '@shared/panes'
 import { MASTER_LABEL } from '../labels'
+import { translationProgress } from '@shared/translation'
+import { useParagraphCounts } from '../translate'
 
 interface Props {
   book: Book
@@ -38,6 +40,9 @@ export function Binder(props: Props) {
   const [target, setTarget] = useState<DropTarget | null>(null)
   const byId = new Map(book.chapters.map((c) => [c.id, c]))
   const hasParts = book.outline.some((n) => n.type === 'part')
+  const paraCounts = useParagraphCounts(book.path)
+  /** Translation progress of a chapter that has an original (feature 28) */
+  const trOf = (id: string) => (book.sources?.[id] ? translationProgress(paraCounts[id] ?? 1, book.sources[id].paras) : null)
 
   const reset = () => {
     setDrag(null)
@@ -146,6 +151,14 @@ export function Binder(props: Props) {
         ) : (
           <span className="name">{ch.title}</span>
         )}
+        {(() => {
+          const tr = trOf(ch.id)
+          return tr ? (
+            <span className={`trp${tr.percent >= 100 ? ' full' : ''}`} title={`תרגום: ${tr.done} מתוך ${tr.total} פסקאות של המקור`}>
+              {tr.percent}%
+            </span>
+          ) : null
+        })()}
         {sc && <span className="count" title={`${sc.items.length} סצנות`}>{sc.items.length}</span>}
       </div>
       {sc && (

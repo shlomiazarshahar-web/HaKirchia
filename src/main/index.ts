@@ -9,6 +9,7 @@ import { getSettings, rememberBook, updateSettings } from './settings'
 import * as fonts from './fonts'
 import * as spell from './spell'
 import type { TypographySettings } from '../shared/hebrew'
+import { allowedInTranslatePane, type ChapterSource } from '../shared/translation'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -35,8 +36,30 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
-      spellcheck: true
+      spellcheck: true,
+      // Google Translate opens in a <webview> pane (feature 13); see will-attach-webview below
+      webviewTag: true
     }
+  })
+  // The only web page allowed inside the app is Google Translate, without any access to the computer
+  win.webContents.on('will-attach-webview', (e, prefs, params) => {
+    delete prefs.preload
+    prefs.nodeIntegration = false
+    prefs.contextIsolation = true
+    prefs.sandbox = true
+    if (!allowedInTranslatePane(params.src)) e.preventDefault()
+  })
+  win.webContents.on('did-attach-webview', (_e, wc) => {
+    wc.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    wc.on('will-navigate', (ev, url) => {
+      if (!allowedInTranslatePane(url)) {
+        ev.preventDefault()
+        shell.openExternal(url)
+      }
+    })
   })
   spell.setupSpellcheck(win)
   win.once('ready-to-show', () => win?.show())
@@ -103,6 +126,25 @@ function registerIpc(): void {
   ipcMain.handle('settings:splitLayout', (_e, bookPath: string, layout: PaneLayout) => {
     updateSettings({ splitLayout: { ...getSettings().splitLayout, [bookPath]: layout } })
   })
+  ipcMain.handle('settings:translateLayout', (_e, bookPath: string, layout: PaneLayout) => {
+    updateSettings({ translateLayout: { ...getSettings().translateLayout, [bookPath]: layout } })
+  })
+  // Translation (features 12, 28)
+  ipcMain.handle('source:list', (_e, b: string) => project.listSourcePdfs(b))
+  ipcMain.handle('source:add', (_e, b: string) =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, {
+        title: 'בחירת קובץ המקור (PDF)',
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        properties: ['openFile']
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      return project.addSourcePdf(b, res.filePaths[0])
+    })
+  )
+  ipcMain.handle('source:read', (_e, b: string, name: string) => wrap(() => project.readSourcePdf(b, name)))
+  ipcMain.handle('source:set', (_e, b: string, chapterId: string, src: ChapterSource | null) => wrap(() => project.setSource(b, chapterId, src)))
+  ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
     updateSettings({ typography })
   })

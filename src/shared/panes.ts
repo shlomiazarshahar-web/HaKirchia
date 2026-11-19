@@ -4,8 +4,15 @@
 
 import type { Book } from './types'
 
-/** 'alt': an alternative draft (feature 35), written next to its chapter */
-export type PaneContent = { kind: 'chapter'; id: string } | { kind: 'master' } | { kind: 'alt'; id: string }
+/**
+ * 'alt': an alternative draft (feature 35), written next to its chapter.
+ * 'pdf': the original of the chapter being translated (feature 12); it follows the chapter in focus.
+ * 'web': Google Translate inside the app (feature 13).
+ */
+export type PaneContent = { kind: 'chapter'; id: string } | { kind: 'master' } | { kind: 'alt'; id: string } | { kind: 'pdf' } | { kind: 'web' }
+
+/** Kinds that are shown at most once on the screen */
+const SINGLE = new Set(['master', 'pdf', 'web'])
 
 export interface Pane {
   /** Stable id, so moving a pane does not reload its editor */
@@ -28,7 +35,8 @@ export const MIN_WIDTH = 0.2
 let counter = 0
 export const newPaneKey = (): string => `p${Date.now().toString(36)}${(counter++).toString(36)}`
 
-const same = (a: PaneContent, b: PaneContent) => a.kind === b.kind && (a.kind === 'master' || (b.kind !== 'master' && a.id === b.id))
+const idOf = (c: PaneContent): string | undefined => ('id' in c ? c.id : undefined)
+const same = (a: PaneContent, b: PaneContent) => a.kind === b.kind && idOf(a) === idOf(b)
 
 export const evenWidths = (n: number): number[] => Array.from({ length: n }, () => 1 / n)
 
@@ -54,16 +62,16 @@ export function normalizeLayout(layout: PaneLayout | undefined, book: Book, acti
   const ids = new Set(book.chapters.map((c) => c.id))
   const alts = new Set((book.alts ?? []).map((a) => a.id))
   const keep: number[] = []
-  let master = false
+  const seen = new Set<string>()
   layout.panes.forEach((p, i) => {
     if (keep.length >= MAX_PANES || !p?.content) return
     if (p.content.kind === 'chapter' && !ids.has(p.content.id)) return
     if (p.content.kind === 'alt' && !alts.has(p.content.id)) return
-    if (p.content.kind === 'master') {
-      if (master) return
-      master = true
+    if (!['chapter', 'master', 'alt', 'pdf', 'web'].includes(p.content.kind)) return
+    if (SINGLE.has(p.content.kind)) {
+      if (seen.has(p.content.kind)) return
+      seen.add(p.content.kind)
     }
-    if (p.content.kind !== 'chapter' && p.content.kind !== 'master' && p.content.kind !== 'alt') return
     keep.push(i)
   })
   if (!keep.length) return defaultLayout(book, activeId)
@@ -89,6 +97,19 @@ export function nextContent(layout: PaneLayout, book: Book, focused = 0): PaneCo
   if (id) return { kind: 'chapter', id }
   if (!layout.panes.some((p) => p.content.kind === 'master')) return { kind: 'master' }
   return ids[0] ? { kind: 'chapter', id: ids[0] } : { kind: 'master' }
+}
+
+/**
+ * The translation screen (feature 12): the chapter, its original (PDF) and Google Translate side
+ * by side. Keeps the chapter that is on screen; the widths can be dragged like any panes.
+ */
+export function translationLayout(book: Book, activeId: string | null): PaneLayout {
+  const ids = book.chapters.map((c) => c.id)
+  const id = activeId && ids.includes(activeId) ? activeId : ids[0]
+  const panes: Pane[] = []
+  if (id) panes.push({ key: newPaneKey(), content: { kind: 'chapter', id } })
+  panes.push({ key: newPaneKey(), content: { kind: 'pdf' } }, { key: newPaneKey(), content: { kind: 'web' } })
+  return { panes, widths: panes.length === 3 ? [0.38, 0.37, 0.25] : evenWidths(panes.length) }
 }
 
 /** Adds a pane after `after` (or at the end). The new pane takes an even share of the width. */
@@ -120,7 +141,7 @@ export function setPaneContent(layout: PaneLayout, index: number, content: PaneC
   const cur = layout.panes[index]
   if (!cur || same(cur.content, content)) return layout
   const other = layout.panes.findIndex((p, i) => i !== index && same(p.content, content))
-  if (other >= 0 && content.kind === 'master') return swapPanes(layout, index, other)
+  if (other >= 0 && SINGLE.has(content.kind)) return swapPanes(layout, index, other)
   const panes = layout.panes.map((p, i) => (i === index ? { ...p, content } : p))
   return { ...layout, panes }
 }
