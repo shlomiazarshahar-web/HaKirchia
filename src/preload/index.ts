@@ -3,7 +3,8 @@ import type { PaneLayout } from '../shared/panes'
 import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
-import type { ChapterSource } from '../shared/translation'
+import type { ChapterSource, SplitItem } from '../shared/translation'
+import type { PublishSettings } from '../shared/publish'
 
 const api = {
   platform: process.platform,
@@ -19,6 +20,8 @@ const api = {
   readSourcePdf: (bookPath: string, name: string): Promise<OpResult<Uint8Array>> => ipcRenderer.invoke('source:read', bookPath, name),
   /** Links a chapter to its original and its range in it, or unlinks it (null) */
   setSource: (bookPath: string, chapterId: string, src: ChapterSource | null): Promise<OpResult<Book>> => ipcRenderer.invoke('source:set', bookPath, chapterId, src),
+  /** One chapter file per chapter of the original, each linked to its range, with its scene breaks ready */
+  splitBySource: (bookPath: string, pdf: string, items: SplitItem[], reuseId?: string): Promise<OpResult<Book>> => ipcRenderer.invoke('source:split', bookPath, pdf, items, reuseId),
   /** Paragraphs per chapter id, read from the files on disk (translation progress, feature 28) */
   paragraphCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:paraCounts', bookPath),
   /** Makes the whole interface bigger or smaller, and remembers it */
@@ -33,6 +36,17 @@ const api = {
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   /** Remembers where the writer stopped in this book, or forgets it (null) */
   setStopPoint: (bookPath: string, sp: StopPoint | null): Promise<OpResult<void>> => ipcRenderer.invoke('book:stopPoint', bookPath, sp),
+  /** Saves the front and back pages, author and page layout (features 31, 36, 16) */
+  setPublish: (bookPath: string, p: PublishSettings): Promise<OpResult<Book>> => ipcRenderer.invoke('book:publish', bookPath, p),
+  /** The book with every chapter's text as saved (reading view) */
+  exportData: (bookPath: string): Promise<OpResult<{ book: Book; docs: Record<string, PMNode> }>> => ipcRenderer.invoke('book:exportData', bookPath),
+  /** Asks where to save, then exports the whole book. value is the saved file, or null when cancelled. */
+  exportBook: (bookPath: string, title: string, format: 'pdf' | 'docx' | 'epub'): Promise<OpResult<string | null>> => ipcRenderer.invoke('export:run', bookPath, title, format),
+  openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
+  /** The print window (PDF export): its job, printing it, and handing back the final file */
+  printJob: (): Promise<{ html: string; css: string; oddPages: boolean; hasToc: boolean; partPage: boolean; kinds: string[]; ids: string[] } | null> => ipcRenderer.invoke('print:job'),
+  printRender: (): Promise<Uint8Array> => ipcRenderer.invoke('print:render'),
+  printFinish: (bytes: Uint8Array | null, error?: string): Promise<void> => ipcRenderer.invoke('print:finish', bytes, error),
   /** Saves the book's "come back here" bookmarks (the whole list) */
   setBookmarks: (bookPath: string, list: Bookmark[]): Promise<OpResult<void>> => ipcRenderer.invoke('book:bookmarks', bookPath, list),
   /** Saves the book's private notes (the whole list) */

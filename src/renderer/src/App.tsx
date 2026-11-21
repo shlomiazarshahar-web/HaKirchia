@@ -30,11 +30,14 @@ import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 import { addNote, loadDrawer, loadNotes, moveSelectionToDrawer } from './drafts'
 import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Drafts'
+import { ReadingView } from './components/ReadingView'
+import { MatterDialog } from './components/MatterDialog'
+import type { PublishSettings } from '@shared/publish'
 
 type Toast = { text: string; error?: boolean } | null
-type Dialog = { kind: 'newBook' } | { kind: 'settings' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
+type Dialog = { kind: 'newBook' } | { kind: 'settings' } | { kind: 'matter' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
-type View = 'write' | 'master' | 'board'
+type View = 'write' | 'master' | 'board' | 'read'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
 const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6]
@@ -706,6 +709,35 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book?.chapters, book?.alts])
 
+  /** Front and back pages, author and page layout (features 31, 36, 16) */
+  const savePublish = async (p: PublishSettings) => {
+    if (!book) return
+    setBook({ ...book, publish: p })
+    const r = await api.setPublish(book.path, p)
+    if (!r.ok || !r.value) return show(r.error ?? 'השמירה נכשלה', true)
+    setBook(r.value)
+  }
+
+  const [exporting, setExporting] = useState<string | null>(null)
+  const [exportMenu, setExportMenu] = useState(false)
+  /** Exports the whole book as saved (everything is saved first) */
+  const exportBook = async (format: 'pdf' | 'docx' | 'epub') => {
+    if (!book || exporting) return
+    setExportMenu(false)
+    await flushAll()
+    const label = format === 'pdf' ? 'PDF' : format === 'docx' ? 'Word' : 'ePub'
+    setExporting(label)
+    try {
+      const r = await api.exportBook(book.path, book.title, format)
+      if (!r.ok) return show(`הייצוא ל־${label} נכשל: ${r.error ?? ''}`, true)
+      if (!r.value) return
+      show(`הספר יוצא ל־${label}. הקובץ נשמר בתיקייה "${r.value.split(/[\\/]/).slice(-2, -1)[0]}"`)
+      void api.showFile(r.value)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   /** From the whole-book view: open one chapter in the writing view */
   const openChapter = async (id: string) => {
     if (!book) return
@@ -840,6 +872,7 @@ export default function App() {
 
   const inMaster = !!book && view === 'master'
   const inBoard = !!book && view === 'board'
+  const inRead = !!book && view === 'read'
   const inWrite = !!book && view === 'write' && !!split
   const multi = inWrite && split!.panes.length > 1
   const focusedPane = inWrite ? (split!.panes.find((p) => p.key === focusKey) ?? split!.panes[0]) : null
@@ -860,7 +893,7 @@ export default function App() {
       className={`app${focusOn ? ' focusmode' : ''}${focusOn && prefs.focus.typewriter ? ' typewriter' : ''}${focusOn && prefs.focus.dim ? ' dim' : ''}`}
       data-mode={theme}
       data-overlay={overlay ? '1' : '0'}
-      onClick={() => menu && setMenu(null)}
+      onClick={() => (menu && setMenu(null), exportMenu && setExportMenu(false))}
     >
       <IconSprite />
       <div className="titlebar">
@@ -870,7 +903,7 @@ export default function App() {
           <span className="crumb">
             {book.title}
             {inWrite && trMode ? ' · תרגום' : ''}
-            {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · לוח שעם' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
+            {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · לוח שעם' : inRead ? ' · קריאה' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
           </span>
         )}
       </div>
@@ -895,6 +928,10 @@ export default function App() {
               <button className="tab" role="tab" aria-selected={view === 'board'} title="כרטיס לכל פרק, עם תקציר וסטטוס" onClick={() => switchView('board')}>
                 <Icon name="grid" />
                 לוח שעם
+              </button>
+              <button className="tab" role="tab" aria-selected={view === 'read'} disabled={empty} title="מצב קריאה: הספר כמו ספר מודפס, עמוד מול עמוד, בלי כלי עריכה" onClick={() => switchView('read')}>
+                <Icon name="book" />
+                קריאה
               </button>
               <button
                 className="tab"
@@ -928,6 +965,39 @@ export default function App() {
             </button>
           </>
         )}
+        {book && !empty && (
+          <span className="export-wrap">
+            <button className="ib" title="ייצוא הספר כולו: PDF להדפסה, Word או ePub" aria-expanded={exportMenu} disabled={!!exporting} onClick={(e) => (e.stopPropagation(), setExportMenu(!exportMenu))}>
+              <Icon name="export" />
+              <span className="lbl">{exporting ? `מייצא ${exporting}…` : 'ייצוא'}</span>
+            </button>
+            {exportMenu && (
+              <div className="menu export-menu" role="menu" onClick={(e) => e.stopPropagation()}>
+                <button role="menuitem" onClick={() => void exportBook('pdf')}>
+                  <span>PDF להדפסה</span>
+                  <small>עימוד ספר, כותרות רצות, מספרי עמודים</small>
+                </button>
+                <button role="menuitem" onClick={() => void exportBook('docx')}>
+                  <span>קובץ Word אחד</span>
+                  <small>כל הספר מאוחד ל־docx</small>
+                </button>
+                <button role="menuitem" onClick={() => void exportBook('epub')}>
+                  <span>ePub</span>
+                  <small>לקוראים אלקטרוניים</small>
+                </button>
+                <div className="msep" />
+                <button role="menuitem" onClick={() => (setExportMenu(false), setDialog({ kind: 'matter' }))}>
+                  <span>עמודי פתיחה וסיום…</span>
+                  <small>שער, הקדשה, מוטו, תוכן עניינים, תודות</small>
+                </button>
+                <button role="menuitem" onClick={() => (setExportMenu(false), void switchView('read'))}>
+                  <span>עימוד ותצוגה מקדימה</span>
+                  <small>מצב קריאה, עמוד מול עמוד</small>
+                </button>
+              </div>
+            )}
+          </span>
+        )}
         {inWrite && !empty && (
           <button className="ib" title="מצב כתיבה ממוקדת: רק הטקסט, על כל המסך (F11 או Ctrl+Shift+כ)" onClick={toggleFocus}>
             <Icon name="focus" />
@@ -957,7 +1027,7 @@ export default function App() {
         )}
       </div>
 
-      {book && !inBoard && <FormatBar editor={editor} onBookmark={toggleBookmark} onNote={addNoteHere} onDrawer={toDrawer} />}
+      {book && !inBoard && !inRead && <FormatBar editor={editor} onBookmark={toggleBookmark} onNote={addNoteHere} onDrawer={toDrawer} />}
 
       <div className="body">
         {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
@@ -977,7 +1047,19 @@ export default function App() {
             onStartRename={setRenamingId}
           />
         )}
-        {book && !inBoard && (
+        {inRead && (
+          <ReadingView
+            key={book!.path}
+            book={book!}
+            startId={activeId}
+            onPublish={(p) => void savePublish(p)}
+            onEditMatter={() => setDialog({ kind: 'matter' })}
+            onExport={(f) => void exportBook(f)}
+            onOpenChapter={openChapter}
+            onError={(m) => show(m, true)}
+          />
+        )}
+        {book && !inBoard && !inRead && (
           <>
             <Binder
               book={book}
@@ -1052,8 +1134,8 @@ export default function App() {
             )}
           </>
         )}
-        {book && drawerOpen && !find && !focusOn && !inBoard && <DrawerPanel book={book} editor={editor} onClose={() => setDrawerOpen(false)} show={show} />}
-        {book && find && !focusOn && (
+        {book && drawerOpen && !find && !focusOn && !inBoard && !inRead && <DrawerPanel book={book} editor={editor} onClose={() => setDrawerOpen(false)} show={show} />}
+        {book && find && !focusOn && !inRead && (
           <SearchPanel
             key={book.path}
             book={book}
@@ -1069,7 +1151,7 @@ export default function App() {
       </div>
 
       <div className="statusbar">
-        {book && !inBoard && !empty && (
+        {book && !inBoard && !inRead && !empty && (
           <span className={`saved ${saveState}`}>
             <i />
             <span>{SAVE_LABEL[saveState]}</span>
@@ -1087,6 +1169,8 @@ export default function App() {
           )
         ) : inBoard ? (
           <span>לוח שעם · לחיצה כפולה על כרטיס פותחת את הפרק, לחיצה על השם משנה אותו</span>
+        ) : inRead ? (
+          <span>מצב קריאה · חיצים או גלגלת להפוך דף · לחיצה כפולה על הטקסט פותחת את הפרק לכתיבה</span>
         ) : (
           writeChapter && <span className="fname">{writeChapter.file}</span>
         )}
@@ -1200,6 +1284,7 @@ export default function App() {
         </div>
       )}
 
+      {dialog?.kind === 'matter' && book && <MatterDialog book={book} onSave={(p) => void savePublish(p)} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'settings' && <WritingSettings onClose={() => setDialog(null)} />}
       {dialog?.kind === 'newBook' && <NewBookDialog onCancel={() => setDialog(null)} onCreate={createBook} />}
       {dialog?.kind === 'delete' && (

@@ -8,8 +8,11 @@ import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
 import * as fonts from './fonts'
 import * as spell from './spell'
+import * as exporter from './export'
+import type { PublishSettings } from '../shared/publish'
+import { promises as fsp } from 'fs'
 import type { TypographySettings } from '../shared/hebrew'
-import { allowedInTranslatePane, type ChapterSource } from '../shared/translation'
+import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../shared/translation'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -33,7 +36,7 @@ function createWindow(): void {
     titleBarOverlay: overlayColors(theme),
     icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: PRELOAD(),
       sandbox: false,
       contextIsolation: true,
       spellcheck: true,
@@ -80,8 +83,16 @@ function createWindow(): void {
       win?.close()
     }, 4000)
   })
-  if (process.env['ELECTRON_RENDERER_URL']) win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  else win.loadFile(join(__dirname, '../renderer/index.html'))
+  void loadAppPage(win)
+}
+
+const PRELOAD = () => join(__dirname, '../preload/index.js')
+
+/** Loads the app's page into a window; `hash` picks another screen of the same page (e.g. "print") */
+function loadAppPage(w: BrowserWindow, hash = ''): Promise<void> {
+  const url = process.env['ELECTRON_RENDERER_URL']
+  if (url) return w.loadURL(hash ? `${url}#${hash}` : url)
+  return w.loadFile(join(__dirname, '../renderer/index.html'), hash ? { hash } : undefined)
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -143,6 +154,7 @@ function registerIpc(): void {
     })
   )
   ipcMain.handle('source:read', (_e, b: string, name: string) => wrap(() => project.readSourcePdf(b, name)))
+  ipcMain.handle('source:split', (_e, b: string, pdf: string, items: SplitItem[], reuseId?: string) => wrapBook(() => project.createChaptersFromSource(b, pdf, items, reuseId)))
   ipcMain.handle('source:set', (_e, b: string, chapterId: string, src: ChapterSource | null) => wrap(() => project.setSource(b, chapterId, src)))
   ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
@@ -178,6 +190,27 @@ function registerIpc(): void {
   ipcMain.handle('settings:askStopNote', (_e, on: boolean) => {
     updateSettings({ askStopNote: on })
   })
+  // Reading and export (features 31, 36, 16)
+  ipcMain.handle('book:publish', (_e, b: string, p: PublishSettings) => wrap(() => project.setPublish(b, p)))
+  ipcMain.handle('book:exportData', (_e, b: string) => wrap(() => project.exportData(b)))
+  ipcMain.handle('export:run', (_e, b: string, title: string, format: exporter.ExportFormat) =>
+    wrap(async () => {
+      const dir = join(b, 'ייצוא')
+      await fsp.mkdir(dir, { recursive: true })
+      const res = await dialog.showSaveDialog(win!, {
+        title: format === 'pdf' ? 'שמירת PDF להדפסה' : format === 'docx' ? 'שמירת קובץ Word' : 'שמירת ePub',
+        defaultPath: exporter.exportPath(dir, title, format),
+        filters: [exporter.EXPORT_FILTERS[format]]
+      })
+      if (res.canceled || !res.filePath) return null
+      const out = res.filePath
+      if (format === 'docx') await exporter.exportDocx(b, out)
+      else if (format === 'epub') await exporter.exportEpub(b, out)
+      else await exporter.exportPdf(b, out, PRELOAD(), loadAppPage)
+      return out
+    })
+  )
+  ipcMain.handle('shell:openPath', (_e, path: string) => shell.openPath(path))
   ipcMain.handle('book:bookmarks', (_e, bookPath: string, list: Bookmark[]) => wrap(() => project.setBookmarks(bookPath, list)))
   ipcMain.handle('book:notes', (_e, bookPath: string, list: PrivateNote[]) => wrap(() => project.setNotes(bookPath, list)))
   // Versions (feature 14)
@@ -271,6 +304,7 @@ function registerIpc(): void {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
   registerIpc()
+  exporter.registerPrintIpc()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -25,6 +25,10 @@ const diskListeners = new Map<string, Set<() => void>>()
 api.onChapterDiskChanged((bookPath, chapterId) => {
   for (const fn of diskListeners.get(`${bookPath}|${chapterId}`) ?? []) fn()
 })
+/** The app itself rewrote a chapter file (e.g. splitting by the original): open editors read it again */
+export function notifyDiskChange(bookPath: string, chapterId: string): void {
+  for (const fn of diskListeners.get(`${bookPath}|${chapterId}`) ?? []) fn()
+}
 export function onDiskChange(bookPath: string, chapterId: string, fn: () => void): () => void {
   const key = `${bookPath}|${chapterId}`
   if (!diskListeners.has(key)) diskListeners.set(key, new Set())

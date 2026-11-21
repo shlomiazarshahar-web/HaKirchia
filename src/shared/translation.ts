@@ -66,6 +66,8 @@ export interface PageBlock {
   runsOn: boolean
   /** Right-to-left text */
   rtl: boolean
+  /** A short line alone at the top of the page: a running head, or the heading of a chapter that starts at the top (see linkPages) */
+  band?: 'top'
 }
 
 interface Line {
@@ -142,16 +144,25 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
   if (!lines.length) return []
   const gapsAll = lines.slice(1).map((l, i) => lines[i].y - l.y)
   const typicalAll = median(gapsAll.filter((g) => g > 0 && g < 3 * lines[0].h)) || lines[0].h * 1.3
-  // Running heads and page numbers: in the top or bottom band, and short or only a number
+  // Running heads and page numbers: in the top or bottom band, and short or only a number. A short
+  // line alone at the top may also be a chapter heading: it is kept as a block of its own, marked,
+  // and linkPages decides (running heads repeat on many pages, headings do not).
+  const top = new Set<Line>()
   lines = lines.filter((l, i) => {
-    const top = pageH - (l.y + l.h)
-    const inBand = top < pageH * 0.09 || l.y < pageH * 0.09
+    const fromTop = pageH - (l.y + l.h)
+    const inTop = fromTop < pageH * 0.09
+    const inBand = inTop || l.y < pageH * 0.09
     if (!inBand) return true
     if (PAGE_NUMBER.test(l.text)) return false
     const before = i > 0 ? lines[i - 1].y - l.y : Infinity
     const after = i < lines.length - 1 ? l.y - lines[i + 1].y : Infinity
     const alone = Math.min(before, after) > typicalAll * 1.8
-    return !(alone && words(l.text) <= 8)
+    if (!(alone && words(l.text) <= 8)) return true
+    if (inTop && i === 0) {
+      top.add(l)
+      return true
+    }
+    return false
   })
   if (!lines.length) return []
 
@@ -175,7 +186,7 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
     const a = lines[i - 1]
     const b = lines[i]
     const gap = a.y - b.y
-    const brk = gap > typical * 1.35 || gap < 0 || indented(b) || short(a) || sizeChange(a, b)
+    const brk = gap > typical * 1.35 || gap < 0 || indented(b) || short(a) || sizeChange(a, b) || top.has(a)
     if (brk) blocks.push([b])
     else blocks[blocks.length - 1].push(b)
   }
@@ -197,7 +208,8 @@ export function pageBlocks(pieces: TextPiece[], pageW: number, pageH: number): P
       size: median(ls.map((l) => l.h)),
       indented: indented(ls[0]),
       runsOn: !short(ls[ls.length - 1]) && !/[.!?…:"”’»)]$/.test(ls[ls.length - 1].text),
-      rtl
+      rtl,
+      ...(top.has(ls[0]) ? { band: 'top' as const } : {})
     }
   })
 }
@@ -207,6 +219,8 @@ export interface SourcePara {
   ref: SourceRef
   text: string
   boxes: (Box & { page: number })[]
+  /** Font height of its first lines (headings are bigger) */
+  size?: number
 }
 
 /**
@@ -215,6 +229,7 @@ export interface SourcePara {
  * `pages[i]` is page `first + i`.
  */
 export function linkPages(pages: PageBlock[][], first = 1): SourcePara[] {
+  pages = dropRunningHeads(pages)
   const out: SourcePara[] = []
   pages.forEach((blocks, i) => {
     const page = first + i
@@ -227,10 +242,318 @@ export function linkPages(pages: PageBlock[][], first = 1): SourcePara[] {
         prev.boxes.push({ ...b.box, page })
         return
       }
-      out.push({ ref: { page, para: own++ }, text: b.text, boxes: [{ ...b.box, page }] })
+      out.push({ ref: { page, para: own++ }, text: b.text, boxes: [{ ...b.box, page }], size: b.size })
     })
   })
   return out
+}
+
+/**
+ * A short line alone at the top of a page is a running head when the same words (numbers aside)
+ * stand at the top of other pages too, unless it is bigger than they are (the chapter's own heading
+ * above its running heads). One that does not repeat is kept: a chapter that starts at the top.
+ * With only a page or two there is nothing to compare, so they are all left out.
+ */
+function dropRunningHeads(pages: PageBlock[][]): PageBlock[][] {
+  const key = (t: string) => t.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim()
+  const seen = new Map<string, { pages: Set<number>; min: number }>()
+  pages.forEach((blocks, i) =>
+    blocks.forEach((b) => {
+      if (b.band !== 'top') return
+      const k = key(b.text)
+      const e = seen.get(k) ?? { pages: new Set<number>(), min: Infinity }
+      e.pages.add(i)
+      e.min = Math.min(e.min, b.size)
+      seen.set(k, e)
+    })
+  )
+  return pages.map((blocks) =>
+    blocks.filter((b) => {
+      if (b.band !== 'top') return true
+      if (pages.length < 3) return false
+      const e = seen.get(key(b.text))!
+      return e.pages.size < 2 || b.size >= e.min * 1.15
+    })
+  )
+}
+
+// ---------------------------------------------------------------------------
+// The original's structure: where chapters start, and scene breaks (round 6, asked by שלומי)
+// ---------------------------------------------------------------------------
+
+/** A scene break drawn with signs: "***", "* * *", a single "*", "⁂", "#", "~", "❧"… (a short line of signs only) */
+const SIGN_BREAK_RE = /^[\s*•·∗✱⁂#~◆◇❖✦✧❧☙✻✽❦§°○●◦⸙＊]+$/u
+export function isSignSceneBreak(text: string): boolean {
+  const t = text.trim()
+  return !!t && t.length <= 20 && SIGN_BREAK_RE.test(t)
+}
+
+/** A picture on a page of the PDF (a small ornament between paragraphs may be a scene break) */
+export interface PdfImage {
+  page: number
+  box: Box
+}
+
+type Matrix = [number, number, number, number, number, number]
+const mul = (m: Matrix, n: Matrix): Matrix => [
+  m[0] * n[0] + m[2] * n[1],
+  m[1] * n[0] + m[3] * n[1],
+  m[0] * n[2] + m[2] * n[3],
+  m[1] * n[2] + m[3] * n[3],
+  m[0] * n[4] + m[2] * n[5] + m[4],
+  m[1] * n[4] + m[3] * n[5] + m[5]
+]
+
+/** The drawing-instruction codes of pdf.js that matter here (pdfjs.OPS) */
+export type OpCodes = Record<string, number>
+
+/**
+ * Where pictures are drawn on a page, from its drawing instructions (pdf.js operator list): the
+ * current transformation is followed through save/restore and forms, and each picture fills the
+ * unit square under it. `view` is the page's box [x0, y0, x1, y1].
+ */
+export function imagesFromOperators(fnArray: number[], argsArray: unknown[], O: OpCodes, view: number[], page: number): PdfImage[] {
+  const paints = new Set(['paintImageXObject', 'paintInlineImageXObject', 'paintImageMaskXObject', 'paintImageXObjectRepeat', 'paintInlineImageXObjectGroup', 'paintImageMaskXObjectGroup'].map((k) => O[k]).filter((v) => typeof v === 'number'))
+  const [x0, y0, , y1] = view
+  const pageH = y1 - y0
+  const out: PdfImage[] = []
+  let ctm: Matrix = [1, 0, 0, 1, 0, 0]
+  const stack: Matrix[] = []
+  fnArray.forEach((fn, i) => {
+    const args = argsArray[i] as unknown[] | null
+    if (fn === O.save) stack.push(ctm)
+    else if (fn === O.restore) ctm = stack.pop() ?? ctm
+    else if (fn === O.transform && Array.isArray(args) && args.length === 6) ctm = mul(ctm, args as Matrix)
+    else if (fn === O.paintFormXObjectBegin) {
+      stack.push(ctm)
+      const m = args?.[0] as Matrix | null
+      if (Array.isArray(m) && m.length === 6) ctm = mul(ctm, m)
+    } else if (fn === O.paintFormXObjectEnd) ctm = stack.pop() ?? ctm
+    else if (paints.has(fn)) {
+      const pts = [
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [1, 1]
+      ].map(([x, y]) => [ctm[0] * x + ctm[2] * y + ctm[4] - x0, ctm[1] * x + ctm[3] * y + ctm[5] - y0])
+      const xs = pts.map((q) => q[0])
+      const ys = pts.map((q) => q[1])
+      out.push({ page, box: { x: Math.min(...xs), y: pageH - Math.max(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) } })
+    }
+  })
+  return out
+}
+
+/** A scene break in the original */
+export interface SceneMark {
+  page: number
+  /** Where on the page, from the top, in PDF units */
+  y: number
+  /** Index (in the paragraph list) of the last paragraph before the break; -1 = before the first */
+  after: number
+  kind: 'signs' | 'image'
+}
+
+export interface SourceStructure {
+  /** The paragraphs to match with the translation: without scene-break lines, a chapter heading of two lines as one */
+  paras: SourcePara[]
+  /** Scene breaks drawn with signs (images are added later, see imageScenes) */
+  scenes: SceneMark[]
+  /** Indices in `paras` of the paragraphs that look like the start of a chapter */
+  chapters: number[]
+  /** Weaker candidates too (short lines that could be headings), offered when choosing by hand */
+  candidates: number[]
+}
+
+const CHAPTER_WORD_RE =
+  /^(chapter|chap\.|part|book|prologue|epilogue|interlude|afterword|foreword|פרק|פרולוג|אפילוג|חלק|глава|часть|пролог|эпилог|kapitel|teil|chapitre|partie|prologue|capítulo|capitulo|parte|capitolo|hoofdstuk|rozdział|kapitola)(\s|$|[.:\-–—])/iu
+const NUMBER_ALONE_RE = /^(?:[ivxlcdm]{1,8}|\d{1,3})[.:)]?$/i
+const NUMBER_FIRST_RE = /^(?:[ivxlcdm]{1,8}|\d{1,3})[.:)]?\s+\S/i
+const NUM_WORD = 'one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred'
+/** A spelled number alone ("Twenty-One"), or before a joined heading ("One — The Crossing"); not "Nine Years Later" */
+const SPELLED_RE = new RegExp(`^(?:${NUM_WORD})(?:[-\\s](?:${NUM_WORD}))*\\s*(?:$|[.:—–])`, 'i')
+/** A heading in capitals: "THE BOY FROM MAKAPU", not a shout inside the text ("“RANGI! WAIT!”") */
+function isCapsHeading(t: string): boolean {
+  const s = t.trim()
+  if (/^["“”'‘’«»(\-–—]/.test(s) || /[!?"“”'‘’»,;]$/.test(s)) return false
+  const letters = s.match(/\p{L}/gu) ?? []
+  if (letters.length < 3 || wordsIn(s) > 8) return false
+  const cased = letters.filter((c) => c.toLowerCase() !== c.toUpperCase())
+  return cased.length >= 3 && cased.every((c) => c === c.toUpperCase())
+}
+
+/** Body text size: the usual size of the longer paragraphs */
+function bodySize(paras: SourcePara[]): number {
+  const sizes = paras.filter((p) => p.size && wordsIn(p.text) >= 12).map((p) => p.size!)
+  return median(sizes.length ? sizes : paras.filter((p) => p.size).map((p) => p.size!)) || 10
+}
+const wordsIn = (s: string) => s.split(/\s+/).filter(Boolean).length
+
+/**
+ * Finds the structure of the original: removes scene-break lines from the paragraphs (the
+ * translation does not count them either), joins a two-line chapter heading ("Chapter 3" and its
+ * name, both big) into one paragraph, and finds where chapters seem to start. `pageH` gives each
+ * page's height (index 0 = page 1).
+ */
+export function sourceStructure(all: SourcePara[], pageH: (page: number) => number): SourceStructure {
+  const body = bodySize(all)
+  const big = (p: SourcePara, k = 1.25) => (p.size ?? body) >= body * k
+  const paras: SourcePara[] = []
+  const scenes: SceneMark[] = []
+  for (const p of all) {
+    if (isSignSceneBreak(p.text)) {
+      scenes.push({ page: p.boxes[0].page, y: p.boxes[0].y + p.boxes[0].h / 2, after: paras.length - 1, kind: 'signs' })
+      continue
+    }
+    const prev = paras[paras.length - 1]
+    if (prev && big(prev) && big(p) && prev.boxes.length === 1 && prev.boxes[0].page === p.boxes[0].page && wordsIn(prev.text) <= 8 && wordsIn(p.text) <= 12 && looksLikeChapterLabel(prev.text)) {
+      paras[paras.length - 1] = { ...prev, text: `${prev.text} — ${p.text}`, boxes: [...prev.boxes, ...p.boxes] }
+      continue
+    }
+    paras.push({ ...p })
+  }
+  const score = (i: number): number => {
+    const p = paras[i]
+    const t = p.text.trim()
+    const words = wordsIn(t)
+    let s = 0
+    const label = looksLikeChapterLabel(t)
+    if (CHAPTER_WORD_RE.test(t)) s += 3
+    else if (NUMBER_ALONE_RE.test(t) || SPELLED_RE.test(t)) s += 3
+    else if (NUMBER_FIRST_RE.test(t) && words <= 10) s += 1
+    if (words > 14 && !label) return 0
+    if (isCapsHeading(t)) s += 2
+    if (big(p, 1.3)) s += 2
+    else if (big(p, 1.12)) s += 1
+    const b = p.boxes[0]
+    const prev = paras[i - 1]
+    const prevBox = prev?.boxes[prev.boxes.length - 1]
+    const firstOnPage = p.ref.para === 0 || !prev || prevBox!.page !== b.page
+    // space under it, more than between paragraphs
+    const next = paras[i + 1]?.boxes[0]
+    const lastBox = p.boxes[p.boxes.length - 1]
+    if (next && next.page === lastBox.page && next.y - (lastBox.y + lastBox.h) > body * 1.6) s += 1
+    if (firstOnPage && b.y > pageH(b.page) * 0.18) s += 1 // starts low on a fresh page
+    if (firstOnPage) s += 1
+    // the page before ended early (or was empty): the previous chapter ended there
+    if (firstOnPage && prevBox && (prevBox.page < b.page - 1 || prevBox.y + prevBox.h < pageH(prevBox.page) * 0.7)) s += 1
+    return s
+  }
+  const chapters: number[] = []
+  const candidates: number[] = []
+  const scores = paras.map((_, i) => score(i))
+  for (let i = 0; i < paras.length; i++) {
+    if (scores[i] >= 2 && wordsIn(paras[i].text) <= 14) candidates.push(i)
+    if (scores[i] < 4) continue
+    // a heading with nothing under it before the next one (a title page, a part page): only the last
+    if (chapters.length && chapters[chapters.length - 1] === i - 1) chapters.pop()
+    chapters.push(i)
+  }
+  // When chapters are numbered or named "Chapter…", a big line without that (a title page, a dedication) is not one
+  // (only when most of them are like that: in a book of named chapters, "Foreword" alone says nothing)
+  const labeled = chapters.filter((i) => looksLikeChapterLabel(paras[i].text))
+  const useLabeled = labeled.length >= 2 && labeled.length * 2 >= chapters.length
+  return { paras, scenes, chapters: useLabeled ? labeled : chapters, candidates }
+}
+
+function looksLikeChapterLabel(t: string): boolean {
+  const s = t.trim()
+  return CHAPTER_WORD_RE.test(s) || NUMBER_ALONE_RE.test(s) || SPELLED_RE.test(s)
+}
+
+/**
+ * Small pictures standing alone between paragraphs are scene breaks (an ornament). Pictures that
+ * overlap text, big pictures, and a picture that repeats on most pages (a decoration) are not.
+ */
+export function imageScenes(images: PdfImage[], paras: SourcePara[], chapters: number[], pageSize: (page: number) => { w: number; h: number }, pages: number): SceneMark[] {
+  const sizeKey = (b: Box) => `${Math.round(b.w)}x${Math.round(b.h)}`
+  const repeats = new Map<string, Set<number>>()
+  for (const im of images) {
+    const k = sizeKey(im.box)
+    if (!repeats.has(k)) repeats.set(k, new Set())
+    repeats.get(k)!.add(im.page)
+  }
+  const out: SceneMark[] = []
+  for (const im of images) {
+    const { w, h } = pageSize(im.page)
+    const b = im.box
+    if (b.w > w * 0.6 || b.h > h * 0.2 || b.w < 4 || b.h < 2) continue
+    if (pages >= 6 && (repeats.get(sizeKey(b))?.size ?? 0) > pages * 0.4) continue
+    if (b.y < h * 0.06 || b.y + b.h > h * 0.94) continue
+    const onPage = paras.flatMap((p, i) => p.boxes.filter((x) => x.page === im.page).map((x) => ({ i, x })))
+    if (onPage.some(({ x }) => x.y < b.y + b.h - 1 && x.y + x.h > b.y + 1)) continue // overlaps text
+    let after = -1
+    for (const { i, x } of onPage) if (x.y + x.h <= b.y + 1) after = Math.max(after, i)
+    if (after < 0) {
+      // the first thing on its page: after the last paragraph of the pages before
+      for (let i = paras.length - 1; i >= 0; i--)
+        if (paras[i].boxes[0].page < im.page) {
+          after = i
+          break
+        }
+    }
+    // an ornament just above or below a chapter heading belongs to the heading
+    const next = paras[after + 1]
+    if (chapters.includes(after) && paras[after].boxes.some((x) => x.page === im.page)) continue
+    if (next && chapters.includes(after + 1) && next.boxes[0].page === im.page) continue
+    // the same picture drawn twice
+    if (out.some((m) => m.page === im.page && Math.abs(m.y - (b.y + b.h / 2)) < 2)) continue
+    out.push({ page: im.page, y: b.y + b.h / 2, after, kind: 'image' })
+  }
+  return out
+}
+
+/** One chapter to create when splitting the book by its original */
+export interface SplitItem {
+  title: string
+  /** The heading in the original, kept as the chapter's synopsis */
+  synopsis: string
+  start: SourceRef
+  /** Missing for the last chapter: to the end of the PDF */
+  end?: SourceRef
+  /** Scene breaks inside the chapter */
+  scenes: number
+}
+
+/**
+ * The chapters of the original, for splitting the book: each found chapter start up to the paragraph
+ * before the next one (what comes before the first, like a title page, is left out).
+ */
+export function splitPlan(paras: SourcePara[], chapters: number[], scenes: SceneMark[]): (SplitItem & { from: number; to: number; page: number })[] {
+  return chapters.map((start, k) => {
+    const next = chapters[k + 1]
+    const to = next === undefined ? paras.length - 1 : next - 1
+    return {
+      title: `פרק ${k + 1}`,
+      synopsis: paras[start].text,
+      start: paras[start].ref,
+      ...(next === undefined ? {} : { end: paras[to].ref }),
+      scenes: scenes.filter((m) => m.after >= start && m.after < to).length,
+      from: start,
+      to,
+      page: paras[start].boxes[0].page
+    }
+  })
+}
+
+export interface ChapterSuggestion {
+  start: number
+  /** Last paragraph, or -1 = to the end of the original */
+  end: number
+}
+
+/**
+ * Suggests the chapter's range in the original: the first chapter start at or right after where it
+ * starts now, up to the paragraph before the next chapter start. Null when there is nothing to suggest.
+ */
+export function suggestChapter(chapters: number[], paraCount: number, from: number, startFixed: boolean): ChapterSuggestion | null {
+  if (!chapters.length || !paraCount) return null
+  let start = chapters.find((c) => c >= from)
+  if (start === undefined) return null
+  // the chapter's start was set (e.g. right after the previous chapter): move it only a little, to its heading
+  if (startFixed && start - from > 3) start = from
+  const next = chapters.find((c) => c > start!)
+  return { start, end: next === undefined ? -1 : next - 1 }
 }
 
 /** The paragraphs of a chapter in the original: indices [from, to] in `paras` (to < from when empty) */

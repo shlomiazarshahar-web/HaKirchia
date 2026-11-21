@@ -5,7 +5,7 @@ import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { Node as PMDoc } from '@tiptap/pm/model'
-import { countsAsParagraph, linkPages, pageBlocks, type PageBlock, type SourcePara, type TextPiece } from '@shared/translation'
+import { countsAsParagraph, imagesFromOperators, linkPages, pageBlocks, sourceStructure, type PageBlock, type PdfImage, type SourceStructure, type TextPiece } from '@shared/translation'
 import { api } from './api'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
@@ -21,7 +21,8 @@ export interface LoadedPdf {
 }
 
 const pdfs = new Map<string, Promise<LoadedPdf>>()
-const analyses = new Map<string, Promise<SourcePara[]>>()
+const analyses = new Map<string, Promise<SourceStructure>>()
+const imageScans = new Map<string, Promise<PdfImage[]>>()
 
 export function loadPdf(bookPath: string, name: string): Promise<LoadedPdf> {
   const key = `${bookPath}|${name}`
@@ -61,22 +62,56 @@ async function pagePieces(doc: PDFDocumentProxy, n: number): Promise<{ pieces: T
   return { pieces, w: vp.width, h: vp.height }
 }
 
-/** All the paragraphs of the PDF. Reading a long book takes a few seconds, so it is done once. */
-export function pdfParagraphs(bookPath: string, name: string): Promise<SourcePara[]> {
+/**
+ * All the paragraphs of the PDF, where chapters seem to start and the scene breaks drawn with signs.
+ * Reading a long book takes a few seconds, so it is done once.
+ */
+export function pdfParagraphs(bookPath: string, name: string): Promise<SourceStructure> {
   const key = `${bookPath}|${name}`
   let p = analyses.get(key)
   if (!p) {
     p = (async () => {
-      const { doc } = await loadPdf(bookPath, name)
+      const { doc, sizes } = await loadPdf(bookPath, name)
       const pages: PageBlock[][] = []
       for (let i = 1; i <= doc.numPages; i++) {
         const { pieces, w, h } = await pagePieces(doc, i)
         pages.push(pageBlocks(pieces, w, h))
       }
-      return linkPages(pages, 1)
+      return sourceStructure(linkPages(pages, 1), (page) => sizes[page - 1]?.h ?? 800)
     })()
     p.catch(() => analyses.delete(key))
     analyses.set(key, p)
+  }
+  return p
+}
+
+/**
+ * The pictures on every page (where an ornament may mark a scene break), from the drawing
+ * instructions of the page. Done after the paragraphs, in the background: it is slower.
+ */
+export function pdfImages(bookPath: string, name: string): Promise<PdfImage[]> {
+  const key = `${bookPath}|${name}`
+  let p = imageScans.get(key)
+  if (!p) {
+    p = (async () => {
+      const { doc } = await loadPdf(bookPath, name)
+      const O = pdfjs.OPS
+      const out: PdfImage[] = []
+      for (let n = 1; n <= doc.numPages; n++) {
+        const page = await doc.getPage(n)
+        let ops: { fnArray: number[]; argsArray: unknown[][] }
+        try {
+          ops = (await page.getOperatorList()) as unknown as typeof ops
+        } catch {
+          continue
+        }
+        out.push(...imagesFromOperators(ops.fnArray, ops.argsArray, O, page.view, n))
+        page.cleanup()
+      }
+      return out
+    })()
+    p.catch(() => imageScans.delete(key))
+    imageScans.set(key, p)
   }
   return p
 }

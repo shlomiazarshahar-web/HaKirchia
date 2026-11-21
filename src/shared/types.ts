@@ -3,6 +3,7 @@ import type { PaneLayout } from './panes'
 import type { TypographySettings } from './hebrew'
 import type { StopPoint } from './stoppoint'
 import type { ChapterSource } from './translation'
+import type { PublishSettings } from './publish'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -49,6 +50,8 @@ export interface Book {
   alts: AltDraft[]
   /** The original (PDF) of each translated chapter, by chapter id (feature 12) */
   sources: Record<string, ChapterSource>
+  /** Front and back pages, author, and page layout for reading and export (features 31, 36, 16) */
+  publish: PublishSettings
 }
 
 /**
