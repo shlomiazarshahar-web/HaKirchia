@@ -93,7 +93,7 @@ export function GlossaryPane() {
           <Icon name="glossary" />
           <span className="fname">חומרי רקע / מילון מונחים ושמות</span>
           <span className="grow" />
-          <label className="switch" title="קו מנוקד מתחת למונח שנכתב אחרת מהמילון, בכל הפרקים">
+          <label className="switch" title="קו גלי מתחת למונח שנכתב אחרת מהמילון, בכל הפרקים">
             <input type="checkbox" checked={marks} onChange={(e) => setMarks(e.target.checked)} />
             סימון בטקסט
           </label>

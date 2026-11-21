@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import type { RecentBook } from '@shared/types'
 import { Icon } from './Icons'
+import { RenameField } from './Binder'
 import wordmark from '../assets/wordmark.svg'
 
 const COVER_COLORS = ['#0F3B33', '#6B2E3A', '#2D3F63', '#5A4A2A', '#3E2F57', '#2F5A4E']
@@ -27,9 +29,76 @@ interface Props {
   onNew: () => void
   onOpenFolder: () => void
   onForget: (path: string) => void
+  onRename: (path: string, title: string) => void
+  onArchive: (path: string, archived: boolean) => void
 }
 
-export function Home({ books, onOpen, onNew, onOpenFolder, onForget }: Props) {
+const ARCH_KEY = 'hakirchia.archiveOpen'
+
+export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, onArchive }: Props) {
+  const [menu, setMenu] = useState<{ book: RecentBook; x: number; y: number } | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [archOpen, setArchOpen] = useState(() => {
+    try {
+      return localStorage.getItem(ARCH_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('click', close)
+    window.addEventListener('blur', close)
+    return () => (window.removeEventListener('click', close), window.removeEventListener('blur', close))
+  }, [menu])
+  const toggleArch = () => {
+    setArchOpen(!archOpen)
+    try {
+      localStorage.setItem(ARCH_KEY, archOpen ? '0' : '1')
+    } catch {
+      /* not remembered */
+    }
+  }
+  const shelf = books.filter((b) => !b.archived)
+  const archived = books.filter((b) => b.archived)
+  const card = (b: RecentBook) => (
+    <div key={b.path} className={`book${b.exists ? '' : ' missing'}${b.archived ? ' archived' : ''}`}>
+      <button
+        className="book-btn"
+        title={`${b.path}\nקליק ימני: שינוי שם, ארכוב`}
+        onClick={() => (b.exists ? onOpen(b.path) : onForget(b.path))}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setMenu({ book: b, x: e.clientX, y: e.clientY })
+        }}
+      >
+        <div className="cover" style={{ backgroundColor: coverColor(b.path) }}>
+          <div>
+            <div className="ct">{b.title}</div>
+            <div className="band" />
+          </div>
+          <div className="cs">{b.chapterCount} פרקים</div>
+        </div>
+      </button>
+      <div className="meta">
+        {renaming === b.path ? (
+          <RenameField
+            initial={b.title}
+            label="שם הספר"
+            onDone={(t) => {
+              setRenaming(null)
+              if (t && t !== b.title) onRename(b.path, t)
+            }}
+          />
+        ) : (
+          <b>{b.title}</b>
+        )}
+        {b.exists ? when(b.lastOpened) : 'התיקייה לא נמצאה. לחיצה תסיר מהרשימה'}
+      </div>
+    </div>
+  )
   return (
     <section className="home">
       <img className="wordmark" src={wordmark} alt="הַכְּרִיכִיָּה" />
@@ -46,26 +115,7 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget }: Props) {
         </div>
       )}
       <div className="shelf">
-        {books.map((b) => (
-          <button
-            key={b.path}
-            className={`book${b.exists ? '' : ' missing'}`}
-            title={b.path}
-            onClick={() => (b.exists ? onOpen(b.path) : onForget(b.path))}
-          >
-            <div className="cover" style={{ backgroundColor: coverColor(b.path) }}>
-              <div>
-                <div className="ct">{b.title}</div>
-                <div className="band" />
-              </div>
-              <div className="cs">{b.chapterCount} פרקים</div>
-            </div>
-            <div className="meta">
-              <b>{b.title}</b>
-              {b.exists ? when(b.lastOpened) : 'התיקייה לא נמצאה. לחיצה תסיר מהרשימה'}
-            </div>
-          </button>
-        ))}
+        {shelf.map(card)}
         <button className="book new" onClick={onNew}>
           <div className="cover">
             <Icon name="plus" size={28} />
@@ -76,6 +126,37 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget }: Props) {
           </div>
         </button>
       </div>
+      {archived.length > 0 && (
+        <div className="archive">
+          <button className="ib arch-toggle" aria-expanded={archOpen} onClick={toggleArch}>
+            <span className={`chev${archOpen ? '' : ' closed'}`}>
+              <Icon name="chev" size={12} />
+            </span>
+            ארכיון <span className="count">{archived.length}</span>
+          </button>
+          {archOpen && <div className="shelf">{archived.map(card)}</div>}
+        </div>
+      )}
+      {menu && (
+        <div className="menu" role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+          {menu.book.exists && (
+            <button role="menuitem" onClick={() => (setMenu(null), onOpen(menu.book.path))}>
+              <Icon name="book" /> פתיחה
+            </button>
+          )}
+          {menu.book.exists && (
+            <button role="menuitem" onClick={() => (setMenu(null), setRenaming(menu.book.path))}>
+              <Icon name="rename" /> שינוי שם (גם שם התיקייה)
+            </button>
+          )}
+          <button role="menuitem" onClick={() => (setMenu(null), onArchive(menu.book.path, !menu.book.archived))}>
+            <Icon name="folder" /> {menu.book.archived ? 'החזרה מהארכיון למדף' : 'העברה לארכיון'}
+          </button>
+          <button role="menuitem" onClick={() => (setMenu(null), onForget(menu.book.path))}>
+            <Icon name="close" /> הסרה מהרשימה (הקבצים נשארים)
+          </button>
+        </div>
+      )}
     </section>
   )
 }

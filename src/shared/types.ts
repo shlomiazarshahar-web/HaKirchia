@@ -79,6 +79,8 @@ export interface RecentBook {
   lastOpened: number
   /** false when the folder no longer exists on disk */
   exists: boolean
+  /** Put away in the library's archive (not deleted) */
+  archived?: boolean
 }
 
 /** A ProseMirror / TipTap JSON node */
@@ -112,7 +114,7 @@ export type Theme = 'light' | 'dark'
 
 export interface Settings {
   theme: Theme
-  recent: { path: string; title: string; chapterCount: number; lastOpened: number }[]
+  recent: { path: string; title: string; chapterCount: number; lastOpened: number; archived?: boolean }[]
   lastChapter: Record<string, string>
   defaultFolder?: string
   /** Split screen panes per book path, as they were last left */

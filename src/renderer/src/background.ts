@@ -104,7 +104,6 @@ const glKey = new PluginKey('glossaryFlags')
 /** A term or name to show in the text: its right spellings, and what hovering it says */
 interface Shown {
   ref: string
-  cls: 'gl-term' | 'gl-name'
   names: string[]
   tip: string
 }
@@ -116,20 +115,20 @@ export function setTermClick(fn: ((ref: string) => void) | null): void {
 }
 
 /** The open book's glossary and names changed: the marks follow */
-export function setGlossaryTerms(book: Book): void {
+export function setGlossaryTerms(book: Book, open: string[] = []): void {
+  const want = new Set(open)
   const terms = checkTerms(book.glossary, book.materials)
   const next: Shown[] = [
     ...book.glossary
-      .filter((g) => g.term.trim())
+      .filter((g) => g.term.trim() && want.has('glossary'))
       .map((g) => ({
         ref: `g:${g.id}`,
-        cls: 'gl-term' as const,
         names: [g.term, ...g.accepted],
         tip: `מילון המונחים: ${g.term}${g.original ? ` ← ${g.original}` : ''}${g.note ? ` · ${g.note}` : ''} (Ctrl+לחיצה פותחת)`
       })),
     ...book.materials
-      .filter((m) => m.kind !== 'research')
-      .map((m) => ({ ref: `m:${m.id}`, cls: 'gl-name' as const, names: namesOf(m), tip: `${KIND_ONE[m.kind]}: ${m.name}${m.original ? ` ← ${m.original}` : ''} (Ctrl+לחיצה פותחת את הדף)` }))
+      .filter((m) => want.has(m.id))
+      .map((m) => ({ ref: `m:${m.id}`, names: namesOf(m), tip: `${KIND_ONE[m.kind]}: ${m.name}${m.original ? ` ← ${m.original}` : ''} (Ctrl+לחיצה פותחת את הדף)` }))
   ]
   const sig = JSON.stringify([terms, next])
   if (index.bookPath === book.path && (index as { sig?: string }).sig === sig) return
@@ -161,17 +160,17 @@ export function useGlossaryMarks(): [boolean, (on: boolean) => void] {
 }
 
 function flagDecorations(doc: PMDoc, bookPath: string): DecorationSet {
-  if (!marksOn || index.bookPath !== bookPath || (!index.idx.terms.length && !shown.length)) return DecorationSet.empty
+  if (index.bookPath !== bookPath || ((!marksOn || !index.idx.terms.length) && !shown.length)) return DecorationSet.empty
   const decos: Decoration[] = []
   for (const b of textBlocks(doc)) {
-    const flags = findFlags(b.text, index.idx)
+    const flags = marksOn ? findFlags(b.text, index.idx) : []
     // the terms and names as they should be written: a light line, and what they are on hover
     const taken = flags.map((f) => [f.start, f.end])
     for (const t of shown) {
       for (const m of matchAll(b.text, t.names)) {
         if (taken.some(([s, e]) => m.start < e && m.end > s)) continue
         taken.push([m.start, m.end])
-        decos.push(Decoration.inline(b.pos + 1 + m.start, b.pos + 1 + m.end, { class: t.cls, title: t.tip, 'data-bg': t.ref }))
+        decos.push(Decoration.inline(b.pos + 1 + m.start, b.pos + 1 + m.end, { class: 'bg-mark', title: t.tip, 'data-bg': t.ref }))
       }
     }
     for (const f of flags) {

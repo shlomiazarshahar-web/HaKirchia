@@ -26,6 +26,8 @@ export function updateSettings(patch: Partial<Settings>): Settings {
 
 export function rememberBook(path: string, title: string, chapterCount: number): void {
   const s = getSettings()
-  const recent = [{ path, title, chapterCount, lastOpened: Date.now() }, ...s.recent.filter((r) => r.path !== path)].slice(0, 30)
+  // opening a book takes it out of the archive; archived books are kept however many there are
+  const others = s.recent.filter((r) => r.path !== path)
+  const recent = [{ path, title, chapterCount, lastOpened: Date.now() }, ...others.filter((r) => !r.archived)].slice(0, 30).concat(others.filter((r) => r.archived))
   updateSettings({ recent })
 }

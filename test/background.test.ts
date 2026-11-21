@@ -6,6 +6,11 @@ import {
   buildTermIndex,
   chaptersInStoryOrder,
   checkTerms,
+  GROUP_PAD,
+  groupAt,
+  groupBoxes,
+  groupTree,
+  ungroup,
   findFlags,
   inconsistencies,
   moveEvent,
@@ -184,5 +189,40 @@ describe('background materials on disk (feature 11, 37)', () => {
     const txt = join(root, 'a.txt')
     writeFileSync(txt, 'x')
     await expect(project.addImages(book.path, [txt], {})).rejects.toThrow()
+  })
+})
+
+describe('canvas groups', () => {
+  const size = () => ({ w: 100, h: 50 })
+  const imgs = [
+    { id: 'a', file: 'a.png', caption: '', at: 0, x: 0, y: 0, w: 100, groupId: 'g' },
+    { id: 'b', file: 'b.png', caption: '', at: 0, x: 300, y: 100, w: 100, groupId: 'h' }
+  ]
+  const groups = [
+    { id: 'g', title: 'G', x: 0, y: 0, w: 10, h: 10 },
+    { id: 'h', title: 'H', x: 0, y: 0, w: 10, h: 10, parentId: 'g' },
+    { id: 'e', title: 'E', x: 900, y: 900, w: 200, h: 150 }
+  ]
+  it('a group wraps its images and inner groups; an empty one keeps its box', () => {
+    const b = groupBoxes(imgs, groups, size)
+    const h = b.get('h')!
+    const g = b.get('g')!
+    expect(h.x).toBeLessThan(300)
+    expect(g.x).toBeLessThanOrEqual(-GROUP_PAD)
+    expect(g.x + g.w).toBeGreaterThanOrEqual(h.x + h.w)
+    expect(b.get('e')).toEqual({ x: 900, y: 900, w: 200, h: 150 })
+    expect(groupAt(groups, b, { x: 350, y: 120 })).toBe('h')
+    expect(groupAt(groups, b, { x: 50, y: 20 })).toBe('g')
+  })
+  it('removing a group hands its members to the group around it', () => {
+    const r = ungroup(imgs, groups, 'h')
+    expect(r.images.find((i) => i.id === 'b')!.groupId).toBe('g')
+    expect(r.groups.map((g) => g.id)).toEqual(['g', 'e'])
+    expect([...groupTree(groups, 'g')].sort()).toEqual(['g', 'h'])
+  })
+  it('a loop of groups is broken when read', () => {
+    const bg = normalizeBackground({ groups: [{ id: 'x', title: '', x: 0, y: 0, w: 100, h: 100, parentId: 'y' }, { id: 'y', title: '', x: 0, y: 0, w: 100, h: 100, parentId: 'x' }], images: [{ id: 'i', file: 'f', groupId: 'zz' }] }, [])
+    expect(bg.groups.filter((g) => g.parentId).length).toBeLessThan(2)
+    expect(bg.images[0].groupId).toBeUndefined()
   })
 })

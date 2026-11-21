@@ -80,9 +80,14 @@ export interface InspirationImage {
   x?: number
   y?: number
   w?: number
+  /** The group it belongs to on the canvas */
+  groupId?: string
 }
 
-/** A named frame on the inspiration canvas; images inside it move with it */
+/**
+ * A named frame on the inspiration canvas. Its members are the images (and groups) that name it;
+ * it grows and shrinks around them and moves with them. x/y/w/h is its last box (an empty group keeps it).
+ */
 export interface InspirationGroup {
   id: string
   title: string
@@ -90,7 +95,13 @@ export interface InspirationGroup {
   y: number
   w: number
   h: number
+  /** A group inside another group */
+  parentId?: string
+  color?: GroupColor
 }
+
+export const GROUP_COLORS = ['amber', 'green', 'blue', 'purple', 'red', 'gray'] as const
+export type GroupColor = (typeof GROUP_COLORS)[number]
 
 /** An event of the story (feature 21), in story-time order */
 export interface TimelineEvent {
@@ -150,11 +161,42 @@ export function normalizeBackground(raw: Partial<Record<keyof Background, unknow
       ...(im.materialId && mats.has(im.materialId) ? { materialId: im.materialId } : {}),
       at: typeof im.at === 'number' ? im.at : 0,
       ...(num(im.x) && num(im.y) ? { x: im.x, y: im.y } : {}),
-      ...(num(im.w) && im.w! > 0 ? { w: im.w } : {})
+      ...(num(im.w) && im.w! > 0 ? { w: im.w } : {}),
+      ...(typeof im.groupId === 'string' ? { groupId: im.groupId } : {})
     }))
-  const groups: InspirationGroup[] = (Array.isArray(raw?.groups) ? raw!.groups : [])
+  const rawGroups: InspirationGroup[] = (Array.isArray(raw?.groups) ? raw!.groups : [])
     .filter((g: Partial<InspirationGroup>) => g && typeof g.id === 'string' && num(g.x) && num(g.y) && num(g.w) && num(g.h))
-    .map((g: Partial<InspirationGroup>) => ({ id: g.id!, title: str(g.title), x: g.x!, y: g.y!, w: Math.max(80, g.w!), h: Math.max(60, g.h!) }))
+    .map((g: Partial<InspirationGroup>) => ({
+      id: g.id!,
+      title: str(g.title),
+      x: g.x!,
+      y: g.y!,
+      w: Math.max(80, g.w!),
+      h: Math.max(60, g.h!),
+      ...(typeof g.parentId === 'string' ? { parentId: g.parentId } : {}),
+      ...(g.color && (GROUP_COLORS as readonly string[]).includes(g.color) ? { color: g.color } : {})
+    }))
+  // a parent that is missing, or a loop of groups inside each other, is dropped
+  const gids = new Set(rawGroups.map((g) => g.id))
+  const parentOf = new Map(rawGroups.map((g) => [g.id, g.parentId && gids.has(g.parentId) ? g.parentId : undefined]))
+  const loops = (id: string) => {
+    const seen = new Set<string>()
+    for (let p = parentOf.get(id); p; p = parentOf.get(p)) {
+      if (p === id || seen.has(p)) return true
+      seen.add(p)
+    }
+    return false
+  }
+  const groups = rawGroups.map((g) => {
+    if (g.parentId && (!gids.has(g.parentId) || loops(g.id))) {
+      parentOf.set(g.id, undefined)
+      const { parentId: _p, ...rest } = g
+      void _p
+      return rest
+    }
+    return g
+  })
+  for (const im of images) if (im.groupId && !gids.has(im.groupId)) delete im.groupId
   const timeline: TimelineEvent[] = (Array.isArray(raw?.timeline) ? raw!.timeline : [])
     .filter((e: Partial<TimelineEvent>) => e && typeof e.id === 'string')
     .map((e: Partial<TimelineEvent>) => ({
@@ -208,6 +250,8 @@ export interface Occurrence {
   count: number
   /** The first match: paragraph index and the range inside it */
   first: { para: number; start: number; end: number }
+  /** Every match, in order */
+  hits: { para: number; start: number; end: number }[]
 }
 
 /** In which chapters any of the names appears, how many times, and where first. Chapters in book order. */
@@ -216,14 +260,11 @@ export function occurrences(chapters: ChapterText[], names: string[]): Occurrenc
   if (!qs.length) return []
   const out: Occurrence[] = []
   for (const ch of chapters) {
-    let count = 0
-    let first: Occurrence['first'] | null = null
+    const hits: Occurrence['hits'] = []
     ch.paras.forEach((text, para) => {
-      const hits = matchAll(text, qs)
-      count += hits.length
-      if (!first && hits.length) first = { para, ...hits[0] }
+      for (const m of matchAll(text, qs)) hits.push({ para, ...m })
     })
-    if (count && first) out.push({ chapterId: ch.id, count, first })
+    if (hits.length) out.push({ chapterId: ch.id, count: hits.length, first: hits[0], hits })
   }
   return out
 }
@@ -364,7 +405,7 @@ export interface Inconsistency {
   spelled: string
   why: Flag['why']
   count: number
-  places: Occurrence[]
+  places: Omit<Occurrence, 'hits'>[]
 }
 
 /** Every different spelling of every term in the book, most frequent first */
@@ -501,4 +542,99 @@ export function placeNew(images: InspirationImage[], aspect: (file: string) => n
     }
     return out
   })
+}
+
+// ---------------------------------------------------------------------------
+// Groups on the inspiration canvas
+// ---------------------------------------------------------------------------
+
+export interface Box {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+/** Room around the members of a group, and for its title above them */
+export const GROUP_PAD = 18
+export const GROUP_HEAD = 30
+
+/** The group and every group inside it, at any depth */
+export function groupTree(groups: InspirationGroup[], id: string): Set<string> {
+  const out = new Set([id])
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const g of groups) if (g.parentId && out.has(g.parentId) && !out.has(g.id)) (out.add(g.id), (grew = true))
+  }
+  return out
+}
+
+export function groupDepth(groups: InspirationGroup[], id: string): number {
+  const byId = new Map(groups.map((g) => [g.id, g]))
+  let d = 0
+  for (let p = byId.get(id)?.parentId; p && d < 50; p = byId.get(p)?.parentId) d++
+  return d
+}
+
+/**
+ * Each group's box: around its images and inner groups, with room for its title. An empty group keeps
+ * the box it has. `skip` leaves an image or a group out (the one being dragged), so the frame does not
+ * follow it while it is carried away.
+ */
+export function groupBoxes(images: InspirationImage[], groups: InspirationGroup[], size: (im: InspirationImage) => { w: number; h: number }, skip?: { image?: string; group?: string }): Map<string, Box> {
+  const out = new Map<string, Box>()
+  const busy = new Set<string>()
+  const byId = new Map(groups.map((g) => [g.id, g]))
+  const box = (g: InspirationGroup): Box => {
+    const done = out.get(g.id)
+    if (done) return done
+    if (busy.has(g.id)) return g
+    busy.add(g.id)
+    const parts: Box[] = []
+    for (const im of images) {
+      if (im.groupId !== g.id || im.id === skip?.image || im.x === undefined) continue
+      const s = size(im)
+      parts.push({ x: im.x, y: im.y!, w: s.w, h: s.h })
+    }
+    for (const c of groups) if (c.parentId === g.id && c.id !== skip?.group) parts.push(box(c))
+    let b: Box = { x: g.x, y: g.y, w: g.w, h: g.h }
+    if (parts.length) {
+      const x0 = Math.min(...parts.map((p) => p.x)) - GROUP_PAD
+      const y0 = Math.min(...parts.map((p) => p.y)) - GROUP_PAD - GROUP_HEAD
+      const x1 = Math.max(...parts.map((p) => p.x + p.w)) + GROUP_PAD
+      const y1 = Math.max(...parts.map((p) => p.y + p.h)) + GROUP_PAD
+      b = { x: x0, y: y0, w: Math.max(120, x1 - x0), h: y1 - y0 }
+    }
+    out.set(g.id, b)
+    return b
+  }
+  for (const g of groups) if (byId.has(g.id)) box(g)
+  return out
+}
+
+/** The innermost group whose box holds the point, leaving out the groups in `skip` */
+export function groupAt(groups: InspirationGroup[], boxes: Map<string, Box>, p: { x: number; y: number }, skip: Set<string> = new Set()): string | undefined {
+  let best: string | undefined
+  let bestDepth = -1
+  for (const g of groups) {
+    if (skip.has(g.id)) continue
+    const b = boxes.get(g.id)
+    if (!b || p.x < b.x || p.x > b.x + b.w || p.y < b.y || p.y > b.y + b.h) continue
+    const d = groupDepth(groups, g.id)
+    if (d > bestDepth) (best = g.id), (bestDepth = d)
+  }
+  return best
+}
+
+/** Removes a group: its images and inner groups move to the group around it (or to the board) */
+export function ungroup(images: InspirationImage[], groups: InspirationGroup[], id: string): { images: InspirationImage[]; groups: InspirationGroup[] } {
+  const parent = groups.find((g) => g.id === id)?.parentId
+  const up = <T extends object>(o: T, key: 'groupId' | 'parentId'): T => {
+    const { [key]: _drop, ...rest } = o as Record<string, unknown>
+    void _drop
+    return (parent ? { ...rest, [key]: parent } : rest) as T
+  }
+  return {
+    images: images.map((im) => (im.groupId === id ? up(im, 'groupId') : im)),
+    groups: groups.filter((g) => g.id !== id).map((g) => (g.parentId === id ? up(g, 'parentId') : g))
+  }
 }

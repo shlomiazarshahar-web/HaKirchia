@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { PMNode } from '@shared/types'
 import { KIND_ICON, KIND_LABEL, KIND_ONE, namesOf, occurrences, splitList, type InspirationImage, type Material, type MaterialField } from '@shared/background'
+import { snippet } from '@shared/search'
 import { api } from '../api'
 import { droppedImagePaths, jumpFor, useBookTexts, useImageUrl } from '../background'
 import { ChapterBody, type SaveState } from './ChapterEditor'
@@ -229,6 +230,8 @@ export function TextInput({ value, onDone, multiline, ...rest }: { value: string
       {...rest}
       value={v}
       onChange={(e) => setV(e.target.value)}
+      // a field that opens focused (a new group, a new term) has its text selected, ready to be typed over
+      onFocus={rest.autoFocus ? (e) => e.currentTarget.select() : undefined}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
@@ -307,6 +310,14 @@ export function OccurrenceList({ names, compact = false }: { names: string[]; co
   const { texts } = useBookTexts(book)
   const key = names.join('|')
   const occ = useMemo(() => (texts ? occurrences(texts.chapters, names) : null), [texts, key]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [openCh, setOpenCh] = useState<Set<string>>(new Set())
+  const toggleCh = (id: string) =>
+    setOpenCh((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const num = new Map(book.chapters.map((c, i) => [c.id, i + 1]))
   const title = new Map(book.chapters.map((c) => [c.id, c.title]))
   if (!names.length) return null
@@ -320,18 +331,43 @@ export function OccurrenceList({ names, compact = false }: { names: string[]; co
           {occ.length === 1 ? 'בפרק אחד' : `ב־${occ.length} פרקים`}, {total === 1 ? 'פעם אחת' : `${total.toLocaleString('he-IL')} פעמים`}
         </div>
       )}
-      <ul>
-        {occ.map((o) => (
-          <li key={o.chapterId}>
-            <button title="מעבר למקום הראשון בפרק" onClick={() => texts && bg.goTo(o.chapterId, jumpFor(texts, o.chapterId, o.first))}>
-              <span className="occ-n">{num.get(o.chapterId)}</span>
-              <span className="occ-t" dir="auto">
-                {title.get(o.chapterId)}
-              </span>
-              <span className="occ-c">{o.count}</span>
-            </button>
-          </li>
-        ))}
+      <ul className={compact ? '' : 'occ-rows'}>
+        {occ.map((o) => {
+          const isOpen = openCh.has(o.chapterId)
+          const paras = texts?.chapters.find((c) => c.id === o.chapterId)?.paras ?? []
+          return (
+            <li key={o.chapterId}>
+              <div className="occ-row">
+                <button title="מעבר למקום הראשון בפרק" onClick={() => texts && bg.goTo(o.chapterId, jumpFor(texts, o.chapterId, o.first))}>
+                  <span className="occ-n">{num.get(o.chapterId)}</span>
+                  <span className="occ-t" dir="auto">
+                    {title.get(o.chapterId)}
+                  </span>
+                </button>
+                <button className="occ-c" aria-expanded={isOpen} title={isOpen ? 'הסתרת האזכורים' : 'כל האזכורים בפרק'} onClick={() => toggleCh(o.chapterId)}>
+                  {o.count}
+                  <span className={`chev${isOpen ? '' : ' closed'}`}>
+                    <Icon name="chev" size={11} />
+                  </span>
+                </button>
+              </div>
+              {isOpen && (
+                <div className="occ-hits">
+                  {o.hits.slice(0, 200).map((h, i) => {
+                    const sn = snippet(paras[h.para] ?? '', { start: h.start, end: h.end })
+                    return (
+                      <button key={i} className="occ-hit" dir="auto" onClick={() => texts && bg.goTo(o.chapterId, jumpFor(texts, o.chapterId, h))}>
+                        {sn.before}
+                        <mark>{sn.match}</mark>
+                        {sn.after}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

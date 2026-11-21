@@ -9,8 +9,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Book, PMNode } from '@shared/types'
 import { bookCss, bookSections, oddPagePlan, pageGeometry, sectionTag, tocEntries, type Section } from '@shared/bookhtml'
-import { PAGE_SIZES, type BookLayout, type PageSize, type PublishSettings } from '@shared/publish'
+import { ALIGN_LABEL, ELEMENT_KEYS, ELEMENTS, elStyle, PAGE_SIZES, printedTitle, type ElementKey, type ElementStyle, type BookLayout, type PageSize, type PublishSettings } from '@shared/publish'
 import { api } from '../api'
+import { fixPageStarts, PAGE_SLACK, placeFootnotes } from '../footnotes'
 import { EDITOR_FONTS } from '../fonts'
 import { usePrefs } from '../prefs'
 import { Icon } from './Icons'
@@ -107,7 +108,8 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
   const pageW = g.w * MM
   const pageH = g.h * MM
   const colW = (g.w - g.inner - g.outer) * MM
-  const colH = (g.h - g.top - g.bottom) * MM
+  // a few pixels shorter than the page, like the PDF (see footnotes.ts)
+  const colH = (g.h - g.top - g.bottom) * MM - (layout.notesAt !== 'chapter' ? PAGE_SLACK : 0)
   const gap = 2 * g.inner * MM
   const stride = colW + gap
   const oddPages = layout.chapterNewPage && layout.chapterOdd
@@ -124,8 +126,8 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
   const html = useMemo(() => {
     const lead = '<div class="rd-lead"></div>'
     const set = new Set(blanks ?? [])
-    return lead + sections.map((s, i) => (set.has(i) ? '<div class="rd-blank"></div>' : '') + sectionTag(s, layout, i)).join('\n')
-  }, [sections, layout, blanks])
+    return `<!--${fontsTick}-->` + lead + sections.map((s, i) => (set.has(i) ? '<div class="rd-blank"></div>' : '') + sectionTag(s, layout, i)).join('\n')
+  }, [sections, layout, blanks, fontsTick])
   const css = useMemo(() => bookCss(layout, '.rd-flow'), [layout])
   const key = `${css}|${sections.map((s) => s.html.length).join(',')}|${fontsTick}`
   const lastKey = useRef(key)
@@ -152,6 +154,12 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
   useLayoutEffect(() => {
     const f = flow.current
     if (!f) return
+    // footnotes go to the bottom of their page before the pages are counted
+    if (layout.notesAt !== 'chapter') {
+      placeFootnotes(f, { colW, colH, stride })
+      // the same page starts as the PDF fixes (see print.ts), so both show the same pages
+      fixPageStarts(f, { colW, colH, stride })
+    }
     const starts: Record<number, number> = {}
     f.querySelectorAll<HTMLElement>(':scope > section[data-sec]').forEach((el) => {
       starts[Number(el.dataset.sec)] = pageOf(el)
@@ -247,7 +255,7 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
     const s = sections[i]
     if (!s || s.kind !== 'chapter') return { head: '', num: '' }
     const opening = measure.starts[i] === p
-    const head = layout.runningHeads && !opening ? (p % 2 === 1 ? (layout.chapterNewPage ? s.title : '') : book.title) : ''
+    const head = layout.runningHeads && !opening ? (p % 2 === 1 ? (layout.chapterNewPage ? s.title : '') : printedTitle(book.title, book.publish.info)) : ''
     return { head, num: layout.pageNumbers ? String(p) : '' }
   }
 
@@ -285,16 +293,18 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
   const pageInfo = measure ? (spread === 0 ? `עמוד 1 מתוך ${measure.pages}` : left <= measure.pages ? `עמודים ${right}–${left} מתוך ${measure.pages}` : `עמוד ${right} מתוך ${measure.pages}`) : 'מעמד את הספר…'
   const dRight = decor(right)
   const dLeft = decor(left)
+  const hs = elStyle(layout, 'heads')
+  const headFont = { fontFamily: `'${(hs.font || layout.font).replace(/'/g, '')}', serif`, fontSize: `${hs.size}pt`, fontWeight: hs.bold ? 700 : 400 }
   const paper = (side: 'right' | 'left', p: number, d: { head: string; num: string }): ReactNode =>
     p >= 1 && (!measure || p <= measure.pages) ? (
       <div className={`rd-paper ${side}`} style={{ width: pageW, height: pageH }}>
         {d.head && (
-          <div className="rd-head" style={{ top: (g.top * MM) / 2 - 8, insetInline: side === 'right' ? `${g.outer * MM}px ${g.inner * MM}px` : `${g.inner * MM}px ${g.outer * MM}px` }}>
+          <div className="rd-head" style={{ ...headFont, top: (g.top * MM) / 2 - 8, insetInline: side === 'right' ? `${g.outer * MM}px ${g.inner * MM}px` : `${g.inner * MM}px ${g.outer * MM}px` }}>
             {d.head}
           </div>
         )}
         {d.num && (
-          <div className="rd-num" style={{ bottom: (g.bottom * MM) / 2 - 8 }}>
+          <div className="rd-num" style={{ ...headFont, bottom: (g.bottom * MM) / 2 - 8 }}>
             {d.num}
           </div>
         )}
@@ -414,13 +424,17 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
           ))}
         </select>
       </label>
-      <div className="set-sub">כותרות הפרקים</div>
-      <TitleStyleFields layout={layout} onChange={onChange} />
+      <div className="set-sub">עיצוב חלקי הספר</div>
+      <ElementsSection layout={layout} onChange={onChange} />
       <div className="set-sub">עימוד</div>
       {sw('partPage', 'כל כותרת חלק בעמוד משלה, באמצע העמוד')}
       {sw('chapterNewPage', 'כל פרק מתחיל בעמוד חדש')}
       {sw('chapterOdd', 'פרק מתחיל תמיד בעמוד שמאלי (אי־זוגי)', 'כמו בספרים מודפסים: אם צריך, נוסף עמוד ריק לפני הפרק', !layout.chapterNewPage)}
       {sw('justify', 'יישור לשני הצדדים')}
+      <label className="set-row" title="בתחתית העמוד: כל הערה בעמוד שבו מופיע הסימון שלה. המספור רץ ברצף בכל הספר">
+        <input type="checkbox" checked={layout.notesAt === 'chapter'} onChange={(e) => onChange({ notesAt: e.target.checked ? 'chapter' : 'page' })} />
+        <span>הערות שוליים בסוף כל פרק (במקום בתחתית העמוד)</span>
+      </label>
       {sw('pageNumbers', 'מספרי עמודים')}
       {sw('runningHeads', 'שם הספר ושם הפרק בראש העמוד')}
       {sw('matter', 'עמודי פתיחה וסיום (שער, הקדשה, תוכן…)')}
@@ -474,15 +488,18 @@ export function SizeField({ label, value, min, max, step, onChange }: { label: s
   )
 }
 
-/** How chapter titles look: font, size, bold and placement (reading view, PDF, Word, ePub, and the editor's title) */
-export function TitleStyleFields({ layout, onChange }: { layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void }) {
+/** How one element of the book looks: font, size, placement and weight */
+export function ElementStyleFields({ el, layout, onChange }: { el: ElementKey; layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void }) {
   const prefs = usePrefs()
   const fonts = [...EDITOR_FONTS, ...prefs.customFonts.map((f) => f.family).filter((f) => !EDITOR_FONTS.includes(f))]
+  const st = elStyle(layout, el)
+  const info = ELEMENTS[el]
+  const set = (p: Partial<ElementStyle>) => onChange({ styles: { ...layout.styles, [el]: { ...layout.styles[el], ...p } } })
   return (
     <>
       <label className="field">
         גופן
-        <select value={layout.titleFont} onChange={(e) => onChange({ titleFont: e.target.value })} style={{ fontFamily: layout.titleFont || layout.font }}>
+        <select value={st.font} onChange={(e) => set({ font: e.target.value })} style={{ fontFamily: st.font || layout.font }}>
           <option value="">כמו הטקסט ({layout.font})</option>
           {fonts.map((f) => (
             <option key={f} value={f} style={{ fontFamily: f }}>
@@ -491,21 +508,62 @@ export function TitleStyleFields({ layout, onChange }: { layout: BookLayout; onC
           ))}
         </select>
       </label>
-      <SizeField label="גודל" value={layout.titleSize} min={12} max={40} step={1} onChange={(titleSize) => onChange({ titleSize })} />
-      <div className="seg title-seg" role="group" aria-label="מיקום הכותרת">
-        <button aria-pressed={layout.titleAlign === 'center'} onClick={() => onChange({ titleAlign: 'center' })}>
-          <Icon name="align-c" size={14} /> במרכז
-        </button>
-        <button aria-pressed={layout.titleAlign === 'start'} onClick={() => onChange({ titleAlign: 'start' })}>
-          <Icon name="align-r" size={14} /> בצד
-        </button>
-        <button aria-pressed={layout.titleBold} title="כותרת מודגשת" onClick={() => onChange({ titleBold: !layout.titleBold })}>
+      <div className="size-auto">
+        <SizeField label={st.auto ? 'גודל (לפי הטקסט)' : 'גודל'} value={st.size} min={6} max={72} step={el === 'notes' || el === 'heads' || el === 'matterText' || el === 'toc' ? 0.5 : 1} onChange={(size) => set({ size })} />
+        {!st.auto && (
+          <button className="ib" title="הגודל ישתנה שוב יחד עם גודל הטקסט" onClick={() => set({ size: 0 })}>
+            <Icon name="undo" size={13} /> לפי הטקסט
+          </button>
+        )}
+      </div>
+      <div className="seg title-seg" role="group" aria-label="מיקום">
+        {info.aligns.map((a) => (
+          <button key={a} aria-pressed={st.align === a} onClick={() => set({ align: a })}>
+            {a !== 'auto' && <Icon name={a === 'center' ? 'align-c' : a === 'start' ? 'align-r' : 'align-l'} size={14} />} {ALIGN_LABEL[a]}
+          </button>
+        ))}
+        <button aria-pressed={st.bold} title="מודגש" onClick={() => set({ bold: !st.bold })}>
           <b>מודגש</b>
         </button>
       </div>
-      <div className="title-preview" style={{ fontFamily: `'${layout.titleFont || layout.font}', serif`, fontWeight: layout.titleBold ? 700 : 500, textAlign: layout.titleAlign, fontSize: Math.min(28, layout.titleSize) }}>
-        פרק ראשון
+    </>
+  )
+}
+
+/** Every element of the book, one at a time */
+function ElementsSection({ layout, onChange }: { layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void }) {
+  const [el, setEl] = useState<ElementKey>('chapterTitle')
+  const st = elStyle(layout, el)
+  return (
+    <>
+      <label className="field">
+        מה לעצב
+        <select value={el} onChange={(e) => setEl(e.target.value as ElementKey)}>
+          {ELEMENT_KEYS.map((k) => (
+            <option key={k} value={k}>
+              {ELEMENTS[k].label}
+              {layout.styles[k] ? ' •' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      <ElementStyleFields el={el} layout={layout} onChange={onChange} />
+      <div className="title-preview" style={{ fontFamily: `'${st.font || layout.font}', serif`, fontWeight: st.bold ? 700 : 500, textAlign: st.align === 'auto' ? 'center' : st.align, fontSize: Math.min(28, st.size * 1.333) }}>
+        {PREVIEW[el]}
       </div>
     </>
   )
+}
+
+const PREVIEW: Record<ElementKey, string> = {
+  chapterTitle: 'פרק ראשון',
+  partTitle: 'חלק א׳',
+  bookTitle: 'שם הספר',
+  subtitle: 'רומן',
+  author: 'שם הכותב',
+  matterTitle: 'תודות',
+  matterText: 'לאמא, שתמיד האמינה',
+  toc: 'פרק ראשון ........ 7',
+  notes: '1. הערה בתחתית העמוד',
+  heads: 'שם הספר · 12'
 }

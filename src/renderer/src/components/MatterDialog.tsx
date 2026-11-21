@@ -131,16 +131,20 @@ export function MatterDialog({ book, onSave, onClose, startId, onRenameBook }: P
                 {page.kind === 'title' ? (
                   <>
                     <label className="field">
-                      שם הספר
-                      <input dir="auto" value={title} readOnly={!onRenameBook} title="שינוי השם משנה גם את שם התיקייה של הספר" onChange={(e) => setTitle(e.target.value)} />
+                      השם על השער
+                      <input ref={first} dir="auto" value={info.coverTitle ?? ''} placeholder={title} title="מה שכתוב בשער ובראש העמודים. ריק: שם הספר" onChange={(e) => setInfo({ ...info, coverTitle: e.target.value })} />
                     </label>
                     <label className="field">
                       כותרת משנה
-                      <input ref={first} dir="auto" value={info.subtitle} placeholder="למשל: רומן" onChange={(e) => setInfo({ ...info, subtitle: e.target.value })} />
+                      <input dir="auto" value={info.subtitle} placeholder="למשל: רומן" onChange={(e) => setInfo({ ...info, subtitle: e.target.value })} />
                     </label>
                     <label className="field">
                       שם הכותב
                       <input dir="auto" value={info.author} onChange={(e) => setInfo({ ...info, author: e.target.value })} />
+                    </label>
+                    <label className="field">
+                      שם הספר בספרייה ובתיקייה <small>(לא מודפס כשיש שם על השער)</small>
+                      <input dir="auto" value={title} readOnly={!onRenameBook} title="שינוי השם משנה גם את שם התיקייה של הספר" onChange={(e) => setTitle(e.target.value)} />
                     </label>
                     <label className="field">
                       שורות נוספות בתחתית השער (לא חובה)

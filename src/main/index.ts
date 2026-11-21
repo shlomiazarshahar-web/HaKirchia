@@ -294,6 +294,9 @@ function registerIpc(): void {
   ipcMain.handle('library:list', (): RecentBook[] =>
     getSettings().recent.map((r) => ({ ...r, exists: project.isBookFolder(r.path) }))
   )
+  ipcMain.handle('library:archive', (_e, path: string, archived: boolean) => {
+    updateSettings({ recent: getSettings().recent.map((r) => (r.path === path ? { ...r, archived } : r)) })
+  })
   ipcMain.handle('library:forget', (_e, path: string) => {
     updateSettings({ recent: getSettings().recent.filter((r) => r.path !== path) })
   })
@@ -328,7 +331,7 @@ function registerIpc(): void {
       return opened(await project.openBook(folder))
     })
   )
-  ipcMain.handle('book:rename', (_e, bookPath: string, title: string) =>
+  ipcMain.handle('book:rename', (_e, bookPath: string, title: string, fromLibrary?: boolean) =>
     wrap(async () => {
       const { book, notice } = await project.renameBook(bookPath, title)
       if (book.path !== bookPath) {
@@ -340,13 +343,16 @@ function registerIpc(): void {
           return { ...rest, [book.path]: v }
         }
         updateSettings({
-          recent: s.recent.filter((r) => r.path !== bookPath),
+          recent: fromLibrary ? s.recent : s.recent.filter((r) => r.path !== bookPath),
           lastChapter: move(s.lastChapter) ?? {},
           splitLayout: move(s.splitLayout),
           translateLayout: move(s.translateLayout)
         })
       }
-      opened(book)
+      if (fromLibrary) {
+        // the shelf keeps its order: only the name and the folder change
+        updateSettings({ recent: getSettings().recent.map((r) => (r.path === bookPath ? { ...r, path: book.path, title: book.title } : r)) })
+      } else opened(book)
       return { book, notice }
     })
   )

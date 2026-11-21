@@ -14,7 +14,7 @@ import JSZip from 'jszip'
 import type { Book } from '../shared/types'
 import { bookCss, bookSections, esc, fitToLayout, pageGeometry, printBody, printCss, sectionTag, tocEntries, type BookData, type Section } from '../shared/bookhtml'
 import { bookToDocx, type DocxBookItem } from '../shared/docx'
-import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES } from '../shared/publish'
+import { backPages, elStyle, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES, printedTitle } from '../shared/publish'
 import * as project from './project'
 
 export type ExportFormat = 'pdf' | 'docx' | 'epub'
@@ -47,7 +47,7 @@ export async function exportDocx(bookPath: string, out: string): Promise<void> {
   const { info, matter, layout } = book.publish
   const items: DocxBookItem[] = []
   const matterItem = (m: (typeof matter)[number]): DocxBookItem => {
-    if (m.kind === 'title') return { kind: 'title', title: book.title, subtitle: info.subtitle.trim(), author: info.author.trim(), extra: matterLines(m.text).filter((l) => l.trim()) }
+    if (m.kind === 'title') return { kind: 'title', title: printedTitle(book.title, info), subtitle: info.subtitle.trim(), author: info.author.trim(), extra: matterLines(m.text).filter((l) => l.trim()) }
     if (m.kind === 'toc') return { kind: 'toc', heading: m.heading.trim() || MATTER_KINDS.toc.heading, entries: tocEntries(data).map((e) => (e.level ? '    ' : '') + e.title) }
     return { kind: 'matter', heading: m.heading.trim(), lines: matterLines(m.text), centered: MATTER_KINDS[m.kind].centered }
   }
@@ -67,13 +67,13 @@ export async function exportDocx(bookPath: string, out: string): Promise<void> {
   }
   if (layout.matter) items.push(...backPages(matter).map(matterItem))
   const g = pageGeometry(layout)
-  const bytes = await bookToDocx(items, book.title, {
+  const bytes = await bookToDocx(items, printedTitle(book.title, info), {
     pageW: g.w,
     pageH: g.h,
     margin: { top: g.top, bottom: g.bottom, side: Math.round((g.inner + g.outer) / 2) },
     font: layout.font,
     fontSize: layout.fontSize,
-    chapterTitle: { font: layout.titleFont, sizePt: layout.titleSize, bold: layout.titleBold, center: layout.titleAlign === 'center' }
+    styles: Object.fromEntries((['chapterTitle', 'partTitle', 'bookTitle', 'matterTitle'] as const).map((k) => [k, elStyle(layout, k)]))
   })
   await fs.writeFile(out, bytes)
 }
@@ -120,7 +120,7 @@ export async function exportEpub(bookPath: string, out: string): Promise<void> {
     { createFolders: false }
   )
   const add = (name: string, text: string) => zip.file(name, text, { createFolders: false })
-  add('OEBPS/book.css', bookCss(layout) + EPUB_CSS + `.bk-ch-title { font-size: ${(layout.titleSize / layout.fontSize).toFixed(2)}em; }\n.bk-part-title { font-size: ${((layout.titleSize * 1.16) / layout.fontSize).toFixed(2)}em; }\n`)
+  add('OEBPS/book.css', bookCss(layout, '', true) + EPUB_CSS)
   sections.forEach((s, i) => add(`OEBPS/${fileOf.get(s.id)}`, xhtml(sectionTitle(s), linkFix(sectionTag(s, layout, i)))))
 
   // The reader's own table of contents (nav), with chapters inside their parts
@@ -155,7 +155,7 @@ export async function exportEpub(bookPath: string, out: string): Promise<void> {
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="he" dir="rtl">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="bookid">urn:uuid:${randomUUID()}</dc:identifier>
-<dc:title>${esc(book.title)}</dc:title>
+<dc:title>${esc(printedTitle(book.title, book.publish.info))}</dc:title>
 <dc:language>he</dc:language>
 ${info.author.trim() ? `<dc:creator>${esc(info.author.trim())}</dc:creator>` : ''}
 <meta property="dcterms:modified">${modified}</meta>
@@ -183,6 +183,8 @@ export interface PrintJob {
   kinds: Section['kind'][]
   /** Chapter / part ids in order (for the table of contents numbers) */
   ids: string[]
+  /** Footnotes go to the bottom of their page: the page's text area in CSS px, to lay the book out in columns first */
+  notesAtPage: { colW: number; colH: number; gap: number } | null
 }
 
 interface Running {
@@ -226,12 +228,18 @@ export async function exportPdf(bookPath: string, out: string, preload: string, 
   const sections = bookSections(data, 'end')
   const job: PrintJob = {
     html: printBody(sections, layout),
-    css: bookCss(layout) + '\n' + printCss(layout, sections, book.title),
+    css: bookCss(layout) + '\n' + printCss(layout, sections, printedTitle(book.title, book.publish.info)),
     oddPages: layout.chapterNewPage && layout.chapterOdd,
     hasToc: sections.some((s) => s.kind === 'matter' && s.page.kind === 'toc'),
     partPage: layout.partPage,
     kinds: sections.map((s) => s.kind),
-    ids: sections.map((s) => s.id)
+    ids: sections.map((s) => s.id),
+    notesAtPage: (() => {
+      if (layout.notesAt === 'chapter' || !sections.some((s) => s.html.includes('data-note='))) return null
+      const g = pageGeometry(layout)
+      const px = 96 / 25.4
+      return { colW: (g.w - g.inner - g.outer) * px, colH: (g.h - g.top - g.bottom) * px, gap: 2 * g.inner * px }
+    })()
   }
   const size = PAGE_SIZES[layout.pageSize]
   const win = new BrowserWindow({

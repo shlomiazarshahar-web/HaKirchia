@@ -2,7 +2,7 @@
 // the inspiration board (feature 37).
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent as RPointerEvent } from 'react'
-import { chaptersInStoryOrder, KIND_ICON, KIND_ONE, moveEvent, placeNew, type InspirationGroup, type InspirationImage, type TimelineEvent } from '@shared/background'
+import { chaptersInStoryOrder, GROUP_COLORS, groupAt, groupBoxes, groupDepth, groupTree, KIND_ICON, KIND_ONE, moveEvent, placeNew, ungroup, type Box, type GroupColor, type InspirationGroup, type InspirationImage, type TimelineEvent } from '@shared/background'
 import { api } from '../api'
 import { droppedImagePaths, useImageUrl } from '../background'
 import { useBg } from './bgctx'
@@ -216,10 +216,14 @@ type Filter = 'all' | 'general' | 'chapters' | 'character' | 'place' | 'research
 type View = { x: number; y: number; z: number }
 type Drag =
   | { kind: 'pan'; sx: number; sy: number; v: View }
-  | { kind: 'img'; id: string; sx: number; sy: number; x: number; y: number }
+  | { kind: 'img'; id: string; sx: number; sy: number; x: number; y: number; frozen: Map<string, Box> }
   | { kind: 'size'; id: string; sx: number; w: number }
-  | { kind: 'group'; id: string; sx: number; sy: number; g: InspirationGroup; inside: { id: string; x: number; y: number }[] }
+  | { kind: 'group'; id: string; sx: number; sy: number; tree: Set<string>; imgs: Map<string, { x: number; y: number }>; gs: Map<string, { x: number; y: number }>; frozen: Map<string, Box> }
   | { kind: 'gsize'; id: string; sx: number; sy: number; g: InspirationGroup }
+
+const COLOR_LABEL: Record<GroupColor, string> = { amber: 'חום-זהב', green: 'ירוק', blue: 'כחול', purple: 'סגול', red: 'אדום', gray: 'אפור' }
+/** How long a dragged image or group rests over a group before it joins it */
+const JOIN_MS = 450
 
 const VIEW_KEY = (path: string) => `hakirchia.canvas.${path}`
 const DEFAULT_W = 220
@@ -246,6 +250,10 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
   const root = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const [dragging, setDragging] = useState(false)
+  /** The group a dragged item is resting over (it joins after a moment) */
+  const [hoverG, setHoverG] = useState<string | null>(null)
+  const [palette, setPalette] = useState<string | null>(null)
+  const hoverTimer = useRef<{ target: string; timer: ReturnType<typeof setTimeout> } | null>(null)
   const state = useRef({ imgs, groups, view })
   state.current = { imgs, groups, view }
 
@@ -276,6 +284,18 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
   )
 
   const ratio = (file: string) => aspect[file] ?? 0.75
+  const sizeOf = (im: InspirationImage) => {
+    const w = im.w ?? DEFAULT_W
+    return { w, h: w * ratio(im.file) + (im.caption || im.chapterId || im.materialId ? 26 : 0) }
+  }
+  const boxes = groupBoxes(imgs, groups, sizeOf)
+  /** Saves, with each group's box as it is now (an emptied group stays where it was) */
+  const saveNow = (list: InspirationImage[], gs: InspirationGroup[]) => {
+    const b = groupBoxes(list, gs, sizeOf)
+    const next = gs.map((g) => ({ ...g, ...b.get(g.id) }))
+    setGroups(next)
+    return save(list, next)
+  }
   // images that have no place yet get one, in rows under the others
   useEffect(() => {
     if (!imgs.some((i) => i.x === undefined)) return
@@ -328,6 +348,9 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyI') {
         e.preventDefault()
         void addRef.current()
+      } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyG') {
+        e.preventDefault()
+        addGroupRef.current()
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selRef.current && !typing(e.target)) {
         e.preventDefault()
         removeRef.current(selRef.current)
@@ -366,7 +389,7 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
     const list = state.current.imgs.filter((i) => i.id !== id)
     setImgs(list)
     setSel(null)
-    void save(list, state.current.groups)
+    void saveNow(list, state.current.groups)
     if (im) bg.show('התמונה הוסרה מהלוח. הקובץ עבר לסל המחזור')
   }
   const removeRef = useRef(remove)
@@ -380,6 +403,43 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
     drag.current = d
     setDragging(true)
   }
+  /** Membership while dragging: out of the group's frame → out of the group; resting over another group → into it */
+  const regroup = (p: { x: number; y: number }, frozen: Map<string, Box>, cur: string | undefined, skip: Set<string>, setTo: (g: string | undefined) => void) => {
+    const gs = state.current.groups
+    const byId = new Map(gs.map((g) => [g.id, g]))
+    const inside = (id: string) => {
+      const b = frozen.get(id)
+      return !!b && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h
+    }
+    let now = cur
+    if (now && !inside(now)) {
+      // left its group: it belongs to the closest group around that still holds the pointer
+      let up = byId.get(now)?.parentId
+      while (up && !inside(up)) up = byId.get(up)?.parentId
+      now = up
+      setTo(now)
+    }
+    const target = groupAt(gs, frozen, p, skip)
+    const deeper = target && target !== now && (!now || groupDepth(gs, target) > groupDepth(gs, now) || !groupTree(gs, now).has(target))
+    if (!deeper) {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current.timer)
+      hoverTimer.current = null
+      setHoverG(null)
+      return
+    }
+    if (hoverTimer.current?.target === target) return
+    if (hoverTimer.current) clearTimeout(hoverTimer.current.timer)
+    setHoverG(target)
+    hoverTimer.current = {
+      target,
+      timer: setTimeout(() => {
+        hoverTimer.current = null
+        setHoverG(null)
+        setTo(target)
+      }, JOIN_MS)
+    }
+  }
+
   useEffect(() => {
     if (!dragging) return
     const move = (e: PointerEvent) => {
@@ -388,16 +448,22 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
       const z = state.current.view.z
       if (d.kind === 'pan') return setView({ ...d.v, x: d.v.x + e.clientX - d.sx, y: d.v.y + e.clientY - d.sy })
       const dx = (e.clientX - d.sx) / z
+      const dy = d.kind === 'size' ? 0 : (e.clientY - d.sy) / z
       if (d.kind === 'img') {
-        const dy = (e.clientY - d.sy) / z
-        return setImgs((l) => l.map((i) => (i.id === d.id ? { ...i, x: d.x + dx, y: d.y + dy } : i)))
+        setImgs((l) => l.map((i) => (i.id === d.id ? { ...i, x: d.x + dx, y: d.y + dy } : i)))
+        const cur = state.current.imgs.find((i) => i.id === d.id)?.groupId
+        return regroup(toCanvas(e.clientX, e.clientY), d.frozen, cur, new Set(), (g) =>
+          setImgs((l) => l.map((i) => (i.id === d.id ? (g ? { ...i, groupId: g } : { ...i, groupId: undefined }) : i)))
+        )
       }
       if (d.kind === 'size') return setImgs((l) => l.map((i) => (i.id === d.id ? { ...i, w: Math.max(50, d.w + dx) } : i)))
-      const dy = (e.clientY - d.sy) / z
       if (d.kind === 'group') {
-        setGroups((gs) => gs.map((g) => (g.id === d.id ? { ...g, x: d.g.x + dx, y: d.g.y + dy } : g)))
-        const at = new Map(d.inside.map((p) => [p.id, p]))
-        return setImgs((l) => l.map((i) => (at.has(i.id) ? { ...i, x: at.get(i.id)!.x + dx, y: at.get(i.id)!.y + dy } : i)))
+        setGroups((gs) => gs.map((g) => (d.gs.has(g.id) ? { ...g, x: d.gs.get(g.id)!.x + dx, y: d.gs.get(g.id)!.y + dy } : g)))
+        setImgs((l) => l.map((i) => (d.imgs.has(i.id) ? { ...i, x: d.imgs.get(i.id)!.x + dx, y: d.imgs.get(i.id)!.y + dy } : i)))
+        const cur = state.current.groups.find((g) => g.id === d.id)?.parentId
+        return regroup(toCanvas(e.clientX, e.clientY), d.frozen, cur, d.tree, (p) =>
+          setGroups((gs) => gs.map((g) => (g.id === d.id ? (p ? { ...g, parentId: p } : { ...g, parentId: undefined }) : g)))
+        )
       }
       setGroups((gs) => gs.map((g) => (g.id === d.id ? { ...g, w: Math.max(120, d.g.w + dx), h: Math.max(80, d.g.h + dy) } : g)))
     }
@@ -405,7 +471,11 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
       const d = drag.current
       drag.current = null
       setDragging(false)
-      if (d && d.kind !== 'pan') void save(state.current.imgs, state.current.groups)
+      if (hoverTimer.current) clearTimeout(hoverTimer.current.timer)
+      hoverTimer.current = null
+      setHoverG(null)
+      // let the last membership change land before saving
+      if (d && d.kind !== 'pan') setTimeout(() => void saveNow(state.current.imgs, state.current.groups), 0)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -413,6 +483,7 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragging, save])
 
   const wheel = (e: React.WheelEvent) => {
@@ -447,23 +518,46 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
     setView({ z, x: (r.width - (x1 - x0) * z) / 2 - x0 * z, y: (r.height - (y1 - y0) * z) / 2 - y0 * z })
   }
 
+  /** A new group: around the selected image, or empty in the middle of the screen (Ctrl+G) */
   const addGroup = () => {
-    const c = centre()
-    const g: InspirationGroup = { id: crypto.randomUUID(), title: 'קבוצה חדשה', x: c.x - 220, y: c.y - 160, w: 440, h: 320 }
-    const gs = [...groups, g]
-    setGroups(gs)
-    void save(imgs, gs)
+    const { imgs: list, groups: gs0 } = state.current
+    const im = list.find((i) => i.id === selRef.current && i.x !== undefined)
+    const c = centreRef.current()
+    const id = crypto.randomUUID()
+    const g: InspirationGroup = im
+      ? { id, title: 'קבוצה חדשה', x: im.x!, y: im.y!, w: 200, h: 160, ...(im.groupId ? { parentId: im.groupId } : {}) }
+      : { id, title: 'קבוצה חדשה', x: c.x - 220 + 30 * (gs0.length % 6), y: c.y - 160 + 30 * (gs0.length % 6), w: 440, h: 320 }
+    const nextImgs = im ? list.map((i) => (i.id === im.id ? { ...i, groupId: id } : i)) : list
+    setImgs(nextImgs)
+    void saveNow(nextImgs, [...gs0, g])
+    setFreshGroup(id)
   }
-  const inGroup = (g: InspirationGroup) =>
-    imgs
-      .filter((i) => {
-        if (i.x === undefined) return false
-        const w = i.w ?? DEFAULT_W
-        const cx = i.x + w / 2
-        const cy = i.y! + (w * ratio(i.file)) / 2
-        return cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h
-      })
-      .map((i) => ({ id: i.id, x: i.x!, y: i.y! }))
+  const addGroupRef = useRef(addGroup)
+  addGroupRef.current = addGroup
+  const [freshGroup, setFreshGroup] = useState<string | null>(null)
+  const removeGroup = (id: string) => {
+    const r = ungroup(imgs, groups, id)
+    setImgs(r.images)
+    void saveNow(r.images, r.groups)
+  }
+  const setColor = (id: string, color: GroupColor) => {
+    setPalette(null)
+    void saveNow(imgs, groups.map((x) => (x.id === id ? { ...x, color } : x)))
+  }
+  const startGroupDrag = (e: RPointerEvent, g: InspirationGroup) => {
+    const tree = groupTree(groups, g.id)
+    begin(e, {
+      kind: 'group',
+      id: g.id,
+      sx: e.clientX,
+      sy: e.clientY,
+      tree,
+      imgs: new Map(imgs.filter((i) => i.groupId && tree.has(i.groupId) && i.x !== undefined).map((i) => [i.id, { x: i.x!, y: i.y! }])),
+      gs: new Map(groups.filter((x) => tree.has(x.id)).map((x) => [x.id, { x: boxes.get(x.id)?.x ?? x.x, y: boxes.get(x.id)?.y ?? x.y }])),
+      frozen: groupBoxes(imgs, groups, sizeOf, { group: g.id })
+    })
+  }
+  const memberCount = (id: string) => imgs.filter((i) => i.groupId === id).length + groups.filter((x) => x.parentId === id).length
 
   const filters: [Filter, string][] = [
     ['all', 'הכול'],
@@ -488,8 +582,8 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
           )}
         </div>
         <span className="grow" />
-        <button className="ib" title="קבוצה: מסגרת עם שם. תמונות שבתוכה זזות איתה" onClick={addGroup}>
-          <Icon name="part-plus" /> קבוצה
+        <button className="ib" title="קבוצה חדשה (Ctrl+G). אם תמונה בחורה, הקבוצה נפתחת סביבה. גוררים תמונה ומשהים מעל קבוצה כדי להכניס אותה" onClick={addGroup}>
+          <Icon name="part-plus" /> קבוצה <kbd>Ctrl+G</kbd>
         </button>
         <button className="btn" title="הוספת תמונות (Ctrl+I). אפשר גם להדביק תמונה (Ctrl+V) או לגרור מהמחשב" onClick={() => void add()}>
           <Icon name="plus" size={16} /> תמונות <kbd>Ctrl+I</kbd>
@@ -518,37 +612,42 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
         }}
       >
         <div className="plane" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
-          {groups.map((g) => (
-            <div key={g.id} className="cgroup" style={{ left: g.x, top: g.y, width: g.w, height: g.h }}>
-              <div className="cg-head" title="גרירה מזיזה את הקבוצה עם התמונות שבתוכה" onPointerDown={(e) => begin(e, { kind: 'group', id: g.id, sx: e.clientX, sy: e.clientY, g, inside: inGroup(g) })}>
-                <span onPointerDown={(e) => e.stopPropagation()}>
-                  <TextInput
-                    value={g.title}
-                    aria-label="שם הקבוצה"
-                    onDone={(title) => {
-                      const gs = groups.map((x) => (x.id === g.id ? { ...x, title } : x))
-                      setGroups(gs)
-                      void save(imgs, gs)
-                    }}
-                  />
-                </span>
-                <button
-                  className="ib icon"
-                  title="הסרת הקבוצה (התמונות נשארות)"
-                  aria-label="הסרת הקבוצה"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => {
-                    const gs = groups.filter((x) => x.id !== g.id)
-                    setGroups(gs)
-                    void save(imgs, gs)
-                  }}
-                >
-                  <Icon name="close" />
-                </button>
-              </div>
-              <span className="cg-size" title="שינוי גודל" onPointerDown={(e) => begin(e, { kind: 'gsize', id: g.id, sx: e.clientX, sy: e.clientY, g })} />
-            </div>
-          ))}
+          {[...groups]
+            .sort((a, b) => groupDepth(groups, a.id) - groupDepth(groups, b.id))
+            .map((g) => {
+              const b = boxes.get(g.id) ?? g
+              const empty = memberCount(g.id) === 0
+              return (
+                <div key={g.id} className={`cgroup${hoverG === g.id ? ' joining' : ''}`} data-color={g.color ?? 'amber'} style={{ left: b.x, top: b.y, width: b.w, height: b.h }}>
+                  <div className="cg-head" title="גרירה מזיזה את הקבוצה עם מה שבתוכה. השהיה מעל קבוצה אחרת מכניסה לתוכה" onPointerDown={(e) => startGroupDrag(e, g)}>
+                    <span onPointerDown={(e) => e.stopPropagation()}>
+                      <TextInput
+                        value={g.title}
+                        aria-label="שם הקבוצה"
+                        autoFocus={freshGroup === g.id}
+                        onDone={(title) => {
+                          setFreshGroup(null)
+                          void saveNow(imgs, groups.map((x) => (x.id === g.id ? { ...x, title } : x)))
+                        }}
+                      />
+                    </span>
+                    <span className="grow" />
+                    <button className="cg-dot" title="צבע הקבוצה" aria-label="צבע הקבוצה" aria-expanded={palette === g.id} onPointerDown={(e) => e.stopPropagation()} onClick={() => setPalette(palette === g.id ? null : g.id)} />
+                    <button className="ib icon" title="הסרת הקבוצה (מה שבתוכה נשאר)" aria-label="הסרת הקבוצה" onPointerDown={(e) => e.stopPropagation()} onClick={() => removeGroup(g.id)}>
+                      <Icon name="close" />
+                    </button>
+                    {palette === g.id && (
+                      <div className="cg-palette" role="menu" onPointerDown={(e) => e.stopPropagation()}>
+                        {GROUP_COLORS.map((c) => (
+                          <button key={c} role="menuitemradio" aria-checked={(g.color ?? 'amber') === c} data-color={c} title={COLOR_LABEL[c]} aria-label={COLOR_LABEL[c]} onClick={() => setColor(g.id, c)} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {empty && <span className="cg-size" title="שינוי גודל" onPointerDown={(e) => begin(e, { kind: 'gsize', id: g.id, sx: e.clientX, sy: e.clientY, g })} />}
+                </div>
+              )
+            })}
           {imgs.map((im) =>
             im.x === undefined ? null : (
               <CanvasImage
@@ -568,7 +667,7 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
                   setSel(im.id)
                   // the one picked comes to the front
                   setImgs((l) => (l[l.length - 1]?.id === im.id ? l : [...l.filter((x) => x.id !== im.id), im]))
-                  begin(e, { kind: 'img', id: im.id, sx: e.clientX, sy: e.clientY, x: im.x!, y: im.y! })
+                  begin(e, { kind: 'img', id: im.id, sx: e.clientX, sy: e.clientY, x: im.x!, y: im.y!, frozen: groupBoxes(imgs, groups, sizeOf, { image: im.id }) })
                 }}
                 onSize={(e) => begin(e, { kind: 'size', id: im.id, sx: e.clientX, w: im.w ?? DEFAULT_W })}
                 onOpen={() => setOpen(im)}

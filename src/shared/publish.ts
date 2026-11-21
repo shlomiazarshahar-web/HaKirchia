@@ -73,13 +73,56 @@ export interface BookLayout {
   runningHeads: boolean
   /** Show the front and back pages */
   matter: boolean
-  /** Footnotes at the end of each chapter (in Word and ePub they stay real footnotes) */
-  notesAtEnd: boolean
-  /** Chapter titles: font ('' = the body font), size in points, bold, and where on the line */
-  titleFont: string
-  titleSize: number
-  titleBold: boolean
-  titleAlign: 'center' | 'start'
+  /** Footnotes at the bottom of the page their mark is on, or at the end of each chapter (in Word and ePub they stay real footnotes) */
+  notesAt: 'page' | 'chapter'
+  /** How each element looks (font, size, placement); what is missing follows the body text */
+  styles: Partial<Record<ElementKey, Partial<ElementStyle>>>
+}
+
+/** The parts of the book that have a look of their own */
+export type ElementKey = 'chapterTitle' | 'partTitle' | 'bookTitle' | 'subtitle' | 'author' | 'matterTitle' | 'matterText' | 'toc' | 'notes' | 'heads'
+export type ElementAlign = 'start' | 'center' | 'end' | 'auto'
+
+export interface ElementStyle {
+  /** '' = the body font */
+  font: string
+  /** In points; 0 = in proportion to the body text */
+  size: number
+  align: ElementAlign
+  bold: boolean
+}
+
+export interface ElementInfo {
+  label: string
+  /** Size in proportion to the body text, when no size was chosen */
+  ratio: number
+  align: ElementAlign
+  bold: boolean
+  /** The placements that make sense for it (none: it has no placement setting) */
+  aligns: ElementAlign[]
+}
+
+export const ELEMENTS: Record<ElementKey, ElementInfo> = {
+  chapterTitle: { label: 'כותרות הפרקים', ratio: 1.9, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  partTitle: { label: 'כותרות החלקים', ratio: 2.2, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  bookTitle: { label: 'שם הספר בשער', ratio: 2.6, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  subtitle: { label: 'כותרת המשנה בשער', ratio: 1.3, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  author: { label: 'שם הכותב בשער', ratio: 1.3, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  matterTitle: { label: 'כותרות עמודי הפתיחה והסיום', ratio: 1.6, align: 'center', bold: false, aligns: ['start', 'center', 'end'] },
+  matterText: { label: 'טקסט עמודי הפתיחה והסיום', ratio: 1, align: 'auto', bold: false, aligns: ['auto', 'start', 'center', 'end'] },
+  toc: { label: 'תוכן העניינים', ratio: 1, align: 'start', bold: false, aligns: [] },
+  notes: { label: 'הערות שוליים', ratio: 0.8, align: 'start', bold: false, aligns: [] },
+  heads: { label: 'מספרי עמודים וכותרות רצות', ratio: 0.75, align: 'center', bold: false, aligns: [] }
+}
+export const ELEMENT_KEYS = Object.keys(ELEMENTS) as ElementKey[]
+export const ALIGN_LABEL: Record<ElementAlign, string> = { auto: 'לפי העמוד', start: 'בצד ימין', center: 'במרכז', end: 'בצד שמאל' }
+
+/** An element's look, with what was not chosen filled in */
+export function elStyle(layout: Pick<BookLayout, 'fontSize' | 'styles'>, key: ElementKey): ElementStyle & { auto: boolean } {
+  const info = ELEMENTS[key]
+  const s = layout.styles?.[key] ?? {}
+  const size = s.size && s.size > 0 ? s.size : Math.round(info.ratio * layout.fontSize * 2) / 2
+  return { font: s.font ?? '', size, align: s.align && (info.aligns.includes(s.align) || !info.aligns.length) ? s.align : info.align, bold: s.bold ?? info.bold, auto: !(s.size && s.size > 0) }
 }
 
 export const DEFAULT_LAYOUT: BookLayout = {
@@ -94,17 +137,19 @@ export const DEFAULT_LAYOUT: BookLayout = {
   pageNumbers: true,
   runningHeads: true,
   matter: true,
-  notesAtEnd: true,
-  titleFont: '',
-  titleSize: 22,
-  titleBold: false,
-  titleAlign: 'center'
+  notesAt: 'page',
+  styles: {}
 }
 
 export interface BookInfo {
   author: string
   subtitle: string
+  /** The name printed on the title page and at the top of pages, when it differs from the book's (folder) name */
+  coverTitle?: string
 }
+
+/** The book's name as printed: the title page's own name, or the book's name */
+export const printedTitle = (bookTitle: string, info: BookInfo): string => info.coverTitle?.trim() || bookTitle
 
 /** Everything under `publish` in book.hakirchia.json */
 export interface PublishSettings {
@@ -120,10 +165,20 @@ export function normalizePublish(p: Partial<PublishSettings> | undefined): Publi
   const layout = { ...DEFAULT_LAYOUT, ...(p?.layout ?? {}) }
   if (!(layout.pageSize in PAGE_SIZES)) layout.pageSize = DEFAULT_LAYOUT.pageSize
   layout.fontSize = clamp(Number(layout.fontSize) || DEFAULT_LAYOUT.fontSize, 8, 20)
-  layout.titleSize = clamp(Number(layout.titleSize) || DEFAULT_LAYOUT.titleSize, 12, 40)
-  layout.titleFont = typeof layout.titleFont === 'string' ? layout.titleFont : ''
-  layout.titleAlign = layout.titleAlign === 'start' ? 'start' : 'center'
-  layout.titleBold = !!layout.titleBold
+  layout.notesAt = layout.notesAt === 'chapter' ? 'chapter' : 'page'
+  delete (layout as Partial<BookLayout> & { notesAtEnd?: boolean }).notesAtEnd
+  const styles: BookLayout['styles'] = {}
+  for (const k of ELEMENT_KEYS) {
+    const v = (layout.styles as Record<string, Partial<ElementStyle>> | undefined)?.[k]
+    if (!v || typeof v !== 'object') continue
+    const o: Partial<ElementStyle> = {}
+    if (typeof v.font === 'string' && v.font) o.font = v.font
+    if (Number(v.size) > 0) o.size = clamp(Number(v.size), 6, 72)
+    if (v.align && ['start', 'center', 'end', 'auto'].includes(v.align)) o.align = v.align
+    if (typeof v.bold === 'boolean') o.bold = v.bold
+    if (Object.keys(o).length) styles[k] = o
+  }
+  layout.styles = styles
   layout.lineHeight = clamp(Number(layout.lineHeight) || DEFAULT_LAYOUT.lineHeight, 1, 2.5)
   const matter = Array.isArray(p?.matter)
     ? p!.matter.filter((m) => m && typeof m.id === 'string' && m.kind in MATTER_KINDS).map((m) => ({ ...m, where: m.where === 'back' ? ('back' as const) : ('front' as const), heading: m.heading ?? '', text: m.text ?? '' }))

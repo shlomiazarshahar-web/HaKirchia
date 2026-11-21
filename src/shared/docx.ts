@@ -278,14 +278,17 @@ export interface DocxBookOptions {
   margin: { top: number; bottom: number; side: number }
   font: string
   fontSize: number
-  /** How chapter titles look (the layout's title settings) */
-  chapterTitle?: { font: string; sizePt: number; bold: boolean; center: boolean }
+  /** How titles look (the layout's element styles) */
+  styles?: Partial<Record<'chapterTitle' | 'partTitle' | 'bookTitle' | 'matterTitle', { font: string; size: number; bold: boolean; align: string }>>
 }
 
-function chapterTitleStyle(t: NonNullable<DocxBookOptions['chapterTitle']>): string {
+/** A style that changes another one's font, size, weight and placement */
+function overrideStyle(id: string, name: string, basedOn: string, t: { font: string; size: number; bold: boolean; align: string }, outline?: number): string {
   const f = t.font ? esc(t.font) : ''
-  const sz = Math.round(t.sizePt * 2)
-  return `<w:style w:type="paragraph" w:styleId="ChapterTitle"><w:name w:val="Chapter Title"/><w:basedOn w:val="Heading1"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:qFormat/><w:pPr><w:keepNext/>${t.center ? '<w:jc w:val="center"/>' : ''}<w:outlineLvl w:val="0"/></w:pPr><w:rPr>${f ? `<w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}"/>` : ''}${t.bold ? '<w:b/><w:bCs/>' : ''}<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`
+  const sz = Math.round(t.size * 2)
+  // in a right-to-left paragraph Word's "start" is the right side
+  const jc = t.align === 'center' ? 'center' : t.align === 'end' ? 'end' : t.align === 'start' ? 'start' : ''
+  return `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="${basedOn}"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:qFormat/><w:pPr><w:keepNext/>${jc ? `<w:jc w:val="${jc}"/>` : ''}${outline !== undefined ? `<w:outlineLvl w:val="${outline}"/>` : ''}</w:pPr><w:rPr>${f ? `<w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}"/>` : ''}${t.bold ? '<w:b/><w:bCs/>' : ''}<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`
 }
 
 const BOOK_STYLES =
@@ -311,11 +314,11 @@ const spacer = (pageBreak: boolean, after: number) =>
 
 const mmToTwips = (mm: number) => Math.round(mm * 56.6929)
 
-function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 'Heading1'): string {
+function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 'Heading1', styleFor: (base: string) => string = (b) => b): string {
   const pageBreak = !first
   switch (item.kind) {
     case 'title': {
-      const out = [spacer(pageBreak, 2800), textPara(item.title, 'BookTitle')]
+      const out = [spacer(pageBreak, 2800), textPara(item.title, styleFor('BookTitle'))]
       if (item.subtitle) out.push(textPara(item.subtitle, 'MatterText', { center: true }))
       if (item.author) out.push(textPara(item.author, 'MatterText', { center: true, before: 1800 }))
       item.extra.forEach((l, i) => out.push(textPara(l, 'MatterText', { center: true, before: i === 0 ? 1800 : 0 })))
@@ -323,14 +326,14 @@ function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 
     }
     case 'matter': {
       const out: string[] = []
-      if (item.heading) out.push(textPara(item.heading, 'MatterHeading', { pageBreak }))
+      if (item.heading) out.push(textPara(item.heading, styleFor('MatterHeading'), { pageBreak }))
       else out.push(spacer(pageBreak, item.centered ? 3000 : 0))
       item.lines.forEach((l) => out.push(textPara(l, 'MatterText', { center: item.centered })))
       return out.join('')
     }
     case 'toc': {
       // A real Word table of contents (a field); Word offers to update it, with page numbers, when the file opens
-      const head = textPara(item.heading, 'MatterHeading', { pageBreak })
+      const head = textPara(item.heading, styleFor('MatterHeading'), { pageBreak })
       const begin = '<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-1" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
       const end = '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
       const lines = item.entries.length ? item.entries : ['']
@@ -341,7 +344,7 @@ function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 
       return head + paras.join('')
     }
     case 'part':
-      return textPara(item.title, 'PartTitle', { pageBreak })
+      return textPara(item.title, styleFor('PartTitle'), { pageBreak })
     case 'chapter':
       return bodyXml(item.doc, item.title, notes, pageBreak, titleStyle)
   }
@@ -350,8 +353,16 @@ function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 
 export async function bookToDocx(items: DocxBookItem[], title: string, opts: DocxBookOptions): Promise<Uint8Array> {
   const zip = new JSZip()
   const notes: Notes = []
-  const titleStyle = opts.chapterTitle ? 'ChapterTitle' : 'Heading1'
-  const body = items.map((it, i) => itemXml(it, i === 0, notes, titleStyle)).join('')
+  const st = opts.styles ?? {}
+  const titleStyle = st.chapterTitle ? 'ChapterTitle' : 'Heading1'
+  const ids: Record<string, string> = { partTitle: 'PartTitleX', bookTitle: 'BookTitleX', matterTitle: 'MatterHeadingX' }
+  const extra =
+    (st.chapterTitle ? overrideStyle('ChapterTitle', 'Chapter Title', 'Heading1', st.chapterTitle, 0) : '') +
+    (st.partTitle ? overrideStyle(ids.partTitle, 'Part Title (book)', 'PartTitle', st.partTitle, 0) : '') +
+    (st.bookTitle ? overrideStyle(ids.bookTitle, 'Book Title (book)', 'BookTitle', st.bookTitle) : '') +
+    (st.matterTitle ? overrideStyle(ids.matterTitle, 'Matter Heading (book)', 'MatterHeading', st.matterTitle) : '')
+  const styleFor = (base: string) => (base === 'PartTitle' && st.partTitle ? ids.partTitle : base === 'BookTitle' && st.bookTitle ? ids.bookTitle : base === 'MatterHeading' && st.matterTitle ? ids.matterTitle : base)
+  const body = items.map((it, i) => itemXml(it, i === 0, notes, titleStyle, styleFor)).join('')
   const hasNotes = notes.length > 0
   const side = mmToTwips(opts.margin.side)
   const sect = `<w:sectPr><w:pgSz w:w="${mmToTwips(opts.pageW)}" w:h="${mmToTwips(opts.pageH)}"/><w:pgMar w:top="${mmToTwips(opts.margin.top)}" w:right="${side}" w:bottom="${mmToTwips(opts.margin.bottom)}" w:left="${side}" w:header="567" w:footer="567" w:gutter="0"/><w:bidi/></w:sectPr>`
@@ -362,7 +373,7 @@ export async function bookToDocx(items: DocxBookItem[], title: string, opts: Doc
   zip.file('_rels/.rels', ROOT_RELS)
   zip.file('word/document.xml', documentXml)
   zip.file('word/_rels/document.xml.rels', hasNotes ? DOC_RELS.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`) : DOC_RELS)
-  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES + (opts.chapterTitle ? chapterTitleStyle(opts.chapterTitle) : '')))
+  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES + extra))
   // updateFields: Word asks to update the table of contents (page numbers) when the file opens
   zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', (hasToc ? '<w:updateFields w:val="true"/>' : '') + (hasNotes ? FOOTNOTE_PR : '')))
   if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))

@@ -71,7 +71,7 @@ const api = {
   exportBook: (bookPath: string, title: string, format: 'pdf' | 'docx' | 'epub'): Promise<OpResult<string | null>> => ipcRenderer.invoke('export:run', bookPath, title, format),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
   /** The print window (PDF export): its job, printing it, and handing back the final file */
-  printJob: (): Promise<{ html: string; css: string; oddPages: boolean; hasToc: boolean; partPage: boolean; kinds: string[]; ids: string[] } | null> => ipcRenderer.invoke('print:job'),
+  printJob: (): Promise<{ html: string; css: string; oddPages: boolean; hasToc: boolean; partPage: boolean; kinds: string[]; ids: string[]; notesAtPage: { colW: number; colH: number; gap: number } | null } | null> => ipcRenderer.invoke('print:job'),
   printRender: (): Promise<Uint8Array> => ipcRenderer.invoke('print:render'),
   printFinish: (bytes: Uint8Array | null, error?: string): Promise<void> => ipcRenderer.invoke('print:finish', bytes, error),
   /** Saves the book's "come back here" bookmarks (the whole list) */
@@ -116,7 +116,8 @@ const api = {
   createBook: (parentDir: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:create', parentDir, title),
   openBook: (folder: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:open', folder),
   /** Renames the book and its folder. The book comes back at its new path. */
-  renameBook: (bookPath: string, title: string): Promise<OpResult<{ book: Book; notice?: string }>> => ipcRenderer.invoke('book:rename', bookPath, title),
+  renameBook: (bookPath: string, title: string, fromLibrary?: boolean): Promise<OpResult<{ book: Book; notice?: string }>> => ipcRenderer.invoke('book:rename', bookPath, title, fromLibrary),
+  archiveBook: (path: string, archived: boolean): Promise<void> => ipcRenderer.invoke('library:archive', path, archived),
   addChapter: (bookPath: string, title: string, partId?: string): Promise<OpResult<{ book: Book; chapterId: string }>> =>
     ipcRenderer.invoke('chapter:add', bookPath, title, partId),
   renameChapter: (bookPath: string, id: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:rename', bookPath, id, title),

@@ -30,9 +30,9 @@ import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 import { addNote, loadDrawer, loadNotes, moveSelectionToDrawer } from './drafts'
 import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Drafts'
-import { ReadingView, TitleStyleFields } from './components/ReadingView'
+import { ReadingView, ElementStyleFields } from './components/ReadingView'
 import { MatterDialog } from './components/MatterDialog'
-import type { PublishSettings } from '@shared/publish'
+import { elStyle, type PublishSettings } from '@shared/publish'
 import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
@@ -57,11 +57,11 @@ const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6]
 /** The book's chapter-title look, for the title above the text in the editor */
 function titleVars(book: Book | null): CSSProperties | undefined {
   if (!book) return undefined
-  const l = book.publish.layout
+  const t = elStyle(book.publish.layout, 'chapterTitle')
   return {
-    ...(l.titleFont ? { '--title-font': `'${l.titleFont.replace(/'/g, '')}', var(--editor-font)` } : {}),
-    '--title-weight': l.titleBold ? 700 : 500,
-    '--title-align': l.titleAlign
+    ...(t.font ? { '--title-font': `'${t.font.replace(/'/g, '')}', var(--editor-font)` } : {}),
+    '--title-weight': t.bold ? 700 : 500,
+    '--title-align': t.align === 'auto' ? 'center' : t.align
   } as CSSProperties
 }
 
@@ -738,9 +738,11 @@ export default function App() {
   }, [book?.chapters, book?.alts, book?.materials])
 
   // The glossary and the names of characters and places are marked in the chapter editors (feature 20)
+  // Correct spellings get a purple line only for the background page open beside the chapter (or all terms while the glossary is open)
+  const openBg = (split?.panes ?? []).flatMap((p) => (p.content.kind === 'material' ? [p.content.id] : p.content.kind === 'glossary' ? ['glossary'] : [])).join('|')
   useEffect(() => {
-    if (book) setGlossaryTerms(book)
-  }, [book])
+    if (book) setGlossaryTerms(book, openBg ? openBg.split('|') : [])
+  }, [book, openBg])
 
   // ---------------------------------------------------------------------------
   // Background materials (round 7)
@@ -1199,7 +1201,25 @@ export default function App() {
 
       <BgContext.Provider value={bgActions}>
       <div className="body">
-        {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
+        {!book && (
+          <Home
+            books={books}
+            onOpen={openBook}
+            onNew={() => setDialog({ kind: 'newBook' })}
+            onOpenFolder={openFolder}
+            onForget={(p) => api.forgetBook(p).then(refreshLibrary)}
+            onRename={(p, t) =>
+              void api.renameBook(p, t, true).then((r) => {
+                if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי לשנות את השם', true)
+                const np = r.value.book.path
+                if (np !== p) for (const rec of [savedLayouts.current, savedTr.current, lastChapter.current]) if (p in rec) (rec as Record<string, unknown>)[np] = (rec as Record<string, unknown>)[p]
+                show(r.value.notice ?? `שם הספר שונה ל"${r.value.book.title}"`, !!r.value.notice)
+                refreshLibrary()
+              })
+            }
+            onArchive={(p, a) => void api.archiveBook(p, a).then(() => (refreshLibrary(), show(a ? 'הספר הועבר לארכיון שבתחתית הספרייה' : 'הספר חזר למדף')))}
+          />
+        )}
         {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
         {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
         {inBoard && planMode === 'cards' && (
@@ -1492,8 +1512,8 @@ export default function App() {
         <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && setDialog(null)}>
           <div className="dialog title-style" role="dialog" aria-label="כותרות הפרקים" onKeyDown={(e) => e.key === 'Escape' && setDialog(null)}>
             <h2>כותרות הפרקים</h2>
-            <p>חל על כל הפרקים: בעורך, במצב קריאה ובכל ייצוא. אפשר לשנות גם בדף "עימוד" שבמצב קריאה.</p>
-            <TitleStyleFields layout={book.publish.layout} onChange={(patch) => void savePublish({ ...book.publish, layout: { ...book.publish.layout, ...patch } })} />
+            <p>חל על כל הפרקים: בעורך, במצב קריאה ובכל ייצוא. את שאר חלקי הספר מעצבים בדף "עימוד" שבמצב קריאה.</p>
+            <ElementStyleFields el="chapterTitle" layout={book.publish.layout} onChange={(patch) => void savePublish({ ...book.publish, layout: { ...book.publish.layout, ...patch } })} />
             <div className="actions">
               <button className="btn" onClick={() => setDialog(null)}>
                 סגירה
