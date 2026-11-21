@@ -138,6 +138,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (t: string) 
     else if (t !== title) onRename(t)
   }
   return (
+    <div className="ch-title-wrap">
     <input
       className="ch-title"
       value={value}
@@ -154,6 +155,10 @@ function TitleInput({ title, onRename }: { title: string; onRename: (t: string) 
         }
       }}
     />
+      <button className="ib icon title-btn" title="גופן, גודל ומיקום של כותרות הפרקים" aria-label="עיצוב כותרות הפרקים" onClick={() => window.dispatchEvent(new CustomEvent('hakirchia:title-style'))}>
+        <Icon name="gear" />
+      </button>
+    </div>
   )
 }
 

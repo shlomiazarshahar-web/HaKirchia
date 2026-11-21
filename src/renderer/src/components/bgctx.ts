@@ -21,6 +21,8 @@ export interface BgActions {
   findReplace: (query: string, replace: string) => void
   /** The page just created: its name field takes the focus */
   freshMaterial: string | null
+  /** The glossary entry just added from the right-click menu: its empty field takes the focus */
+  freshTerm: string | null
 }
 
 export const BgContext = createContext<BgActions | null>(null)

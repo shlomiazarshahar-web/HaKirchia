@@ -13,7 +13,7 @@ import type { PublishSettings } from '../shared/publish'
 import { promises as fsp } from 'fs'
 import type { TypographySettings } from '../shared/hebrew'
 import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../shared/translation'
-import type { GlossaryEntry, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
+import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 import { IMAGE_EXTS } from './background'
 
 let win: BrowserWindow | null = null
@@ -201,7 +201,10 @@ function registerIpc(): void {
       return project.addImages(b, files, link)
     })
   )
-  ipcMain.handle('images:set', (_e, b: string, list: InspirationImage[]) => wrap(() => project.setImages(b, list)))
+  ipcMain.handle('images:set', (_e, b: string, list: InspirationImage[], groups?: InspirationGroup[]) => wrap(() => project.setImages(b, list, groups)))
+  ipcMain.handle('images:addData', (_e, b: string, bytes: Uint8Array, ext: string, link: { chapterId?: string; materialId?: string }, at?: { x: number; y: number }) =>
+    wrap(() => project.addImageData(b, bytes, ext, link, at))
+  )
   ipcMain.handle('images:read', (_e, b: string, file: string) => wrap(() => project.readImage(b, file)))
   ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
@@ -323,6 +326,28 @@ function registerIpc(): void {
         throw new Error('בתיקייה הזו אין ספר של הכריכייה. יש לבחור את התיקייה הראשית של הספר (זו שיש בה את התיקייה "פרקים").')
       }
       return opened(await project.openBook(folder))
+    })
+  )
+  ipcMain.handle('book:rename', (_e, bookPath: string, title: string) =>
+    wrap(async () => {
+      const { book, notice } = await project.renameBook(bookPath, title)
+      if (book.path !== bookPath) {
+        // everything the app remembers about the book moves to its new folder
+        const s = getSettings()
+        const move = <T,>(rec: Record<string, T> | undefined) => {
+          if (!rec || !(bookPath in rec)) return rec
+          const { [bookPath]: v, ...rest } = rec
+          return { ...rest, [book.path]: v }
+        }
+        updateSettings({
+          recent: s.recent.filter((r) => r.path !== bookPath),
+          lastChapter: move(s.lastChapter) ?? {},
+          splitLayout: move(s.splitLayout),
+          translateLayout: move(s.translateLayout)
+        })
+      }
+      opened(book)
+      return { book, notice }
     })
   )
   ipcMain.handle('chapter:add', async (_e, bookPath: string, title: string, partId?: string) => {

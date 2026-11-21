@@ -6,7 +6,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import type { Node as PMDoc } from '@tiptap/pm/model'
 import type { Book } from '@shared/types'
-import { buildTermIndex, checkTerms, findFlags, type ChapterText, type Occurrence, type TermIndex } from '@shared/background'
+import { buildTermIndex, checkTerms, findFlags, KIND_ONE, matchAll, namesOf, type ChapterText, type Occurrence, type TermIndex } from '@shared/background'
 import { api } from './api'
 import { docFromJSON, editorsFor, poke, textBlocks, type Block, type JumpTarget } from './nav'
 
@@ -101,11 +101,40 @@ const marksListeners = new Set<() => void>()
 const glKey = new PluginKey('glossaryFlags')
 
 /** The open book's glossary and names changed: the marks follow */
+/** A term or name to show in the text: its right spellings, and what hovering it says */
+interface Shown {
+  ref: string
+  cls: 'gl-term' | 'gl-name'
+  names: string[]
+  tip: string
+}
+let shown: Shown[] = []
+/** Ctrl+click on a marked term: opens its glossary entry or background page */
+let onTermClick: ((ref: string) => void) | null = null
+export function setTermClick(fn: ((ref: string) => void) | null): void {
+  onTermClick = fn
+}
+
+/** The open book's glossary and names changed: the marks follow */
 export function setGlossaryTerms(book: Book): void {
   const terms = checkTerms(book.glossary, book.materials)
-  const sig = JSON.stringify(terms)
+  const next: Shown[] = [
+    ...book.glossary
+      .filter((g) => g.term.trim())
+      .map((g) => ({
+        ref: `g:${g.id}`,
+        cls: 'gl-term' as const,
+        names: [g.term, ...g.accepted],
+        tip: `מילון המונחים: ${g.term}${g.original ? ` ← ${g.original}` : ''}${g.note ? ` · ${g.note}` : ''} (Ctrl+לחיצה פותחת)`
+      })),
+    ...book.materials
+      .filter((m) => m.kind !== 'research')
+      .map((m) => ({ ref: `m:${m.id}`, cls: 'gl-name' as const, names: namesOf(m), tip: `${KIND_ONE[m.kind]}: ${m.name}${m.original ? ` ← ${m.original}` : ''} (Ctrl+לחיצה פותחת את הדף)` }))
+  ]
+  const sig = JSON.stringify([terms, next])
   if (index.bookPath === book.path && (index as { sig?: string }).sig === sig) return
   index = Object.assign({ bookPath: book.path, idx: buildTermIndex(terms) }, { sig })
+  shown = next
   poke(glKey, book.path)
 }
 
@@ -132,10 +161,20 @@ export function useGlossaryMarks(): [boolean, (on: boolean) => void] {
 }
 
 function flagDecorations(doc: PMDoc, bookPath: string): DecorationSet {
-  if (!marksOn || index.bookPath !== bookPath || !index.idx.terms.length) return DecorationSet.empty
+  if (!marksOn || index.bookPath !== bookPath || (!index.idx.terms.length && !shown.length)) return DecorationSet.empty
   const decos: Decoration[] = []
   for (const b of textBlocks(doc)) {
-    for (const f of findFlags(b.text, index.idx)) {
+    const flags = findFlags(b.text, index.idx)
+    // the terms and names as they should be written: a light line, and what they are on hover
+    const taken = flags.map((f) => [f.start, f.end])
+    for (const t of shown) {
+      for (const m of matchAll(b.text, t.names)) {
+        if (taken.some(([s, e]) => m.start < e && m.end > s)) continue
+        taken.push([m.start, m.end])
+        decos.push(Decoration.inline(b.pos + 1 + m.start, b.pos + 1 + m.end, { class: t.cls, title: t.tip, 'data-bg': t.ref }))
+      }
+    }
+    for (const f of flags) {
       decos.push(
         Decoration.inline(b.pos + 1 + f.start, b.pos + 1 + f.end, {
           class: 'gl-flag',
@@ -161,7 +200,16 @@ export function glossaryFlags(bookPath: string) {
             init: (_, state) => flagDecorations(state.doc, bookPath),
             apply: (tr, old) => (tr.getMeta(glKey) ? flagDecorations(tr.doc, bookPath) : tr.docChanged ? old.map(tr.mapping, tr.doc) : old)
           },
-          props: { decorations: (state) => glKey.getState(state) },
+          props: {
+            decorations: (state) => glKey.getState(state),
+            handleClick: (_view, _pos, e) => {
+              if (!(e.ctrlKey || e.metaKey) || !onTermClick) return false
+              const ref = (e.target as HTMLElement).closest?.('[data-bg]')?.getAttribute('data-bg')
+              if (!ref) return false
+              onTermClick(ref)
+              return true
+            }
+          },
           // after typing stops, look again (cheap enough for a chapter, too much on every key)
           view: () => ({
             update: (view, prev) => {

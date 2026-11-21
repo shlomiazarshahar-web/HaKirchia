@@ -67,6 +67,26 @@ export function setupSpellcheck(win: BrowserWindow): void {
         { label: 'בחירת הכול', role: 'selectAll' }
       )
     } else if (p.selectionText) items.push({ label: 'העתקה', role: 'copy' })
+    // Background materials (round 7): a page or a glossary entry from the selected words
+    const sel = p.selectionText.trim().replace(/\s+/g, ' ')
+    if (sel && sel.length <= 80 && !p.selectionText.includes('\n')) {
+      const short = sel.length > 28 ? sel.slice(0, 27) + '…' : sel
+      const send = (kind: string) => () => win.webContents.send('context:background', kind, sel)
+      if (items.length) items.push({ type: 'separator' })
+      items.push(
+        {
+          label: `דף רקע חדש: "${short}"`,
+          submenu: [
+            { label: 'דמות', click: send('character') },
+            { label: 'מקום', click: send('place') },
+            { label: 'דף מחקר', click: send('research') }
+          ]
+        },
+        p.isEditable
+          ? { label: `הוספה למילון המונחים`, click: send('term') }
+          : { label: `הוספה למילון המונחים (כמונח במקור)`, click: send('original') }
+      )
+    }
     if (items.length) Menu.buildFromTemplate(items).popup({ window: win })
   })
 }

@@ -4,14 +4,14 @@
 // File names follow the chapter number and title, and are renamed when chapters move or get renamed.
 
 import { promises as fs, existsSync, watch, type FSWatcher } from 'fs'
-import { join, basename, extname } from 'path'
+import { join, basename, extname, dirname } from 'path'
 import { randomUUID, createHash } from 'crypto'
 import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
 import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
 import * as drafts from './drafts'
 import * as bg from './background'
-import { normalizeBackground, type GlossaryEntry, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
+import { normalizeBackground, type GlossaryEntry, type InspirationGroup, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { chapterParagraphCount, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
@@ -737,7 +737,9 @@ export const deleteMaterial = (bookPath: string, id: string) => withManifest(boo
 export const attachFiles = (bookPath: string, id: string, paths: string[]) => withManifest(bookPath, (m) => bg.attachFiles(bookPath, m, id, paths))
 export const detachFile = (bookPath: string, id: string, name: string) => withManifest(bookPath, (m) => bg.detachFile(bookPath, m, id, name))
 export const addImages = (bookPath: string, paths: string[], link: { chapterId?: string; materialId?: string }) => withManifest(bookPath, (m) => bg.addImages(bookPath, m, paths, link))
-export const setImages = (bookPath: string, list: InspirationImage[]) => withManifest(bookPath, (m) => bg.setImages(bookPath, m, list))
+export const setImages = (bookPath: string, list: InspirationImage[], groups?: InspirationGroup[]) => withManifest(bookPath, (m) => bg.setImages(bookPath, m, list, groups))
+export const addImageData = (bookPath: string, bytes: Uint8Array, ext: string, link: { chapterId?: string; materialId?: string }, at?: { x: number; y: number }) =>
+  withManifest(bookPath, (m) => bg.addImageData(bookPath, m, bytes, ext, link, at))
 export const setGlossary = (bookPath: string, list: GlossaryEntry[]) =>
   withManifest(bookPath, async (m) => {
     m.glossary = list
@@ -758,4 +760,31 @@ export const attachmentPath = bg.attachmentPath
 export function materialFilePath(book: Book, id: string): string | null {
   const m = book.materials.find((x) => x.id === id)
   return m ? bg.materialPath(book.path, m) : null
+}
+
+/**
+ * Renames the book: its title, and its folder to match (when no other folder has that name).
+ * Returns the book at its new place, and a notice when the folder kept its name.
+ */
+export function renameBook(bookPath: string, title: string): Promise<{ book: Book; notice?: string }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    m.title = title.trim() || m.title
+    await writeManifest(bookPath, m)
+    const want = join(dirname(bookPath), safeName(m.title))
+    if (want === bookPath) return { book: toBook(bookPath, m) }
+    const sameFolder = want.toLowerCase() === bookPath.toLowerCase()
+    if (!sameFolder && existsSync(want)) return { book: toBook(bookPath, m), notice: `השם השתנה, אבל התיקייה נשארה בשמה הקודם: כבר יש תיקייה בשם "${basename(want)}".` }
+    stopWatching()
+    try {
+      if (sameFolder) {
+        const tmp = bookPath + '~' + Date.now()
+        await fs.rename(bookPath, tmp)
+        await fs.rename(tmp, want)
+      } else await fs.rename(bookPath, want)
+    } catch {
+      return { book: toBook(bookPath, m), notice: 'השם השתנה, אבל לא הצלחתי לשנות את שם התיקייה. כנראה קובץ מהספר פתוח בתוכנה אחרת (למשל Word או סייר הקבצים). אפשר לנסות שוב אחר כך.' }
+    }
+    return { book: toBook(want, m) }
+  })
 }

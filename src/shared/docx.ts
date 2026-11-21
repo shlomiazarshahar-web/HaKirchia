@@ -160,12 +160,12 @@ export function isIndented(node: PMNode, prev: PMNode | undefined): boolean {
   return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev)
 }
 
-function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false): string {
+function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false, titleStyle = 'Heading1'): string {
   const out: string[] = []
   out.push(
     paragraphXml(
       { type: 'heading', attrs: { dir: guessDir(title) === 'ltr' ? 'ltr' : 'rtl' }, content: title ? [{ type: 'text', text: title }] : [] },
-      'Heading1',
+      titleStyle,
       null,
       { pageBreak }
     )
@@ -278,6 +278,14 @@ export interface DocxBookOptions {
   margin: { top: number; bottom: number; side: number }
   font: string
   fontSize: number
+  /** How chapter titles look (the layout's title settings) */
+  chapterTitle?: { font: string; sizePt: number; bold: boolean; center: boolean }
+}
+
+function chapterTitleStyle(t: NonNullable<DocxBookOptions['chapterTitle']>): string {
+  const f = t.font ? esc(t.font) : ''
+  const sz = Math.round(t.sizePt * 2)
+  return `<w:style w:type="paragraph" w:styleId="ChapterTitle"><w:name w:val="Chapter Title"/><w:basedOn w:val="Heading1"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:qFormat/><w:pPr><w:keepNext/>${t.center ? '<w:jc w:val="center"/>' : ''}<w:outlineLvl w:val="0"/></w:pPr><w:rPr>${f ? `<w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}"/>` : ''}${t.bold ? '<w:b/><w:bCs/>' : ''}<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`
 }
 
 const BOOK_STYLES =
@@ -303,7 +311,7 @@ const spacer = (pageBreak: boolean, after: number) =>
 
 const mmToTwips = (mm: number) => Math.round(mm * 56.6929)
 
-function itemXml(item: DocxBookItem, first: boolean, notes: Notes): string {
+function itemXml(item: DocxBookItem, first: boolean, notes: Notes, titleStyle = 'Heading1'): string {
   const pageBreak = !first
   switch (item.kind) {
     case 'title': {
@@ -335,14 +343,15 @@ function itemXml(item: DocxBookItem, first: boolean, notes: Notes): string {
     case 'part':
       return textPara(item.title, 'PartTitle', { pageBreak })
     case 'chapter':
-      return bodyXml(item.doc, item.title, notes, pageBreak)
+      return bodyXml(item.doc, item.title, notes, pageBreak, titleStyle)
   }
 }
 
 export async function bookToDocx(items: DocxBookItem[], title: string, opts: DocxBookOptions): Promise<Uint8Array> {
   const zip = new JSZip()
   const notes: Notes = []
-  const body = items.map((it, i) => itemXml(it, i === 0, notes)).join('')
+  const titleStyle = opts.chapterTitle ? 'ChapterTitle' : 'Heading1'
+  const body = items.map((it, i) => itemXml(it, i === 0, notes, titleStyle)).join('')
   const hasNotes = notes.length > 0
   const side = mmToTwips(opts.margin.side)
   const sect = `<w:sectPr><w:pgSz w:w="${mmToTwips(opts.pageW)}" w:h="${mmToTwips(opts.pageH)}"/><w:pgMar w:top="${mmToTwips(opts.margin.top)}" w:right="${side}" w:bottom="${mmToTwips(opts.margin.bottom)}" w:left="${side}" w:header="567" w:footer="567" w:gutter="0"/><w:bidi/></w:sectPr>`
@@ -353,7 +362,7 @@ export async function bookToDocx(items: DocxBookItem[], title: string, opts: Doc
   zip.file('_rels/.rels', ROOT_RELS)
   zip.file('word/document.xml', documentXml)
   zip.file('word/_rels/document.xml.rels', hasNotes ? DOC_RELS.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`) : DOC_RELS)
-  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES))
+  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES + (opts.chapterTitle ? chapterTitleStyle(opts.chapterTitle) : '')))
   // updateFields: Word asks to update the table of contents (page numbers) when the file opens
   zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', (hasToc ? '<w:updateFields w:val="true"/>' : '') + (hasNotes ? FOOTNOTE_PR : '')))
   if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))

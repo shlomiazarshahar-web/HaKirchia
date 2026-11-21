@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { bookCss, bookSections, chapterBodyHtml, findMarkers, oddPagePlan, printCss, tocEntries, type BookData } from '../src/shared/bookhtml'
+import { bookCss, bookSections, chapterBodyHtml, fitToLayout, findMarkers, oddPagePlan, printCss, tocEntries, type BookData } from '../src/shared/bookhtml'
 import { bookToDocx } from '../src/shared/docx'
 import { defaultMatter, moveMatter, newMatterPage, normalizePublish } from '../src/shared/publish'
 import type { PMNode } from '../src/shared/types'
@@ -133,5 +133,31 @@ describe('the book as one Word file', () => {
     expect(await zip.file('word/footnotes.xml')!.async('string')).toContain('הערה &lt;ראשונה&gt;')
     expect(await zip.file('word/settings.xml')!.async('string')).toContain('<w:updateFields w:val="true"/>')
     expect(await zip.file('word/styles.xml')!.async('string')).toContain('w:ascii="David Libre"')
+  })
+})
+
+describe('fitToLayout (imported sizes and fonts follow the layout)', () => {
+  const run = (text: string, size?: string, font?: string) => ({ type: 'text', text, marks: [{ type: 'textStyle', attrs: { fontSize: size ?? null, fontFamily: font ?? null } }] })
+  const doc = {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [run('טקסט רגיל ארוך מאוד שמופיע ברוב הפרק', '11pt', 'Arial'), run('גדול', '22pt', 'Arial')] },
+      { type: 'paragraph', content: [run('עוד טקסט רגיל בגופן אחר', '11pt', 'David')] }
+    ]
+  }
+  it('drops the usual size and font, and scales the others', () => {
+    const out = fitToLayout(doc as never, { fontSize: 14 })
+    const [a, b] = out.content![0].content!
+    expect(a.marks).toBeUndefined()
+    expect(b.marks![0].attrs).toMatchObject({ fontSize: '28pt', fontFamily: null })
+    expect(out.content![1].content![0].marks![0].attrs).toMatchObject({ fontFamily: 'David', fontSize: null })
+  })
+  it('the body size reaches the reading view', () => {
+    const html = bookSections({ title: 'ס', chapters: [{ id: 'c', title: 'פרק', doc: doc as never }], outline: [{ type: 'chapter', id: 'c' }], publish: normalizePublish({ matter: [] }) }).map((s) => s.html).join('')
+    expect(html).not.toContain('11pt')
+  })
+  it('title settings get defaults', () => {
+    const p = normalizePublish({ layout: { titleSize: 99 } as never })
+    expect(p.layout).toMatchObject({ titleSize: 40, titleFont: '', titleAlign: 'center', titleBold: false })
   })
 })

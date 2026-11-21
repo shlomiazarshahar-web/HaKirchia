@@ -75,6 +75,11 @@ export interface BookLayout {
   matter: boolean
   /** Footnotes at the end of each chapter (in Word and ePub they stay real footnotes) */
   notesAtEnd: boolean
+  /** Chapter titles: font ('' = the body font), size in points, bold, and where on the line */
+  titleFont: string
+  titleSize: number
+  titleBold: boolean
+  titleAlign: 'center' | 'start'
 }
 
 export const DEFAULT_LAYOUT: BookLayout = {
@@ -89,7 +94,11 @@ export const DEFAULT_LAYOUT: BookLayout = {
   pageNumbers: true,
   runningHeads: true,
   matter: true,
-  notesAtEnd: true
+  notesAtEnd: true,
+  titleFont: '',
+  titleSize: 22,
+  titleBold: false,
+  titleAlign: 'center'
 }
 
 export interface BookInfo {
@@ -111,6 +120,10 @@ export function normalizePublish(p: Partial<PublishSettings> | undefined): Publi
   const layout = { ...DEFAULT_LAYOUT, ...(p?.layout ?? {}) }
   if (!(layout.pageSize in PAGE_SIZES)) layout.pageSize = DEFAULT_LAYOUT.pageSize
   layout.fontSize = clamp(Number(layout.fontSize) || DEFAULT_LAYOUT.fontSize, 8, 20)
+  layout.titleSize = clamp(Number(layout.titleSize) || DEFAULT_LAYOUT.titleSize, 12, 40)
+  layout.titleFont = typeof layout.titleFont === 'string' ? layout.titleFont : ''
+  layout.titleAlign = layout.titleAlign === 'start' ? 'start' : 'center'
+  layout.titleBold = !!layout.titleBold
   layout.lineHeight = clamp(Number(layout.lineHeight) || DEFAULT_LAYOUT.lineHeight, 1, 2.5)
   const matter = Array.isArray(p?.matter)
     ? p!.matter.filter((m) => m && typeof m.id === 'string' && m.kind in MATTER_KINDS).map((m) => ({ ...m, where: m.where === 'back' ? ('back' as const) : ('front' as const), heading: m.heading ?? '', text: m.text ?? '' }))

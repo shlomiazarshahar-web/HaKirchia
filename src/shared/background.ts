@@ -76,6 +76,20 @@ export interface InspirationImage {
   chapterId?: string
   materialId?: string
   at: number
+  /** Place and width on the inspiration canvas (missing until it is placed) */
+  x?: number
+  y?: number
+  w?: number
+}
+
+/** A named frame on the inspiration canvas; images inside it move with it */
+export interface InspirationGroup {
+  id: string
+  title: string
+  x: number
+  y: number
+  w: number
+  h: number
 }
 
 /** An event of the story (feature 21), in story-time order */
@@ -93,11 +107,13 @@ export interface Background {
   materials: Material[]
   glossary: GlossaryEntry[]
   images: InspirationImage[]
+  groups: InspirationGroup[]
   timeline: TimelineEvent[]
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [])
+const num = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v)
 const isKind = (k: unknown): k is MaterialKind => MATERIAL_KINDS.includes(k as MaterialKind)
 
 /**
@@ -132,8 +148,13 @@ export function normalizeBackground(raw: Partial<Record<keyof Background, unknow
       caption: str(im.caption),
       ...(im.chapterId && chapters.has(im.chapterId) ? { chapterId: im.chapterId } : {}),
       ...(im.materialId && mats.has(im.materialId) ? { materialId: im.materialId } : {}),
-      at: typeof im.at === 'number' ? im.at : 0
+      at: typeof im.at === 'number' ? im.at : 0,
+      ...(num(im.x) && num(im.y) ? { x: im.x, y: im.y } : {}),
+      ...(num(im.w) && im.w! > 0 ? { w: im.w } : {})
     }))
+  const groups: InspirationGroup[] = (Array.isArray(raw?.groups) ? raw!.groups : [])
+    .filter((g: Partial<InspirationGroup>) => g && typeof g.id === 'string' && num(g.x) && num(g.y) && num(g.w) && num(g.h))
+    .map((g: Partial<InspirationGroup>) => ({ id: g.id!, title: str(g.title), x: g.x!, y: g.y!, w: Math.max(80, g.w!), h: Math.max(60, g.h!) }))
   const timeline: TimelineEvent[] = (Array.isArray(raw?.timeline) ? raw!.timeline : [])
     .filter((e: Partial<TimelineEvent>) => e && typeof e.id === 'string')
     .map((e: Partial<TimelineEvent>) => ({
@@ -144,7 +165,7 @@ export function normalizeBackground(raw: Partial<Record<keyof Background, unknow
       chapterIds: strs(e.chapterIds).filter((id) => chapters.has(id)),
       materialIds: strs(e.materialIds).filter((id) => mats.has(id))
     }))
-  return { materials, glossary, images, timeline }
+  return { materials, glossary, images, groups, timeline }
 }
 
 /** Background pages of one kind, by name (the binder lists them like this) */
@@ -453,4 +474,31 @@ export function freeName(base: string, ext: string, taken: Set<string>): string 
     const name = n === 1 ? `${base}${ext}` : `${base} (${n})${ext}`
     if (!lower.has(name.toLowerCase())) return name
   }
+}
+
+/**
+ * Places images that have no place yet on the canvas, in rows under everything already there.
+ * `aspect` gives each image's height/width when known.
+ */
+export function placeNew(images: InspirationImage[], aspect: (file: string) => number, width = 220, gap = 24, perRow = 5): InspirationImage[] {
+  const placed = images.filter((i) => i.x !== undefined)
+  let top = 0
+  for (const i of placed) top = Math.max(top, i.y! + (i.w ?? width) * aspect(i.file))
+  let y = placed.length ? top + gap * 2 : 0
+  let x = 0
+  let rowH = 0
+  let n = 0
+  return images.map((i) => {
+    if (i.x !== undefined) return i
+    const w = i.w ?? width
+    const out = { ...i, x, y, w }
+    rowH = Math.max(rowH, w * aspect(i.file))
+    x += w + gap
+    if (++n % perRow === 0) {
+      x = 0
+      y += rowH + gap
+      rowH = 0
+    }
+    return out
+  })
 }

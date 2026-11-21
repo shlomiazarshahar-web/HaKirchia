@@ -17,6 +17,7 @@ import {
   KIND_NEW,
   MATERIALS_DIR,
   type GlossaryEntry,
+  type InspirationGroup,
   type InspirationImage,
   type Material,
   type MaterialKind,
@@ -29,6 +30,7 @@ export interface BackgroundManifest {
   materials?: Material[]
   glossary?: GlossaryEntry[]
   images?: InspirationImage[]
+  groups?: InspirationGroup[]
   timeline?: TimelineEvent[]
 }
 
@@ -215,7 +217,8 @@ export async function addImages(bookPath: string, m: BackgroundManifest, paths: 
 }
 
 /** Saves the list of images (captions, links, order). Images taken off the list go to the Recycle Bin. */
-export async function setImages(bookPath: string, m: BackgroundManifest, list: InspirationImage[]): Promise<void> {
+export async function setImages(bookPath: string, m: BackgroundManifest, list: InspirationImage[], groups?: InspirationGroup[]): Promise<void> {
+  if (groups) m.groups = groups
   const keep = new Set(list.map((i) => i.file))
   for (const old of m.images ?? []) {
     if (keep.has(old.file)) continue
@@ -228,4 +231,16 @@ export async function setImages(bookPath: string, m: BackgroundManifest, list: I
 export async function readImage(bookPath: string, file: string): Promise<Uint8Array> {
   if (basename(file) !== file) throw new Error('שם קובץ לא תקין')
   return new Uint8Array(await fs.readFile(join(imagesDir(bookPath), file)))
+}
+
+/** An image pasted from the clipboard: saved into "השראה" as a new file */
+export async function addImageData(bookPath: string, m: BackgroundManifest, bytes: Uint8Array, ext: string, link: { chapterId?: string; materialId?: string }, at?: { x: number; y: number }): Promise<InspirationImage> {
+  const e = IMAGE_EXTS.includes(ext.toLowerCase()) ? ext.toLowerCase() : 'png'
+  await fs.mkdir(imagesDir(bookPath), { recursive: true })
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const file = freeName(`הדבקה ${stamp}`, `.${e}`, await namesIn(imagesDir(bookPath)))
+  await fs.writeFile(join(imagesDir(bookPath), file), bytes)
+  const im: InspirationImage = { id: randomUUID(), file, caption: '', ...(link.chapterId ? { chapterId: link.chapterId } : {}), ...(link.materialId ? { materialId: link.materialId } : {}), at: Date.now(), ...(at ? at : {}) }
+  m.images = [...(m.images ?? []), im]
+  return im
 }

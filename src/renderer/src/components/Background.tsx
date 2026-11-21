@@ -417,7 +417,7 @@ export function Lightbox({ image, onClose }: { image: InspirationImage; onClose:
         {url && <img src={url} alt={live.caption} />}
         <div className="lb-bar">
           <TextInput value={live.caption} placeholder="כיתוב לתמונה" aria-label="כיתוב לתמונה" onDone={(caption) => void save(book.images.map((i) => (i.id === live.id ? { ...i, caption } : i)))} />
-          <LinkPicker image={live} onChange={(l) => void save(book.images.map((i) => (i.id === live.id ? { id: i.id, file: i.file, caption: i.caption, at: i.at, ...l } : i)))} />
+          <LinkPicker image={live} onChange={(l) => void save(book.images.map((i) => (i.id === live.id ? { ...i, chapterId: undefined, materialId: undefined, ...l } : i)))} />
           <button
             className="ib danger"
             title="הסרת התמונה (הקובץ עובר לסל המחזור)"

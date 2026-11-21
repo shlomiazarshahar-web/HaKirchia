@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Book, Bookmark, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
@@ -30,19 +30,20 @@ import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 import { addNote, loadDrawer, loadNotes, moveSelectionToDrawer } from './drafts'
 import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Drafts'
-import { ReadingView } from './components/ReadingView'
+import { ReadingView, TitleStyleFields } from './components/ReadingView'
 import { MatterDialog } from './components/MatterDialog'
 import type { PublishSettings } from '@shared/publish'
 import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
-import { setGlossaryTerms } from './background'
+import { setGlossaryTerms, setTermClick } from './background'
 
 type Toast = { text: string; error?: boolean } | null
 type Dialog =
   | { kind: 'newBook' }
   | { kind: 'settings' }
-  | { kind: 'matter' }
+  | { kind: 'matter'; pageId?: string }
+  | { kind: 'titleStyle' }
   | { kind: 'delete'; chapter: Chapter }
   | { kind: 'deletePart'; part: PartNode }
   | { kind: 'deleteMaterial'; material: Material }
@@ -52,6 +53,17 @@ type View = 'write' | 'master' | 'board' | 'read'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
 const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.4, 1.6]
+
+/** The book's chapter-title look, for the title above the text in the editor */
+function titleVars(book: Book | null): CSSProperties | undefined {
+  if (!book) return undefined
+  const l = book.publish.layout
+  return {
+    ...(l.titleFont ? { '--title-font': `'${l.titleFont.replace(/'/g, '')}', var(--editor-font)` } : {}),
+    '--title-weight': l.titleBold ? 700 : 500,
+    '--title-align': l.titleAlign
+  } as CSSProperties
+}
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>('light')
@@ -775,6 +787,56 @@ export default function App() {
     void openBeside({ kind: 'material', id: r.value.value.id })
   }
 
+  /** Right-click on selected words: a background page named by them, or a glossary entry */
+  const [freshTerm, setFreshTerm] = useState<string | null>(null)
+  const fromSelection = async (kind: string, text: string) => {
+    if (!book) return
+    if (kind === 'character' || kind === 'place' || kind === 'research') {
+      const r = await api.createMaterial(book.path, kind, text)
+      if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי ליצור את הדף', true)
+      setBook(r.value.book)
+      void openBeside({ kind: 'material', id: r.value.value.id })
+      return show(`נוצר דף ל"${text}" בחומרי הרקע`)
+    }
+    const known = book.glossary.find((g) => (kind === 'term' ? g.term : g.original).trim() === text)
+    let id = known?.id
+    if (!known) {
+      id = crypto.randomUUID()
+      const list = [...book.glossary, { id, term: kind === 'term' ? text : '', original: kind === 'original' ? text : '', variants: [], accepted: [], note: '' }]
+      const r = await api.setGlossary(book.path, list)
+      if (!r.ok || !r.value) return show(r.error ?? 'השמירה נכשלה', true)
+      setBook(r.value.book)
+    }
+    setFreshTerm(id!)
+    setTimeout(() => setFreshTerm(null), 1500)
+    void openBeside({ kind: 'glossary' })
+    if (known) show(`"${text}" כבר במילון המונחים`)
+  }
+  const fromSelectionRef = useRef(fromSelection)
+  fromSelectionRef.current = fromSelection
+  useEffect(() => api.onContextBackground((k, t) => void fromSelectionRef.current(k, t)), [])
+  const openBesideRef = useRef(openBeside)
+  openBesideRef.current = openBeside
+  useEffect(() => {
+    setTermClick((ref) => void openBesideRef.current(ref.startsWith('m:') ? { kind: 'material', id: ref.slice(2) } : { kind: 'glossary' }))
+    return () => setTermClick(null)
+  }, [])
+
+  /** Renames the book and its folder; the book opens again from its new place */
+  const renameBook = async (title: string) => {
+    if (!book) return
+    await flushAll()
+    const old = book.path
+    const r = await api.renameBook(old, title)
+    if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי לשנות את השם', true)
+    const nb = r.value.book
+    if (nb.path !== old) {
+      for (const rec of [savedLayouts.current, savedTr.current, lastChapter.current]) if (old in rec) (rec as Record<string, unknown>)[nb.path] = (rec as Record<string, unknown>)[old]
+      enterBook(nb)
+    } else setBook(nb)
+    show(r.value.notice ?? `שם הספר שונה ל"${nb.title}"${nb.path !== old ? ', וגם שם התיקייה' : ''}`, !!r.value.notice)
+  }
+
   const deleteMaterial = async (m: Material) => {
     if (!book) return
     setDialog(null)
@@ -803,11 +865,18 @@ export default function App() {
           setDrawerOpen(false)
           setFind((f) => ({ replace: true, seed: { text, rep, n: (f?.seed.n ?? 0) + 1 } }))
         },
-        freshMaterial
+        freshMaterial,
+        freshTerm
       }
     : null
 
   /** Front and back pages, author and page layout (features 31, 36, 16) */
+  useEffect(() => {
+    const open = () => setDialog({ kind: 'titleStyle' })
+    window.addEventListener('hakirchia:title-style', open)
+    return () => window.removeEventListener('hakirchia:title-style', open)
+  }, [])
+  const publishSaving = useRef<Promise<unknown>>(Promise.resolve())
   const savePublish = async (p: PublishSettings) => {
     if (!book) return
     setBook({ ...book, publish: p })
@@ -991,6 +1060,7 @@ export default function App() {
       className={`app${focusOn ? ' focusmode' : ''}${focusOn && prefs.focus.typewriter ? ' typewriter' : ''}${focusOn && prefs.focus.dim ? ' dim' : ''}`}
       data-mode={theme}
       data-overlay={overlay ? '1' : '0'}
+      style={titleVars(book)}
       onClick={() => (menu && setMenu(null), exportMenu && setExportMenu(false))}
     >
       <IconSprite />
@@ -1186,6 +1256,8 @@ export default function App() {
               onNewMaterial={(k) => void newMaterial(k)}
               onOpenGlossary={() => void openBeside({ kind: 'glossary' })}
               onMaterialMenu={(material, x, y) => setMenu({ material, x, y })}
+              onRenameBook={(t) => void renameBook(t)}
+              onMatter={(pageId) => setDialog({ kind: 'matter', pageId })}
             />
             {inMaster ? (
               <MasterView
@@ -1416,7 +1488,29 @@ export default function App() {
         </div>
       )}
 
-      {dialog?.kind === 'matter' && book && <MatterDialog book={book} onSave={(p) => void savePublish(p)} onClose={() => setDialog(null)} />}
+      {dialog?.kind === 'titleStyle' && book && (
+        <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="dialog title-style" role="dialog" aria-label="כותרות הפרקים" onKeyDown={(e) => e.key === 'Escape' && setDialog(null)}>
+            <h2>כותרות הפרקים</h2>
+            <p>חל על כל הפרקים: בעורך, במצב קריאה ובכל ייצוא. אפשר לשנות גם בדף "עימוד" שבמצב קריאה.</p>
+            <TitleStyleFields layout={book.publish.layout} onChange={(patch) => void savePublish({ ...book.publish, layout: { ...book.publish.layout, ...patch } })} />
+            <div className="actions">
+              <button className="btn" onClick={() => setDialog(null)}>
+                סגירה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog?.kind === 'matter' && book && (
+        <MatterDialog
+          book={book}
+          startId={dialog.pageId}
+          onSave={(p) => (publishSaving.current = savePublish(p))}
+          onRenameBook={(t) => void publishSaving.current.then(() => renameBook(t))}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog?.kind === 'settings' && <WritingSettings onClose={() => setDialog(null)} />}
       {dialog?.kind === 'newBook' && <NewBookDialog onCancel={() => setDialog(null)} onCreate={createBook} />}
       {dialog?.kind === 'delete' && (

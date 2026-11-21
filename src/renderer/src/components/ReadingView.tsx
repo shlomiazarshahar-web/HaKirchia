@@ -83,7 +83,7 @@ export function ReadingView({ book, startId, onPublish, onEditMatter, onExport, 
   return (
     <div className="reading">
       {sections ? (
-        <Pages book={book} sections={sections} layout={layout} startId={startId} onOpenChapter={onOpenChapter} onFontSize={(d) => setLayout({ fontSize: Math.min(20, Math.max(8, layout.fontSize + d)) })} panelOpen={panel} onPanel={() => setPanel(!panel)} />
+        <Pages book={book} sections={sections} layout={layout} startId={startId} onOpenChapter={onOpenChapter} panelOpen={panel} onPanel={() => setPanel(!panel)} />
       ) : (
         <div className="rd-loading">פותח את הספר…</div>
       )}
@@ -98,12 +98,11 @@ interface PagesProps {
   layout: BookLayout
   startId: string | null
   onOpenChapter: (id: string) => void
-  onFontSize: (delta: number) => void
   panelOpen: boolean
   onPanel: () => void
 }
 
-function Pages({ book, sections, layout, startId, onOpenChapter, onFontSize, panelOpen, onPanel }: PagesProps) {
+function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPanel }: PagesProps) {
   const g = pageGeometry(layout)
   const pageW = g.w * MM
   const pageH = g.h * MM
@@ -329,14 +328,7 @@ function Pages({ book, sections, layout, startId, onOpenChapter, onFontSize, pan
           <Icon name="next" />
         </button>
         <span className="grow" />
-        <button className="ib" title="אות קטנה יותר (גם ב־PDF)" onClick={() => onFontSize(-0.5)}>
-          <small>א</small>−
-        </button>
-        <small className="rd-info">{layout.fontSize} נק׳</small>
-        <button className="ib" title="אות גדולה יותר (גם ב־PDF)" onClick={() => onFontSize(0.5)}>
-          א+
-        </button>
-        <button className="ib" aria-pressed={panelOpen} title="גודל עמוד, גופן, ומתגי עימוד: חלקים, פרקים, מספרי עמודים" onClick={onPanel}>
+        <button className="ib" aria-pressed={panelOpen} title="גודל עמוד, גופן וגודל האות, כותרות הפרקים, ומתגי עימוד" onClick={onPanel}>
           <Icon name="gear" />
           עימוד
         </button>
@@ -400,6 +392,7 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
           ))}
         </select>
       </label>
+      <div className="set-sub">גוף הטקסט</div>
       <label className="field">
         גופן
         <select value={layout.font} onChange={(e) => onChange({ font: e.target.value })} style={{ fontFamily: layout.font }}>
@@ -410,6 +403,7 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
           ))}
         </select>
       </label>
+      <SizeField label="גודל האות" value={layout.fontSize} min={8} max={20} step={0.5} onChange={(fontSize) => onChange({ fontSize })} />
       <label className="field">
         רווח בין שורות
         <select value={String(layout.lineHeight)} onChange={(e) => onChange({ lineHeight: Number(e.target.value) })}>
@@ -420,6 +414,8 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
           ))}
         </select>
       </label>
+      <div className="set-sub">כותרות הפרקים</div>
+      <TitleStyleFields layout={layout} onChange={onChange} />
       <div className="set-sub">עימוד</div>
       {sw('partPage', 'כל כותרת חלק בעמוד משלה, באמצע העמוד')}
       {sw('chapterNewPage', 'כל פרק מתחיל בעמוד חדש')}
@@ -444,5 +440,72 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
         </button>
       </div>
     </aside>
+  )
+}
+
+/** A size in points, with − and + */
+export function SizeField({ label, value, min, max, step, onChange }: { label: string; value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
+  const set = (v: number) => onChange(Math.min(max, Math.max(min, Math.round(v / step) * step)))
+  return (
+    <div className="field size-field">
+      {label}
+      <div className="size-row">
+        <button className="ib icon" aria-label="קטן יותר" disabled={value <= min} onClick={() => set(value - step)}>
+          <Icon name="minus" />
+        </button>
+        <input
+          type="number"
+          aria-label={label}
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => {
+            const v = Number(e.target.value)
+            if (isFinite(v) && v >= min && v <= max) onChange(v)
+          }}
+        />
+        <span className="unit">נק׳</span>
+        <button className="ib icon" aria-label="גדול יותר" disabled={value >= max} onClick={() => set(value + step)}>
+          <Icon name="plus" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** How chapter titles look: font, size, bold and placement (reading view, PDF, Word, ePub, and the editor's title) */
+export function TitleStyleFields({ layout, onChange }: { layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void }) {
+  const prefs = usePrefs()
+  const fonts = [...EDITOR_FONTS, ...prefs.customFonts.map((f) => f.family).filter((f) => !EDITOR_FONTS.includes(f))]
+  return (
+    <>
+      <label className="field">
+        גופן
+        <select value={layout.titleFont} onChange={(e) => onChange({ titleFont: e.target.value })} style={{ fontFamily: layout.titleFont || layout.font }}>
+          <option value="">כמו הטקסט ({layout.font})</option>
+          {fonts.map((f) => (
+            <option key={f} value={f} style={{ fontFamily: f }}>
+              {f}
+            </option>
+          ))}
+        </select>
+      </label>
+      <SizeField label="גודל" value={layout.titleSize} min={12} max={40} step={1} onChange={(titleSize) => onChange({ titleSize })} />
+      <div className="seg title-seg" role="group" aria-label="מיקום הכותרת">
+        <button aria-pressed={layout.titleAlign === 'center'} onClick={() => onChange({ titleAlign: 'center' })}>
+          <Icon name="align-c" size={14} /> במרכז
+        </button>
+        <button aria-pressed={layout.titleAlign === 'start'} onClick={() => onChange({ titleAlign: 'start' })}>
+          <Icon name="align-r" size={14} /> בצד
+        </button>
+        <button aria-pressed={layout.titleBold} title="כותרת מודגשת" onClick={() => onChange({ titleBold: !layout.titleBold })}>
+          <b>מודגש</b>
+        </button>
+      </div>
+      <div className="title-preview" style={{ fontFamily: `'${layout.titleFont || layout.font}', serif`, fontWeight: layout.titleBold ? 700 : 500, textAlign: layout.titleAlign, fontSize: Math.min(28, layout.titleSize) }}>
+        פרק ראשון
+      </div>
+    </>
   )
 }

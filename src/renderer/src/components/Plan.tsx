@@ -1,12 +1,12 @@
 // The planning tab (was "לוח שעם"): next to the chapter cards, the story timeline (feature 21) and
 // the inspiration board (feature 37).
 
-import { useState, type ReactNode } from 'react'
-import { chaptersInStoryOrder, KIND_ICON, KIND_ONE, moveEvent, type InspirationImage, type TimelineEvent } from '@shared/background'
+import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent as RPointerEvent } from 'react'
+import { chaptersInStoryOrder, KIND_ICON, KIND_ONE, moveEvent, placeNew, type InspirationGroup, type InspirationImage, type TimelineEvent } from '@shared/background'
 import { api } from '../api'
-import { droppedImagePaths } from '../background'
+import { droppedImagePaths, useImageUrl } from '../background'
 import { useBg } from './bgctx'
-import { Lightbox, TextInput, Thumb } from './Background'
+import { Lightbox, TextInput } from './Background'
 import { Icon } from './Icons'
 
 export type PlanMode = 'cards' | 'timeline' | 'inspiration'
@@ -208,10 +208,21 @@ export function Timeline({ bar, onOpenChapter }: { bar: ReactNode; onOpenChapter
 }
 
 // ---------------------------------------------------------------------------
-// Inspiration board (feature 37)
+// Inspiration board (feature 37): a free canvas, like a pin board. Images can be moved, resized and
+// gathered in named groups; the view pans and zooms. Ctrl+I adds images, Ctrl+V pastes one.
 // ---------------------------------------------------------------------------
 
 type Filter = 'all' | 'general' | 'chapters' | 'character' | 'place' | 'research'
+type View = { x: number; y: number; z: number }
+type Drag =
+  | { kind: 'pan'; sx: number; sy: number; v: View }
+  | { kind: 'img'; id: string; sx: number; sy: number; x: number; y: number }
+  | { kind: 'size'; id: string; sx: number; w: number }
+  | { kind: 'group'; id: string; sx: number; sy: number; g: InspirationGroup; inside: { id: string; x: number; y: number }[] }
+  | { kind: 'gsize'; id: string; sx: number; sy: number; g: InspirationGroup }
+
+const VIEW_KEY = (path: string) => `hakirchia.canvas.${path}`
+const DEFAULT_W = 220
 
 export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChapter: (id: string) => void }) {
   const bg = useBg()
@@ -219,21 +230,240 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
   const [filter, setFilter] = useState<Filter>('all')
   const [open, setOpen] = useState<InspirationImage | null>(null)
   const [over, setOver] = useState(false)
+  const [sel, setSel] = useState<string | null>(null)
+  const [imgs, setImgs] = useState<InspirationImage[]>(book.images)
+  const [groups, setGroups] = useState<InspirationGroup[]>(book.groups)
+  const [aspect, setAspect] = useState<Record<string, number>>({})
+  const [view, setView] = useState<View>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(VIEW_KEY(book.path)) ?? 'null')
+      if (v && typeof v.z === 'number') return v
+    } catch {
+      /* default view */
+    }
+    return { x: 40, y: 30, z: 1 }
+  })
+  const root = useRef<HTMLDivElement>(null)
+  const drag = useRef<Drag | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const state = useRef({ imgs, groups, view })
+  state.current = { imgs, groups, view }
+
+  // the book changed (saved, an image linked in the big view…): take it, unless a drag is on
+  const sig = JSON.stringify([book.images, book.groups])
+  useEffect(() => {
+    if (drag.current) return
+    setImgs(book.images)
+    setGroups(book.groups)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(VIEW_KEY(book.path), JSON.stringify(view))
+    } catch {
+      /* not remembered */
+    }
+  }, [view, book.path])
+
+  const save = useCallback(
+    async (list: InspirationImage[], gs: InspirationGroup[]) => {
+      const r = await api.setImages(book.path, list, gs)
+      if (!r.ok || !r.value) return bg.show(r.error ?? 'השמירה נכשלה', true)
+      bg.onBook(r.value.book)
+    },
+    [book.path, bg]
+  )
+
+  const ratio = (file: string) => aspect[file] ?? 0.75
+  // images that have no place yet get one, in rows under the others
+  useEffect(() => {
+    if (!imgs.some((i) => i.x === undefined)) return
+    const next = placeNew(imgs, ratio, DEFAULT_W)
+    setImgs(next)
+    void save(next, groups)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imgs])
+
   const matById = new Map(book.materials.map((m) => [m.id, m]))
   const num = new Map(book.chapters.map((c, i) => [c.id, i + 1]))
   const chTitle = new Map(book.chapters.map((c) => [c.id, c.title]))
   const kindOf = (im: InspirationImage): Exclude<Filter, 'all'> => (im.chapterId ? 'chapters' : im.materialId ? (matById.get(im.materialId)?.kind ?? 'general') : 'general')
-  const shown = book.images.filter((im) => filter === 'all' || kindOf(im) === filter)
-  const count = (f: Filter) => (f === 'all' ? book.images.length : book.images.filter((im) => kindOf(im) === f).length)
+  const count = (f: Filter) => (f === 'all' ? imgs.length : imgs.filter((im) => kindOf(im) === f).length)
 
-  const add = async (paths?: string[]) => {
+  /** Screen point → canvas point */
+  const toCanvas = (cx: number, cy: number) => {
+    const r = root.current!.getBoundingClientRect()
+    const v = state.current.view
+    return { x: (cx - r.left - v.x) / v.z, y: (cy - r.top - v.y) / v.z }
+  }
+  const centre = () => {
+    const r = root.current?.getBoundingClientRect()
+    return r ? toCanvas(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 }
+  }
+
+  /** New images go where they were dropped, or in the middle of what is on screen */
+  const placeAt = (added: InspirationImage[], at: { x: number; y: number }, list: InspirationImage[]) => {
+    const ids = new Set(added.map((a) => a.id))
+    let k = 0
+    return list.map((i) => (ids.has(i.id) ? { ...i, x: at.x - DEFAULT_W / 2 + 30 * k, y: at.y - 80 + 30 * k++, w: DEFAULT_W } : i))
+  }
+  const add = async (paths?: string[], at?: { x: number; y: number }) => {
     const r = await api.addImages(book.path, {}, paths)
     if (!r.ok) return bg.show(r.error ?? 'לא הצלחתי להוסיף', true)
-    if (r.value) {
-      bg.onBook(r.value.book)
-      setFilter((f) => (f === 'all' || f === 'general' ? f : 'all'))
-    }
+    if (!r.value) return
+    const list = placeAt(r.value.value, at ?? centre(), r.value.book.images)
+    setImgs(list)
+    await save(list, groups)
+    setFilter('all')
   }
+  const addRef = useRef(add)
+  addRef.current = add
+
+  // Ctrl+I adds images, Ctrl+V pastes an image, Delete removes the one selected
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => t instanceof HTMLElement && !!t.closest('input, textarea, select, [contenteditable="true"]')
+    const key = (e: KeyboardEvent) => {
+      if (document.querySelector('.scrim')) return
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.code === 'KeyI') {
+        e.preventDefault()
+        void addRef.current()
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selRef.current && !typing(e.target)) {
+        e.preventDefault()
+        removeRef.current(selRef.current)
+      }
+    }
+    const paste = async (e: ClipboardEvent) => {
+      if (typing(e.target) || document.querySelector('.scrim')) return
+      const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'))
+      if (!item) return
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) return
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      const c = centreRef.current()
+      const r = await api.addImageData(book.path, bytes, item.type.split('/')[1] ?? 'png', {}, { x: c.x - DEFAULT_W / 2, y: c.y - 80 })
+      if (!r.ok || !r.value) return bg.show(r.error ?? 'לא הצלחתי להדביק', true)
+      const list = r.value.book.images.map((i) => (i.id === r.value!.value.id ? { ...i, w: DEFAULT_W } : i))
+      setImgs(list)
+      void save(list, state.current.groups)
+      bg.show('התמונה הודבקה ללוח')
+    }
+    window.addEventListener('keydown', key)
+    window.addEventListener('paste', paste)
+    return () => {
+      window.removeEventListener('keydown', key)
+      window.removeEventListener('paste', paste)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [book.path])
+  const selRef = useRef(sel)
+  selRef.current = sel
+  const centreRef = useRef(centre)
+  centreRef.current = centre
+  const remove = (id: string) => {
+    const im = state.current.imgs.find((i) => i.id === id)
+    const list = state.current.imgs.filter((i) => i.id !== id)
+    setImgs(list)
+    setSel(null)
+    void save(list, state.current.groups)
+    if (im) bg.show('התמונה הוסרה מהלוח. הקובץ עבר לסל המחזור')
+  }
+  const removeRef = useRef(remove)
+  removeRef.current = remove
+
+  // ---- dragging: pan, move, resize ----
+  const begin = (e: RPointerEvent, d: Drag) => {
+    if (e.button !== 0 && !(e.button === 1 && d.kind === 'pan')) return
+    e.preventDefault()
+    e.stopPropagation()
+    drag.current = d
+    setDragging(true)
+  }
+  useEffect(() => {
+    if (!dragging) return
+    const move = (e: PointerEvent) => {
+      const d = drag.current
+      if (!d) return
+      const z = state.current.view.z
+      if (d.kind === 'pan') return setView({ ...d.v, x: d.v.x + e.clientX - d.sx, y: d.v.y + e.clientY - d.sy })
+      const dx = (e.clientX - d.sx) / z
+      if (d.kind === 'img') {
+        const dy = (e.clientY - d.sy) / z
+        return setImgs((l) => l.map((i) => (i.id === d.id ? { ...i, x: d.x + dx, y: d.y + dy } : i)))
+      }
+      if (d.kind === 'size') return setImgs((l) => l.map((i) => (i.id === d.id ? { ...i, w: Math.max(50, d.w + dx) } : i)))
+      const dy = (e.clientY - d.sy) / z
+      if (d.kind === 'group') {
+        setGroups((gs) => gs.map((g) => (g.id === d.id ? { ...g, x: d.g.x + dx, y: d.g.y + dy } : g)))
+        const at = new Map(d.inside.map((p) => [p.id, p]))
+        return setImgs((l) => l.map((i) => (at.has(i.id) ? { ...i, x: at.get(i.id)!.x + dx, y: at.get(i.id)!.y + dy } : i)))
+      }
+      setGroups((gs) => gs.map((g) => (g.id === d.id ? { ...g, w: Math.max(120, d.g.w + dx), h: Math.max(80, d.g.h + dy) } : g)))
+    }
+    const up = () => {
+      const d = drag.current
+      drag.current = null
+      setDragging(false)
+      if (d && d.kind !== 'pan') void save(state.current.imgs, state.current.groups)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+  }, [dragging, save])
+
+  const wheel = (e: React.WheelEvent) => {
+    const r = root.current!.getBoundingClientRect()
+    const cx = e.clientX - r.left
+    const cy = e.clientY - r.top
+    setView((v) => {
+      const z = Math.min(4, Math.max(0.08, v.z * Math.exp(-e.deltaY * 0.0015)))
+      return { z, x: cx - (cx - v.x) * (z / v.z), y: cy - (cy - v.y) * (z / v.z) }
+    })
+  }
+  const zoomBy = (f: number) => {
+    const r = root.current!.getBoundingClientRect()
+    setView((v) => {
+      const z = Math.min(4, Math.max(0.08, v.z * f))
+      return { z, x: r.width / 2 - (r.width / 2 - v.x) * (z / v.z), y: r.height / 2 - (r.height / 2 - v.y) * (z / v.z) }
+    })
+  }
+  /** Shows everything on the board */
+  const fit = () => {
+    const r = root.current?.getBoundingClientRect()
+    const boxes = [
+      ...imgs.filter((i) => i.x !== undefined).map((i) => ({ x: i.x!, y: i.y!, w: i.w ?? DEFAULT_W, h: (i.w ?? DEFAULT_W) * ratio(i.file) })),
+      ...groups
+    ]
+    if (!r || !boxes.length) return setView({ x: 40, y: 30, z: 1 })
+    const x0 = Math.min(...boxes.map((b) => b.x))
+    const y0 = Math.min(...boxes.map((b) => b.y))
+    const x1 = Math.max(...boxes.map((b) => b.x + b.w))
+    const y1 = Math.max(...boxes.map((b) => b.y + b.h))
+    const z = Math.min(2, Math.max(0.08, Math.min((r.width - 60) / (x1 - x0 || 1), (r.height - 60) / (y1 - y0 || 1))))
+    setView({ z, x: (r.width - (x1 - x0) * z) / 2 - x0 * z, y: (r.height - (y1 - y0) * z) / 2 - y0 * z })
+  }
+
+  const addGroup = () => {
+    const c = centre()
+    const g: InspirationGroup = { id: crypto.randomUUID(), title: 'קבוצה חדשה', x: c.x - 220, y: c.y - 160, w: 440, h: 320 }
+    const gs = [...groups, g]
+    setGroups(gs)
+    void save(imgs, gs)
+  }
+  const inGroup = (g: InspirationGroup) =>
+    imgs
+      .filter((i) => {
+        if (i.x === undefined) return false
+        const w = i.w ?? DEFAULT_W
+        const cx = i.x + w / 2
+        const cy = i.y! + (w * ratio(i.file)) / 2
+        return cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h
+      })
+      .map((i) => ({ id: i.id, x: i.x!, y: i.y! }))
 
   const filters: [Filter, string][] = [
     ['all', 'הכול'],
@@ -245,26 +475,10 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
   ]
 
   return (
-    <section
-      className={`board plan${over ? ' dropping' : ''}`}
-      aria-label="לוח השראה"
-      onDragOver={(e) => {
-        if (!e.dataTransfer.types.includes('Files')) return
-        e.preventDefault()
-        setOver(true)
-      }}
-      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(false)}
-      onDrop={(e) => {
-        setOver(false)
-        const paths = droppedImagePaths(e.dataTransfer)
-        if (!paths.length) return
-        e.preventDefault()
-        void add(paths)
-      }}
-    >
+    <section className={`board plan canvas-board${over ? ' dropping' : ''}`} aria-label="לוח השראה">
       <div className="bbar">
         {bar}
-        <div className="fchips" role="group" aria-label="סינון">
+        <div className="fchips" role="group" aria-label="הדגשה">
           {filters.map(([f, label]) =>
             count(f) || f === 'all' ? (
               <button key={f} className="fchip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
@@ -274,45 +488,170 @@ export function Inspiration({ bar, onOpenChapter }: { bar: ReactNode; onOpenChap
           )}
         </div>
         <span className="grow" />
-        <button className="btn" onClick={() => void add()}>
-          <Icon name="plus" size={16} /> תמונות
+        <button className="ib" title="קבוצה: מסגרת עם שם. תמונות שבתוכה זזות איתה" onClick={addGroup}>
+          <Icon name="part-plus" /> קבוצה
+        </button>
+        <button className="btn" title="הוספת תמונות (Ctrl+I). אפשר גם להדביק תמונה (Ctrl+V) או לגרור מהמחשב" onClick={() => void add()}>
+          <Icon name="plus" size={16} /> תמונות <kbd>Ctrl+I</kbd>
         </button>
       </div>
-      {!book.images.length ? (
-        <div className="plan-empty">
-          <Icon name="image" size={32} />
-          <p>לוח ההשראה אוסף תמונות לספר: איך הדמויות נראות, המקומות, האווירה של כל פרק.</p>
-          <p>אפשר לגרור לכאן תמונות מהמחשב, או להוסיף בכפתור. כל תמונה אפשר לשייך לפרק (היא תופיע על הכרטיס שלו) או לדף רקע.</p>
-          <button className="btn" onClick={() => void add()}>
-            <Icon name="plus" size={16} /> הוספת תמונות
+      <div
+        ref={root}
+        className={`canvas${dragging && drag.current?.kind === 'pan' ? ' panning' : ''}`}
+        onPointerDown={(e) => {
+          setSel(null)
+          begin(e, { kind: 'pan', sx: e.clientX, sy: e.clientY, v: view })
+        }}
+        onWheel={wheel}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          setOver(true)
+        }}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(false)}
+        onDrop={(e) => {
+          setOver(false)
+          const paths = droppedImagePaths(e.dataTransfer)
+          if (!paths.length) return
+          e.preventDefault()
+          void add(paths, toCanvas(e.clientX, e.clientY))
+        }}
+      >
+        <div className="plane" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.z})` }}>
+          {groups.map((g) => (
+            <div key={g.id} className="cgroup" style={{ left: g.x, top: g.y, width: g.w, height: g.h }}>
+              <div className="cg-head" title="גרירה מזיזה את הקבוצה עם התמונות שבתוכה" onPointerDown={(e) => begin(e, { kind: 'group', id: g.id, sx: e.clientX, sy: e.clientY, g, inside: inGroup(g) })}>
+                <span onPointerDown={(e) => e.stopPropagation()}>
+                  <TextInput
+                    value={g.title}
+                    aria-label="שם הקבוצה"
+                    onDone={(title) => {
+                      const gs = groups.map((x) => (x.id === g.id ? { ...x, title } : x))
+                      setGroups(gs)
+                      void save(imgs, gs)
+                    }}
+                  />
+                </span>
+                <button
+                  className="ib icon"
+                  title="הסרת הקבוצה (התמונות נשארות)"
+                  aria-label="הסרת הקבוצה"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    const gs = groups.filter((x) => x.id !== g.id)
+                    setGroups(gs)
+                    void save(imgs, gs)
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              </div>
+              <span className="cg-size" title="שינוי גודל" onPointerDown={(e) => begin(e, { kind: 'gsize', id: g.id, sx: e.clientX, sy: e.clientY, g })} />
+            </div>
+          ))}
+          {imgs.map((im) =>
+            im.x === undefined ? null : (
+              <CanvasImage
+                key={im.id}
+                image={im}
+                selected={sel === im.id}
+                dim={filter !== 'all' && kindOf(im) !== filter}
+                label={
+                  im.chapterId
+                    ? { text: `פרק ${num.get(im.chapterId)}: ${chTitle.get(im.chapterId)}`, icon: 'file', go: () => onOpenChapter(im.chapterId!) }
+                    : im.materialId && matById.get(im.materialId)
+                      ? { text: matById.get(im.materialId)!.name, icon: KIND_ICON[matById.get(im.materialId)!.kind], go: () => bg.openMaterial(im.materialId!) }
+                      : null
+                }
+                onAspect={(a) => setAspect((m) => (m[im.file] === a ? m : { ...m, [im.file]: a }))}
+                onDown={(e) => {
+                  setSel(im.id)
+                  // the one picked comes to the front
+                  setImgs((l) => (l[l.length - 1]?.id === im.id ? l : [...l.filter((x) => x.id !== im.id), im]))
+                  begin(e, { kind: 'img', id: im.id, sx: e.clientX, sy: e.clientY, x: im.x!, y: im.y! })
+                }}
+                onSize={(e) => begin(e, { kind: 'size', id: im.id, sx: e.clientX, w: im.w ?? DEFAULT_W })}
+                onOpen={() => setOpen(im)}
+              />
+            )
+          )}
+        </div>
+        {!imgs.length && !groups.length && (
+          <div className="plan-empty canvas-empty" onPointerDown={(e) => e.stopPropagation()}>
+            <Icon name="image" size={32} />
+            <p>לוח ההשראה הוא משטח חופשי: גוררים לכאן תמונות מהמחשב, מדביקים (Ctrl+V) או מוסיפים (Ctrl+I), ומסדרים אותן איך שרוצים. אפשר לאסוף תמונות לקבוצות עם שם.</p>
+            <p>גלגלת מקרבת ומרחיקה, גרירה על רקע ריק מזיזה את הלוח. לחיצה כפולה על תמונה פותחת אותה, ושם אפשר לשייך אותה לפרק (היא תופיע על הכרטיס שלו) או לדף רקע.</p>
+            <button className="btn" onClick={() => void add()}>
+              <Icon name="plus" size={16} /> הוספת תמונות
+            </button>
+          </div>
+        )}
+        <div className="czoom" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="ib icon" title="הרחקה" aria-label="הרחקה" onClick={() => zoomBy(1 / 1.25)}>
+            <Icon name="minus" />
+          </button>
+          <button className="ib" title="חזרה ל-100%" onClick={() => zoomBy(1 / view.z)}>
+            {Math.round(view.z * 100)}%
+          </button>
+          <button className="ib icon" title="קירוב" aria-label="קירוב" onClick={() => zoomBy(1.25)}>
+            <Icon name="plus" />
+          </button>
+          <button className="ib" title="להציג את כל הלוח" onClick={fit}>
+            הכול
           </button>
         </div>
-      ) : (
-        <div className="mood">
-          {shown.map((im) => {
-            const m = im.materialId ? matById.get(im.materialId) : undefined
-            return (
-              <Thumb key={im.id} image={im} onOpen={() => setOpen(im)}>
-                <figcaption>
-                  {im.caption && <span dir="auto">{im.caption}</span>}
-                  {im.chapterId && (
-                    <button className="chip" onClick={() => onOpenChapter(im.chapterId!)}>
-                      <Icon name="file" size={12} /> פרק {num.get(im.chapterId)}: {chTitle.get(im.chapterId)}
-                    </button>
-                  )}
-                  {m && (
-                    <button className="chip mat" onClick={() => bg.openMaterial(m.id)}>
-                      <Icon name={KIND_ICON[m.kind]} size={12} /> {m.name}
-                    </button>
-                  )}
-                </figcaption>
-              </Thumb>
-            )
-          })}
-        </div>
-      )}
-      {over && <div className="pdrop">שחררו כאן כדי להוסיף את התמונות ללוח</div>}
+        {over && <div className="pdrop">שחררו כאן כדי להוסיף את התמונות ללוח</div>}
+      </div>
       {open && <Lightbox image={open} onClose={() => setOpen(null)} />}
     </section>
+  )
+}
+
+function CanvasImage(props: {
+  image: InspirationImage
+  selected: boolean
+  dim: boolean
+  label: { text: string; icon: string; go: () => void } | null
+  onAspect: (a: number) => void
+  onDown: (e: RPointerEvent) => void
+  onSize: (e: RPointerEvent) => void
+  onOpen: () => void
+}) {
+  const { book } = useBg()
+  const { image: im } = props
+  const url = useImageUrl(book.path, im.file)
+  return (
+    <figure
+      className={`cimg${props.selected ? ' sel' : ''}${props.dim ? ' dim' : ''}`}
+      style={{ left: im.x, top: im.y, width: im.w ?? DEFAULT_W }}
+      title={im.caption || 'לחיצה כפולה: פתיחה, כיתוב ושיוך'}
+      onPointerDown={props.onDown}
+      onDoubleClick={props.onOpen}
+    >
+      {url ? (
+        <img
+          src={url}
+          alt={im.caption}
+          draggable={false}
+          onLoad={(e) => {
+            const t = e.currentTarget
+            if (t.naturalWidth) props.onAspect(t.naturalHeight / t.naturalWidth)
+          }}
+        />
+      ) : (
+        <div className="cimg-wait" />
+      )}
+      {(im.caption || props.label) && (
+        <figcaption>
+          {im.caption && <span dir="auto">{im.caption}</span>}
+          {props.label && (
+            <button className="chip" onPointerDown={(e) => e.stopPropagation()} onClick={props.label.go}>
+              <Icon name={props.label.icon} size={12} /> {props.label.text}
+            </button>
+          )}
+        </figcaption>
+      )}
+      {props.selected && <span className="cimg-size" title="שינוי גודל" onPointerDown={(e) => (e.stopPropagation(), props.onSize(e))} />}
+    </figure>
   )
 }

@@ -5,7 +5,7 @@ import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
-import type { GlossaryEntry, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
+import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 
 type BookAnd<T> = OpResult<{ book: Book; value: T }>
 
@@ -42,7 +42,10 @@ const api = {
   /** Without paths, asks which images. value is null when cancelled. */
   addImages: (bookPath: string, link: { chapterId?: string; materialId?: string }, paths?: string[]): Promise<OpResult<{ book: Book; value: InspirationImage[] } | null>> =>
     ipcRenderer.invoke('images:add', bookPath, link, paths),
-  setImages: (bookPath: string, list: InspirationImage[]): Promise<BookAnd<void>> => ipcRenderer.invoke('images:set', bookPath, list),
+  setImages: (bookPath: string, list: InspirationImage[], groups?: InspirationGroup[]): Promise<BookAnd<void>> => ipcRenderer.invoke('images:set', bookPath, list, groups),
+  /** An image pasted from the clipboard (its bytes), placed at `at` on the canvas */
+  addImageData: (bookPath: string, bytes: Uint8Array, ext: string, link: { chapterId?: string; materialId?: string }, at?: { x: number; y: number }): Promise<BookAnd<InspirationImage>> =>
+    ipcRenderer.invoke('images:addData', bookPath, bytes, ext, link, at),
   readImage: (bookPath: string, file: string): Promise<OpResult<Uint8Array>> => ipcRenderer.invoke('images:read', bookPath, file),
   /** The path on disk of a file dropped on the window (images dragged from Explorer) */
   pathForFile: (f: File): string => webUtils.getPathForFile(f),
@@ -112,6 +115,8 @@ const api = {
   defaultFolder: (): Promise<string> => ipcRenderer.invoke('app:defaultFolder'),
   createBook: (parentDir: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:create', parentDir, title),
   openBook: (folder: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:open', folder),
+  /** Renames the book and its folder. The book comes back at its new path. */
+  renameBook: (bookPath: string, title: string): Promise<OpResult<{ book: Book; notice?: string }>> => ipcRenderer.invoke('book:rename', bookPath, title),
   addChapter: (bookPath: string, title: string, partId?: string): Promise<OpResult<{ book: Book; chapterId: string }>> =>
     ipcRenderer.invoke('chapter:add', bookPath, title, partId),
   renameChapter: (bookPath: string, id: string, title: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:rename', bookPath, id, title),
@@ -126,6 +131,14 @@ const api = {
   saveChapter: (bookPath: string, id: string, doc: PMNode): Promise<OpResult<void>> => ipcRenderer.invoke('chapter:save', bookPath, id, doc),
   showFile: (path: string): Promise<void> => ipcRenderer.invoke('shell:showFile', path),
   openInWord: (path: string): Promise<string> => ipcRenderer.invoke('shell:openInWord', path),
+  /** Right-click on selected words: make a background page ('character' | 'place' | 'research') or a glossary entry ('term' | 'original') */
+  onContextBackground: (fn: (kind: string, text: string) => void) => {
+    const h = (_e: unknown, kind: string, text: string) => fn(kind, text)
+    ipcRenderer.on('context:background', h)
+    return () => {
+      ipcRenderer.removeListener('context:background', h)
+    }
+  },
   /** A chapter file was changed outside the app (e.g. saved in Word). Returns an unsubscribe function. */
   onChapterDiskChanged: (fn: (bookPath: string, chapterId: string) => void) => {
     const h = (_e: unknown, bookPath: string, chapterId: string) => fn(bookPath, chapterId)

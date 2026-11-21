@@ -64,6 +64,62 @@ const fontSize = (v: unknown): string | null => {
   return s.endsWith('px') ? `${n * 0.75}pt` : `${n}pt`
 }
 
+/** A run's size in points ("12pt", "16px", 12), or null */
+const sizePt = (v: unknown): number | null => {
+  const s = fontSize(v)
+  return s ? parseFloat(s) : null
+}
+
+/**
+ * The chapter as the book prints it: text imported from Word or Google Docs often carries a size
+ * and a font on every run, which would hide the book's own size and font. The chapter's usual size
+ * and font (the ones most of its text has) are dropped, so that text follows the layout, and other
+ * sizes keep their proportion to it (a line written larger stays larger).
+ */
+export function fitToLayout(doc: PMNode, layout: Pick<BookLayout, 'fontSize'>): PMNode {
+  const sizes = new Map<number, number>()
+  const fonts = new Map<string, number>()
+  const count = (n: PMNode, inHeading: boolean) => {
+    if (n.type === 'text' && n.text && !inHeading) {
+      const ts = n.marks?.find((m) => m.type === 'textStyle')
+      const sz = sizePt(ts?.attrs?.fontSize) ?? 0
+      const f = fontName(ts?.attrs?.fontFamily) ?? ''
+      sizes.set(sz, (sizes.get(sz) ?? 0) + n.text.length)
+      fonts.set(f, (fonts.get(f) ?? 0) + n.text.length)
+    }
+    for (const c of n.content ?? []) count(c, inHeading || n.type === 'heading')
+  }
+  count(doc, false)
+  const top = <K,>(m: Map<K, number>): K | undefined => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const base = top(sizes) ?? 0
+  const baseFont = top(fonts) ?? ''
+  if (!base && !baseFont) return doc
+  const fix = (n: PMNode): PMNode => {
+    if (n.type === 'text') {
+      if (!n.marks?.some((m) => m.type === 'textStyle')) return n
+      const marks: PMMark[] = []
+      for (const m of n.marks) {
+        if (m.type !== 'textStyle') {
+          marks.push(m)
+          continue
+        }
+        const f = fontName(m.attrs?.fontFamily)
+        const sz = sizePt(m.attrs?.fontSize)
+        const font = f && f !== baseFont ? m.attrs?.fontFamily : null
+        let size: string | null = null
+        if (sz) {
+          if (!base) size = String(m.attrs?.fontSize)
+          else if (Math.abs(sz / base - 1) > 0.04) size = `${Math.round(((layout.fontSize * sz) / base) * 2) / 2}pt`
+        }
+        if (font || size) marks.push({ ...m, attrs: { ...m.attrs, fontFamily: font ?? null, fontSize: size } })
+      }
+      return { ...n, marks: marks.length ? marks : undefined }
+    }
+    return n.content ? { ...n, content: n.content.map(fix) } : n
+  }
+  return fix(doc)
+}
+
 function wrapMarks(html: string, marks: PMMark[] | undefined): string {
   let out = html
   const style: string[] = []
@@ -234,7 +290,7 @@ export function bookSections(data: BookData, noteMode: 'end' | 'epub' = 'end', p
     const c = byId.get(id)
     if (!c) return
     const notes: NoteCollector = { prefix: `c${out.length}`, notes: [], mode: noteMode }
-    const body = chapterBodyHtml(c.doc, notes)
+    const body = chapterBodyHtml(fitToLayout(c.doc, publish.layout), notes)
     const html = `<h1 class="bk-ch-title"${dirOf(c.title)}>${esc(c.title)}</h1>\n${body}\n${notesHtml(notes)}`
     out.push({ kind: 'chapter', id: c.id, title: c.title, html, ...(partTitle ? { partTitle } : {}) })
   }
@@ -277,6 +333,7 @@ export function pageGeometry(layout: BookLayout): { w: number; h: number; top: n
 export function bookCss(layout: BookLayout, scope = ''): string {
   const s = scope ? scope + ' ' : ''
   const font = `'${layout.font.replace(/'/g, '')}', 'Frank Ruhl Libre', serif`
+  const titleFont = layout.titleFont ? `'${layout.titleFont.replace(/'/g, '')}', ${font}` : 'inherit'
   return `
 ${s}.bk-sec { font-family: ${font}; font-size: ${layout.fontSize}pt; line-height: ${layout.lineHeight}; color: #1a1a1a; text-align: ${layout.justify ? 'justify' : 'start'}; hyphens: manual; orphans: 2; widows: 2; }
 ${s}.bk-sec p { margin: 0; }
@@ -287,8 +344,9 @@ ${s}.bk-sec h2 { font-size: 1.25em; font-weight: 600; margin: 1.2em 0 0.5em; tex
 ${s}.bk-sec h3 { font-size: 1.1em; font-weight: 600; margin: 1em 0 0.4em; text-align: start; break-after: avoid; }
 ${s}.bk-sec sup.fn { font-size: 0.7em; line-height: 0; }
 ${s}.bk-sec sup.fn a { color: inherit; text-decoration: none; }
-${s}.bk-ch-title { font-size: 1.9em; font-weight: 500; line-height: 1.25; text-align: center; margin: 3.2em 0 2em; break-after: avoid; }
-${s}.bk-part-title { font-size: 2.2em; font-weight: 500; line-height: 1.25; text-align: center; margin: 0; }
+${s}.bk-ch-title { font-family: ${titleFont}; font-size: ${layout.titleSize}pt; font-weight: ${layout.titleBold ? 700 : 500}; line-height: 1.25; text-align: ${layout.titleAlign}; margin: 3.2em 0 2em; break-after: avoid; }
+${s}.bk-part-title { font-family: ${titleFont}; font-size: ${Math.round(layout.titleSize * 1.16)}pt; font-weight: ${layout.titleBold ? 700 : 500}; line-height: 1.25; text-align: center; margin: 0; }
+${s}.bk-m-title, ${s}.bk-title .bk-t { font-family: ${titleFont}; }
 ${s}.bk-part { text-align: center; padding: 2em 0; }
 ${s}.bk-part.own-page { display: flex; flex-direction: column; justify-content: center; align-items: center; }
 ${s}.bk-notes { margin-top: 2em; font-size: 0.85em; line-height: 1.4; text-align: start; break-inside: auto; }

@@ -8,6 +8,7 @@ import { KIND_ICON, KIND_LABEL, KIND_NEW, MATERIAL_KINDS, materialsOf, type Mate
 import { MASTER_LABEL } from '../labels'
 import { translationProgress } from '@shared/translation'
 import { useParagraphCounts } from '../translate'
+import { MATTER_KINDS, type MatterPage } from '@shared/publish'
 
 interface Props {
   book: Book
@@ -36,6 +37,10 @@ interface Props {
   onNewMaterial?: (kind: MaterialKind) => void
   onOpenGlossary?: () => void
   onMaterialMenu?: (m: Material, x: number, y: number) => void
+  /** Renames the book (and its folder) */
+  onRenameBook?: (title: string) => void
+  /** Opens the front and back pages, at one page or at the list of new pages ('new') */
+  onMatter?: (pageId?: string) => void
 }
 
 /** Where a drop would land, for drawing the line / highlight */
@@ -242,6 +247,7 @@ export function Binder(props: Props) {
 
   return (
     <nav className="binder" aria-label="עץ הספר">
+      <BookTitle title={book.title} onRename={props.onRenameBook} />
       <div className="bsec">
         <div
           className={`bitem master${masterActive ? ' active' : ''}`}
@@ -318,6 +324,7 @@ export function Binder(props: Props) {
         )}
       </div>
       {props.bookmarks}
+      <MatterSection {...props} />
       <MaterialsSection {...props} />
     </nav>
   )
@@ -364,13 +371,10 @@ function readFolds(): Record<string, boolean> {
   }
 }
 
-/** Background pages (feature 11) in groups, and the glossary (feature 20) */
-function MaterialsSection(props: Props) {
-  const { book } = props
+function useFolds() {
   const [folds, setFolds] = useState<Record<string, boolean>>(readFolds)
-  const [menu, setMenu] = useState(false)
   const toggle = (k: string) => {
-    const next = { ...folds, [k]: !folds[k] }
+    const next = { ...readFolds(), [k]: !folds[k] }
     setFolds(next)
     try {
       localStorage.setItem(FOLD_KEY, JSON.stringify(next))
@@ -378,6 +382,61 @@ function MaterialsSection(props: Props) {
       /* not remembered */
     }
   }
+  return [folds, toggle] as const
+}
+
+const matterName = (p: MatterPage) => ((p.kind === 'other' || p.kind === 'thanks' || p.kind === 'about') && p.heading ? p.heading : MATTER_KINDS[p.kind].label)
+
+/** The front and back pages (feature 36): a click opens the page for editing */
+function MatterSection(props: Props) {
+  const { book } = props
+  const [folds, toggle] = useFolds()
+  const closed = !!folds.matter
+  const pages = book.publish.matter
+  const row = (p: MatterPage) => (
+    <div key={p.id} className="bitem bsub" role="button" tabIndex={0} title="עריכת העמוד" onClick={() => props.onMatter?.(p.id)} onKeyDown={(e) => e.key === 'Enter' && props.onMatter?.(p.id)}>
+      <Icon name="file" />
+      <span className="name" dir="auto">
+        {matterName(p)}
+      </span>
+    </div>
+  )
+  const front = pages.filter((p) => p.where === 'front')
+  const back = pages.filter((p) => p.where === 'back')
+  return (
+    <div className="bsec">
+      <div className="bitem bfolder bmatter" role="button" tabIndex={0} aria-expanded={!closed} onClick={() => toggle('matter')} onKeyDown={(e) => e.key === 'Enter' && toggle('matter')}>
+        <span className={`chev${closed ? ' closed' : ''}`}>
+          <Icon name="chev" size={12} />
+        </span>
+        <Icon name="book" />
+        <span className="name">עמודי פתיחה וסיום</span>
+        <span className="count">{pages.length}</span>
+        <button className="ib icon addin" title="עמוד חדש: שער, הקדשה, תודות…" aria-label="עמוד חדש" onClick={(e) => (e.stopPropagation(), props.onMatter?.('new'))}>
+          <Icon name="plus" size={13} />
+        </button>
+      </div>
+      {!closed && (
+        <>
+          {front.map(row)}
+          {back.length > 0 && <div className="bsub-sep">אחרי הפרקים</div>}
+          {back.map(row)}
+          {pages.length === 0 && (
+            <div className="bitem bsub muted" role="button" tabIndex={0} onClick={() => props.onMatter?.('new')}>
+              <span className="name">הוספת שער, הקדשה, תודות…</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Background pages (feature 11) in groups, and the glossary (feature 20) */
+function MaterialsSection(props: Props) {
+  const { book } = props
+  const [folds, toggle] = useFolds()
+  const [menu, setMenu] = useState(false)
   useEffect(() => {
     if (!menu) return
     const close = () => setMenu(false)
@@ -464,5 +523,29 @@ function MaterialsSection(props: Props) {
         )
       })}
     </div>
+  )
+}
+
+/** The book's name at the top of the binder; a click renames it (and its folder) */
+function BookTitle({ title, onRename }: { title: string; onRename?: (t: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  if (editing)
+    return (
+      <div className="btitle editing">
+        <RenameField
+          initial={title}
+          label="שם הספר"
+          onDone={(t) => {
+            setEditing(false)
+            if (t && t !== title) onRename?.(t)
+          }}
+        />
+      </div>
+    )
+  return (
+    <button className="btitle" title="שינוי שם הספר (גם שם התיקייה שלו משתנה)" onClick={() => setEditing(true)}>
+      <span dir="auto">{title}</span>
+      <Icon name="rename" size={13} />
+    </button>
   )
 }

@@ -113,8 +113,8 @@ export function GlossaryPane() {
           {book.glossary.map((g) => (
             <div key={g.id} className="gl-entry">
               <div className="gl-row" role="row">
-                <TextInput value={g.term} aria-label="המונח בספר" placeholder="המונח" autoFocus={fresh === g.id} onDone={(term) => patch(g.id, { term: term.trim() })} />
-                <TextInput value={g.original} dir="auto" aria-label="המונח במקור" placeholder="—" onDone={(original) => patch(g.id, { original: original.trim() })} />
+                <TextInput value={g.term} aria-label="המונח בספר" placeholder="המונח" autoFocus={fresh === g.id || (bg.freshTerm === g.id && !g.term)} onDone={(term) => patch(g.id, { term: term.trim() })} />
+                <TextInput value={g.original} dir="auto" aria-label="המונח במקור" placeholder="—" autoFocus={bg.freshTerm === g.id && !!g.term && !g.original} onDone={(original) => patch(g.id, { original: original.trim() })} />
                 <ListInput value={g.variants} placeholder="בפסיקים" onDone={(variants) => patch(g.id, { variants })} />
                 <TextInput value={g.note} aria-label="הערה" placeholder="" onDone={(note) => patch(g.id, { note })} />
                 <button className="ib gl-occ" aria-expanded={openRow === g.id} disabled={!g.term.trim()} title="באילו פרקים המונח מופיע" onClick={() => setOpenRow(openRow === g.id ? null : g.id)}>

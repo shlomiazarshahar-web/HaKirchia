@@ -12,7 +12,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import JSZip from 'jszip'
 import type { Book } from '../shared/types'
-import { bookCss, bookSections, esc, pageGeometry, printBody, printCss, sectionTag, tocEntries, type BookData, type Section } from '../shared/bookhtml'
+import { bookCss, bookSections, esc, fitToLayout, pageGeometry, printBody, printCss, sectionTag, tocEntries, type BookData, type Section } from '../shared/bookhtml'
 import { bookToDocx, type DocxBookItem } from '../shared/docx'
 import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES } from '../shared/publish'
 import * as project from './project'
@@ -58,11 +58,11 @@ export async function exportDocx(bookPath: string, out: string): Promise<void> {
       items.push({ kind: 'part', title: n.title })
       for (const id of n.children) {
         const c = byId.get(id)
-        if (c) items.push({ kind: 'chapter', title: c.title, doc: c.doc })
+        if (c) items.push({ kind: 'chapter', title: c.title, doc: fitToLayout(c.doc, layout) })
       }
     } else {
       const c = byId.get(n.id)
-      if (c) items.push({ kind: 'chapter', title: c.title, doc: c.doc })
+      if (c) items.push({ kind: 'chapter', title: c.title, doc: fitToLayout(c.doc, layout) })
     }
   }
   if (layout.matter) items.push(...backPages(matter).map(matterItem))
@@ -72,7 +72,8 @@ export async function exportDocx(bookPath: string, out: string): Promise<void> {
     pageH: g.h,
     margin: { top: g.top, bottom: g.bottom, side: Math.round((g.inner + g.outer) / 2) },
     font: layout.font,
-    fontSize: layout.fontSize
+    fontSize: layout.fontSize,
+    chapterTitle: { font: layout.titleFont, sizePt: layout.titleSize, bold: layout.titleBold, center: layout.titleAlign === 'center' }
   })
   await fs.writeFile(out, bytes)
 }
@@ -119,7 +120,7 @@ export async function exportEpub(bookPath: string, out: string): Promise<void> {
     { createFolders: false }
   )
   const add = (name: string, text: string) => zip.file(name, text, { createFolders: false })
-  add('OEBPS/book.css', bookCss(layout) + EPUB_CSS)
+  add('OEBPS/book.css', bookCss(layout) + EPUB_CSS + `.bk-ch-title { font-size: ${(layout.titleSize / layout.fontSize).toFixed(2)}em; }\n.bk-part-title { font-size: ${((layout.titleSize * 1.16) / layout.fontSize).toFixed(2)}em; }\n`)
   sections.forEach((s, i) => add(`OEBPS/${fileOf.get(s.id)}`, xhtml(sectionTitle(s), linkFix(sectionTag(s, layout, i)))))
 
   // The reader's own table of contents (nav), with chapters inside their parts
