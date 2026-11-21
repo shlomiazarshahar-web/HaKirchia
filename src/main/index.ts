@@ -13,6 +13,8 @@ import type { PublishSettings } from '../shared/publish'
 import { promises as fsp } from 'fs'
 import type { TypographySettings } from '../shared/hebrew'
 import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../shared/translation'
+import type { GlossaryEntry, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
+import { IMAGE_EXTS } from './background'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -156,6 +158,51 @@ function registerIpc(): void {
   ipcMain.handle('source:read', (_e, b: string, name: string) => wrap(() => project.readSourcePdf(b, name)))
   ipcMain.handle('source:split', (_e, b: string, pdf: string, items: SplitItem[], reuseId?: string) => wrapBook(() => project.createChaptersFromSource(b, pdf, items, reuseId)))
   ipcMain.handle('source:set', (_e, b: string, chapterId: string, src: ChapterSource | null) => wrap(() => project.setSource(b, chapterId, src)))
+  // Background materials round (features 11, 20, 21, 34, 37)
+  ipcMain.handle('material:create', (_e, b: string, kind: MaterialKind, name?: string) => wrap(() => project.createMaterial(b, kind, name)))
+  ipcMain.handle('material:update', (_e, b: string, id: string, patch: Partial<Material>) => wrap(() => project.updateMaterial(b, id, patch)))
+  ipcMain.handle('material:delete', (_e, b: string, id: string) => wrap(() => project.deleteMaterial(b, id)))
+  ipcMain.handle('material:load', (_e, b: string, id: string) => wrap(() => project.loadMaterial(b, id)))
+  ipcMain.handle('material:save', (_e, b: string, id: string, doc: PMNode) => wrap(() => project.saveMaterial(b, id, doc)))
+  ipcMain.handle('material:attach', (_e, b: string, id: string, paths?: string[]) =>
+    wrap(async () => {
+      let files = paths ?? []
+      if (!files.length) {
+        const res = await dialog.showOpenDialog(win!, { title: 'צירוף קבצים לדף', properties: ['openFile', 'multiSelections'] })
+        if (res.canceled || !res.filePaths.length) return null
+        files = res.filePaths
+      }
+      return project.attachFiles(b, id, files)
+    })
+  )
+  ipcMain.handle('material:detach', (_e, b: string, id: string, name: string) => wrap(() => project.detachFile(b, id, name)))
+  ipcMain.handle('material:openFile', (_e, b: string, name: string) => wrap(() => shell.openPath(project.attachmentPath(b, name))))
+  ipcMain.handle('material:showFile', (_e, b: string, id: string) =>
+    wrap(async () => {
+      const book = await project.openBook(b)
+      const f = project.materialFilePath(book, id)
+      if (f && existsSync(f)) shell.showItemInFolder(f)
+    })
+  )
+  ipcMain.handle('glossary:set', (_e, b: string, list: GlossaryEntry[]) => wrap(() => project.setGlossary(b, list)))
+  ipcMain.handle('timeline:set', (_e, b: string, list: TimelineEvent[]) => wrap(() => project.setTimeline(b, list)))
+  ipcMain.handle('images:add', (_e, b: string, link: { chapterId?: string; materialId?: string }, paths?: string[]) =>
+    wrap(async () => {
+      let files = paths ?? []
+      if (!files.length) {
+        const res = await dialog.showOpenDialog(win!, {
+          title: 'הוספת תמונות השראה',
+          filters: [{ name: 'תמונות', extensions: IMAGE_EXTS }],
+          properties: ['openFile', 'multiSelections']
+        })
+        if (res.canceled || !res.filePaths.length) return null
+        files = res.filePaths
+      }
+      return project.addImages(b, files, link)
+    })
+  )
+  ipcMain.handle('images:set', (_e, b: string, list: InspirationImage[]) => wrap(() => project.setImages(b, list)))
+  ipcMain.handle('images:read', (_e, b: string, file: string) => wrap(() => project.readImage(b, file)))
   ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
     updateSettings({ typography })

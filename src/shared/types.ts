@@ -4,6 +4,7 @@ import type { TypographySettings } from './hebrew'
 import type { StopPoint } from './stoppoint'
 import type { ChapterSource } from './translation'
 import type { PublishSettings } from './publish'
+import type { Background } from './background'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -33,7 +34,8 @@ export interface ChapterRef {
 /** The binder tree: chapters and parts at the top level, chapters inside parts. */
 export type OutlineNode = ChapterRef | PartNode
 
-export interface Book {
+/** Background pages, glossary, inspiration images and timeline (round 7) are part of the book */
+export interface Book extends Background {
   /** Absolute path of the book folder */
   path: string
   title: string

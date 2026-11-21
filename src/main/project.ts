@@ -10,6 +10,8 @@ import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
 import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
 import * as drafts from './drafts'
+import * as bg from './background'
+import { normalizeBackground, type GlossaryEntry, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { chapterParagraphCount, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
@@ -20,7 +22,7 @@ import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
 export { MANIFEST, CHAPTERS_DIR }
 const BACKUP_DIR = 'גיבוי קבצים מקוריים'
 
-interface Manifest {
+interface Manifest extends bg.BackgroundManifest {
   app: 'hakirchia'
   version: 1
   title: string
@@ -106,6 +108,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   alts: (m.alts ?? []).filter((a) => m.chapters.some((c) => c.id === a.chapterId)),
   sources: Object.fromEntries(Object.entries(m.sources ?? {}).filter(([id]) => m.chapters.some((c) => c.id === id))),
   publish: normalizePublish(m.publish),
+  ...normalizeBackground(m, m.chapters.map((c) => c.id)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
 
@@ -710,4 +713,49 @@ export function checkChanged(bookPath: string, fileName: string): Promise<string
     known.set(key, fp)
     return ch.id
   })
+}
+
+// ---------------------------------------------------------------------------
+// Background materials round (features 11, 20, 21, 34, 37); see background.ts
+// ---------------------------------------------------------------------------
+
+/** Runs a change to the background data in the book's queue, then saves the manifest */
+function withManifest<T>(bookPath: string, fn: (m: Manifest) => Promise<T>): Promise<{ book: Book; value: T }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    // keep only valid data, and drop links to chapters that were deleted
+    Object.assign(m, normalizeBackground(m, m.chapters.map((c) => c.id)))
+    const value = await fn(m)
+    await writeManifest(bookPath, m)
+    return { book: toBook(bookPath, m), value }
+  })
+}
+
+export const createMaterial = (bookPath: string, kind: MaterialKind, name?: string) => withManifest(bookPath, (m) => bg.createMaterial(bookPath, m, kind, name))
+export const updateMaterial = (bookPath: string, id: string, patch: Partial<Material>) => withManifest(bookPath, (m) => bg.updateMaterial(bookPath, m, id, patch))
+export const deleteMaterial = (bookPath: string, id: string) => withManifest(bookPath, (m) => bg.deleteMaterial(bookPath, m, id))
+export const attachFiles = (bookPath: string, id: string, paths: string[]) => withManifest(bookPath, (m) => bg.attachFiles(bookPath, m, id, paths))
+export const detachFile = (bookPath: string, id: string, name: string) => withManifest(bookPath, (m) => bg.detachFile(bookPath, m, id, name))
+export const addImages = (bookPath: string, paths: string[], link: { chapterId?: string; materialId?: string }) => withManifest(bookPath, (m) => bg.addImages(bookPath, m, paths, link))
+export const setImages = (bookPath: string, list: InspirationImage[]) => withManifest(bookPath, (m) => bg.setImages(bookPath, m, list))
+export const setGlossary = (bookPath: string, list: GlossaryEntry[]) =>
+  withManifest(bookPath, async (m) => {
+    m.glossary = list
+  })
+export const setTimeline = (bookPath: string, list: TimelineEvent[]) =>
+  withManifest(bookPath, async (m) => {
+    m.timeline = list
+  })
+
+export function loadMaterial(bookPath: string, id: string): Promise<LoadedChapter> {
+  return serial(bookPath, async () => bg.loadMaterial(bookPath, await readManifest(bookPath), id))
+}
+export function saveMaterial(bookPath: string, id: string, doc: PMNode): Promise<void> {
+  return serial(bookPath, async () => bg.saveMaterial(bookPath, await readManifest(bookPath), id, doc))
+}
+export const readImage = (bookPath: string, file: string) => bg.readImage(bookPath, file)
+export const attachmentPath = bg.attachmentPath
+export function materialFilePath(book: Book, id: string): string | null {
+  const m = book.materials.find((x) => x.id === id)
+  return m ? bg.materialPath(book.path, m) : null
 }

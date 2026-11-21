@@ -4,6 +4,7 @@ import { STATUS_LABELS } from '@shared/types'
 import { CHAPTERS_DIR } from '@shared/constants'
 import { translationProgress } from '@shared/translation'
 import { useParagraphCounts } from '../translate'
+import { InChapter } from './Background'
 import { AltsSection, NotesSection, VersionsSection, type DraftsContext } from './Drafts'
 
 interface Props {
@@ -103,6 +104,7 @@ export function Inspector({ book, chapter, onMeta, onShowFile, drafts, focusNote
           )}
         </div>
       )}
+      <InChapter chapterId={chapter.id} />
       <NotesSection book={book} chapter={chapter} {...drafts} focusNote={focusNote} />
       <VersionsSection book={book} chapter={chapter} {...drafts} />
       <AltsSection book={book} chapter={chapter} {...drafts} />

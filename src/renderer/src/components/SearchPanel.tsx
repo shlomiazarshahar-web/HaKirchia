@@ -12,7 +12,7 @@ interface Props {
   /** Open with the replace field showing (Ctrl+H) */
   replace: boolean
   /** Text to search for when the panel opens (the selected text), or a new request to focus it */
-  seed: { text: string; n: number }
+  seed: { text: string; n: number; rep?: string }
   /** The chapter being written now, for "only this chapter" */
   currentId: string | null
   onGo: (chapterId: string, t: JumpTarget) => void
@@ -67,6 +67,7 @@ export function SearchPanel({ book, replace, seed, currentId, onGo, onClose, onC
   useEffect(() => {
     if (replace) setShowRep(true)
     if (seed.text) setQuery(seed.text)
+    if (seed.rep !== undefined) setRep(seed.rep)
     requestAnimationFrame(() => {
       qRef.current?.focus()
       qRef.current?.select()

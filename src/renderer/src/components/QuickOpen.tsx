@@ -4,12 +4,12 @@ import { Icon } from './Icons'
 
 export interface QuickEntry extends QuickItem {
   /** chapter, part, bookmark, scene or view: the icon and the small label */
-  kind: 'chapter' | 'part' | 'bookmark' | 'scene' | 'view'
+  kind: 'chapter' | 'part' | 'bookmark' | 'scene' | 'view' | 'material'
   run: () => void
 }
 
-const KIND_LABEL: Record<QuickEntry['kind'], string> = { chapter: 'פרק', part: 'חלק', bookmark: 'סימנייה', scene: 'סצנה', view: 'תצוגה' }
-const KIND_ICON: Record<QuickEntry['kind'], string> = { chapter: 'file', part: 'part', bookmark: 'bookmark', scene: 'scene', view: 'master' }
+const KIND_LABEL: Record<QuickEntry['kind'], string> = { chapter: 'פרק', part: 'חלק', bookmark: 'סימנייה', scene: 'סצנה', view: 'תצוגה', material: 'חומרי רקע' }
+const KIND_ICON: Record<QuickEntry['kind'], string> = { chapter: 'file', part: 'part', bookmark: 'bookmark', scene: 'scene', view: 'master', material: 'person' }
 
 /** Ctrl+P (feature 33): a box in the middle of the screen; type a few letters, Enter jumps there. */
 export function QuickOpen({ entries, onClose }: { entries: QuickEntry[]; onClose: () => void }) {

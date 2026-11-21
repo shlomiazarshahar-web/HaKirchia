@@ -33,10 +33,21 @@ import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Dr
 import { ReadingView } from './components/ReadingView'
 import { MatterDialog } from './components/MatterDialog'
 import type { PublishSettings } from '@shared/publish'
+import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
+import { BgContext, type BgActions } from './components/bgctx'
+import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
+import { setGlossaryTerms } from './background'
 
 type Toast = { text: string; error?: boolean } | null
-type Dialog = { kind: 'newBook' } | { kind: 'settings' } | { kind: 'matter' } | { kind: 'delete'; chapter: Chapter } | { kind: 'deletePart'; part: PartNode } | null
-type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | null
+type Dialog =
+  | { kind: 'newBook' }
+  | { kind: 'settings' }
+  | { kind: 'matter' }
+  | { kind: 'delete'; chapter: Chapter }
+  | { kind: 'deletePart'; part: PartNode }
+  | { kind: 'deleteMaterial'; material: Material }
+  | null
+type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | { material: Material; x: number; y: number } | null
 type View = 'write' | 'master' | 'board' | 'read'
 
 const SAVE_LABEL: Record<SaveState, string> = { saved: 'נשמר', dirty: 'יש שינויים…', saving: 'שומר…', error: 'השמירה נכשלה' }
@@ -75,7 +86,10 @@ export default function App() {
   const [stopAsk, setStopAsk] = useState<{ closingApp: boolean; resolve: (close: boolean) => void } | null>(null)
   const [niqqudOpen, setNiqqudOpen] = useState(false)
   /** Find and replace panel (feature 24): open with the replace field or not, and the text to look for */
-  const [find, setFind] = useState<{ replace: boolean; seed: { text: string; n: number } } | null>(null)
+  const [find, setFind] = useState<{ replace: boolean; seed: { text: string; n: number; rep?: string } } | null>(null)
+  /** Round 7: the planning tab's view (cards, timeline, inspiration), and the background page just created */
+  const [planMode, setPlanMode] = useState<PlanMode>('cards')
+  const [freshMaterial, setFreshMaterial] = useState<string | null>(null)
   /** Ctrl+P quick jump (feature 33) */
   const [quick, setQuick] = useState(false)
   /** A bookmark just added, asking for its name (feature 30) */
@@ -544,8 +558,10 @@ export default function App() {
         out.push({ kind: 'scene', id: `${scenes.chapterId}-${i}`, label: sc.label, extra: `סצנה ${i + 1} · ${titles.get(scenes.chapterId) ?? ''}`, run: () => ed && !ed.isDestroyed && applyJump(ed, { pos: sc.pos }) })
       )
     }
+    for (const m of book.materials) out.push({ kind: 'material', id: m.id, label: m.name, extra: `${KIND_ONE[m.kind]}${m.aliases.length ? ` · ${m.aliases.join(', ')}` : ''}`, run: () => void openBeside({ kind: 'material', id: m.id }) })
+    out.push({ kind: 'view', id: 'glossary', label: 'מילון מונחים ושמות', extra: 'חומרי רקע', run: () => void openBeside({ kind: 'glossary' }) })
     out.push({ kind: 'view', id: 'master', label: MASTER_LABEL, extra: 'כל הפרקים ברצף', run: () => void switchView('master') })
-    out.push({ kind: 'view', id: 'board', label: 'לוח שעם', extra: 'כרטיס לכל פרק', run: () => void switchView('board') })
+    out.push({ kind: 'view', id: 'board', label: 'תכנון', extra: 'כרטיסים, ציר זמן והשראה', run: () => void switchView('board') })
     return out
   }
 
@@ -707,7 +723,89 @@ export default function App() {
     const next = normalizeLayout(split, book, activeId)
     if (JSON.stringify(next) !== JSON.stringify(split)) updateSplit(next)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book?.chapters, book?.alts])
+  }, [book?.chapters, book?.alts, book?.materials])
+
+  // The glossary and the names of characters and places are marked in the chapter editors (feature 20)
+  useEffect(() => {
+    if (book) setGlossaryTerms(book)
+  }, [book])
+
+  // ---------------------------------------------------------------------------
+  // Background materials (round 7)
+  // ---------------------------------------------------------------------------
+
+  /** Shows something next to the pane in focus (a background page, the glossary), or brings it forward when already shown */
+  const openBeside = async (content: { kind: 'material'; id: string } | { kind: 'glossary' }) => {
+    if (!book || !split) return
+    if (view !== 'write') {
+      await flushAll()
+      setEditor(null)
+      setMasterFocusId(null)
+      setView('write')
+    }
+    const isIt = (p: (typeof split.panes)[number]) => p.content.kind === content.kind && ('id' in content ? 'id' in p.content && p.content.id === content.id : true)
+    const shown = split.panes.find(isIt)
+    if (shown) return setFocusKey(shown.key)
+    const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
+    let l: PaneLayout
+    let at: number
+    const aside = split.panes.findIndex((p) => p.content.kind === 'material' || p.content.kind === 'glossary')
+    if (aside >= 0) {
+      // a background page is already open: it makes way for this one
+      at = aside
+      l = setPaneContent(split, at, content)
+    } else if (split.panes.length < MAX_PANES) {
+      l = addPane(split, content, i)
+      at = i + 1
+    } else {
+      at = split.panes.findIndex((_, j) => j !== i)
+      l = setPaneContent(split, at, content)
+    }
+    updateSplit(l)
+    setFocusKey(l.panes[at].key)
+  }
+
+  const newMaterial = async (kind: MaterialKind) => {
+    if (!book) return
+    const r = await api.createMaterial(book.path, kind)
+    if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי ליצור את הדף', true)
+    setBook(r.value.book)
+    setFreshMaterial(r.value.value.id)
+    setTimeout(() => setFreshMaterial(null), 1500)
+    void openBeside({ kind: 'material', id: r.value.value.id })
+  }
+
+  const deleteMaterial = async (m: Material) => {
+    if (!book) return
+    setDialog(null)
+    await flushAll()
+    const r = await api.deleteMaterial(book.path, m.id)
+    if (!r.ok || !r.value) return show(r.error ?? 'המחיקה נכשלה', true)
+    setBook(r.value.book)
+    show(`הדף "${m.name}" נמחק. קובץ ה-Word שלו עבר לסל המחזור`)
+  }
+
+  const bgActions: BgActions | null = book
+    ? {
+        book,
+        onBook: (b) => setBook((cur) => (cur && cur.path === b.path ? b : cur)),
+        show,
+        goTo: (id, t) => void goTo(id, t),
+        openMaterial: (id) => void openBeside({ kind: 'material', id }),
+        openGlossary: () => void openBeside({ kind: 'glossary' }),
+        newMaterial: (k) => void newMaterial(k),
+        deleteMaterial: (id) => {
+          const m = book.materials.find((x) => x.id === id)
+          if (m) setDialog({ kind: 'deleteMaterial', material: m })
+        },
+        findReplace: (text, rep) => {
+          if (focusMode) exitFocus()
+          setDrawerOpen(false)
+          setFind((f) => ({ replace: true, seed: { text, rep, n: (f?.seed.n ?? 0) + 1 } }))
+        },
+        freshMaterial
+      }
+    : null
 
   /** Front and back pages, author and page layout (features 31, 36, 16) */
   const savePublish = async (p: PublishSettings) => {
@@ -903,7 +1001,7 @@ export default function App() {
           <span className="crumb">
             {book.title}
             {inWrite && trMode ? ' · תרגום' : ''}
-            {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · לוח שעם' : inRead ? ' · קריאה' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
+            {inMaster ? ` · ${MASTER_LABEL}` : inBoard ? ' · תכנון' : inRead ? ' · קריאה' : writeChapter ? ` · ${writeChapter.title}` : writeMaster ? ` · ${MASTER_LABEL}` : ''}
           </span>
         )}
       </div>
@@ -925,9 +1023,9 @@ export default function App() {
                 <Icon name="master" />
                 {MASTER_LABEL}
               </button>
-              <button className="tab" role="tab" aria-selected={view === 'board'} title="כרטיס לכל פרק, עם תקציר וסטטוס" onClick={() => switchView('board')}>
+              <button className="tab" role="tab" aria-selected={view === 'board'} title="תכנון הספר: כרטיס לכל פרק, ציר הזמן של הסיפור ולוח השראה" onClick={() => switchView('board')}>
                 <Icon name="grid" />
-                לוח שעם
+                תכנון
               </button>
               <button className="tab" role="tab" aria-selected={view === 'read'} disabled={empty} title="מצב קריאה: הספר כמו ספר מודפס, עמוד מול עמוד, בלי כלי עריכה" onClick={() => switchView('read')}>
                 <Icon name="book" />
@@ -1029,10 +1127,14 @@ export default function App() {
 
       {book && !inBoard && !inRead && <FormatBar editor={editor} onBookmark={toggleBookmark} onNote={addNoteHere} onDrawer={toDrawer} />}
 
+      <BgContext.Provider value={bgActions}>
       <div className="body">
         {!book && <Home books={books} onOpen={openBook} onNew={() => setDialog({ kind: 'newBook' })} onOpenFolder={openFolder} onForget={(p) => api.forgetBook(p).then(refreshLibrary)} />}
-        {inBoard && (
+        {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
+        {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
+        {inBoard && planMode === 'cards' && (
           <CorkBoard
+            modeSwitch={<PlanSwitch mode={planMode} onMode={setPlanMode} />}
             key={book!.path}
             book={book!}
             onOpen={openChapter}
@@ -1078,6 +1180,12 @@ export default function App() {
               scenes={inWrite ? scenes : null}
               onScene={goToScene}
               bookmarks={<BookmarkList book={book} list={bookmarks} onGo={(b) => void goTo(b.chapterId, { pos: b.pos, before: b.before, after: b.after }, b.id)} onRemove={(b) => removeBookmark(b.id)} />}
+              openMaterialIds={inWrite ? split!.panes.flatMap((p) => (p.content.kind === 'material' ? [p.content.id] : [])) : []}
+              glossaryOpen={inWrite && split!.panes.some((p) => p.content.kind === 'glossary')}
+              onOpenMaterial={(id) => void openBeside({ kind: 'material', id })}
+              onNewMaterial={(k) => void newMaterial(k)}
+              onOpenGlossary={() => void openBeside({ kind: 'glossary' })}
+              onMaterialMenu={(material, x, y) => setMenu({ material, x, y })}
             />
             {inMaster ? (
               <MasterView
@@ -1149,6 +1257,7 @@ export default function App() {
           />
         )}
       </div>
+      </BgContext.Provider>
 
       <div className="statusbar">
         {book && !inBoard && !inRead && !empty && (
@@ -1168,7 +1277,13 @@ export default function App() {
             </span>
           )
         ) : inBoard ? (
-          <span>לוח שעם · לחיצה כפולה על כרטיס פותחת את הפרק, לחיצה על השם משנה אותו</span>
+          <span>
+            {planMode === 'cards'
+              ? 'תכנון · לחיצה כפולה על כרטיס פותחת את הפרק, לחיצה על השם משנה אותו'
+              : planMode === 'timeline'
+                ? 'ציר זמן · אירועי הסיפור לפי סדר הזמן. גרירת הנקודה משנה את המקום'
+                : 'לוח השראה · אפשר לגרור לכאן תמונות מהמחשב'}
+          </span>
         ) : inRead ? (
           <span>מצב קריאה · חיצים או גלגלת להפוך דף · לחיצה כפולה על הטקסט פותחת את הפרק לכתיבה</span>
         ) : (
@@ -1177,7 +1292,7 @@ export default function App() {
         <span className="grow" />
         {selWords > 0 && <span className="wc sel">{selWords.toLocaleString('he-IL')} מילים מסומנות</span>}
         {writeChapter && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
-        {inBoard && !empty && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {inBoard && !empty && planMode === 'cards' && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
         {book && !inBoard && !empty && (
           <span className="wc" title="סטטיסטיקה בלבד">
             {totalWords.toLocaleString('he-IL')} מילים בספר
@@ -1266,6 +1381,23 @@ export default function App() {
           </button>
         </div>
       )}
+      {menu && 'material' in menu && (
+        <div className="menu" role="menu" style={{ top: Math.min(menu.y, window.innerHeight - 200), left: Math.max(8, menu.x - 200) }} onClick={(e) => e.stopPropagation()}>
+          <button role="menuitem" onClick={() => (void openBeside({ kind: 'material', id: menu.material.id }), setMenu(null))}>
+            <Icon name={KIND_ICON[menu.material.kind]} />
+            פתיחה
+          </button>
+          <button role="menuitem" onClick={() => (book && void api.showMaterialFile(book.path, menu.material.id), setMenu(null))}>
+            <Icon name="folder" />
+            הצגה בתיקייה
+          </button>
+          <div className="msep" />
+          <button role="menuitem" className="danger" onClick={() => (setDialog({ kind: 'deleteMaterial', material: menu.material }), setMenu(null))}>
+            <Icon name="trash" />
+            מחיקת הדף
+          </button>
+        </div>
+      )}
       {menu && 'part' in menu && (
         <div className="menu" role="menu" style={{ top: menu.y, left: Math.max(8, menu.x - 200) }} onClick={(e) => e.stopPropagation()}>
           <button role="menuitem" onClick={() => (setRenamingId(menu.part.id), setMenu(null))}>
@@ -1297,6 +1429,15 @@ export default function App() {
         />
       )}
 
+      {dialog?.kind === 'deleteMaterial' && (
+        <ConfirmDialog
+          title={`למחוק את "${dialog.material.name}"?`}
+          text={`קובץ ה-Word של ה${KIND_ONE[dialog.material.kind]} יעבור לסל המחזור של Windows. התמונות שלו יישארו בלוח ההשראה, בלי שיוך.`}
+          confirmLabel="מחיקה"
+          onCancel={() => setDialog(null)}
+          onConfirm={() => void deleteMaterial(dialog.material)}
+        />
+      )}
       {dialog?.kind === 'deletePart' && (
         <ConfirmDialog
           title={`להסיר את החלק "${dialog.part.title}"?`}
