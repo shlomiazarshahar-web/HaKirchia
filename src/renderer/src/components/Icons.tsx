@@ -52,6 +52,10 @@ export function IconSprite() {
       <symbol id="i-compare" viewBox="0 0 24 24"><path d="M4 4h6v16H4zM14 4h6v16h-6M7 8v.01M17 8h0M16 12h2M6 12h2" /></symbol>
       <symbol id="i-pdf" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" /></symbol>
       <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" /></symbol>
+      <symbol id="i-review" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4zM8 9h8M8 12.5h5" /></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></symbol>
+      <symbol id="i-workshop" viewBox="0 0 24 24"><path d="M5 4h10l4 4v12H5zM15 4v4h4M8 12h8M8 15.5h8M8 8.5h4" /></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><path d="M20 4L3 11l7 2 2 7zM10 13l4-4" /></symbol>
       <symbol id="i-start" viewBox="0 0 24 24"><path d="M5 4v16M5 5h11l-2.5 3.5L16 12H5" /></symbol>
       <symbol id="i-end" viewBox="0 0 24 24"><path d="M4 18h16M7 6l5 5 5-5M12 11V3" /></symbol>

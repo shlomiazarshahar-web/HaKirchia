@@ -15,6 +15,9 @@ import type { TypographySettings } from '../shared/hebrew'
 import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../shared/translation'
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 import { IMAGE_EXTS } from './background'
+import * as ai from './ai'
+import * as workshop from './workshop'
+import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn } from '../shared/review'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -240,6 +243,49 @@ function registerIpc(): void {
   ipcMain.handle('settings:askStopNote', (_e, on: boolean) => {
     updateSettings({ askStopNote: on })
   })
+  // Writing review with Claude (feature 19)
+  ipcMain.handle('ai:settings', (_e, patch: Partial<AiSettings>) => updateSettings({ ai: { ...getSettings().ai, ...patch } }).ai)
+  ipcMain.handle('ai:keyState', () => ai.keyState())
+  ipcMain.handle('ai:setKey', (_e, key: string) => wrap(() => ai.setKey(key)))
+  ipcMain.handle('ai:testKey', () => wrap(() => ai.testKey()))
+  ipcMain.handle('ai:review', (e, jobId: string, req: ReviewRequest) => wrap(() => ai.review(e.sender, jobId, req)))
+  ipcMain.handle('ai:followUp', (e, jobId: string, req: ReviewRequest, rv: Review, chat: ChatTurn[], q: string) => wrap(() => ai.followUp(e.sender, jobId, req, rv, chat, q)))
+  ipcMain.handle('ai:promptIdeas', (_e, jobId: string, theme: string, count: number, avoid: string[]) => wrap(() => ai.promptIdeas(jobId, theme, count, avoid)))
+  ipcMain.handle('ai:cancel', (_e, jobId: string) => ai.cancel(jobId))
+  ipcMain.handle('reviews:list', (_e, b: string) => wrap(() => workshop.readReviews(b)))
+  ipcMain.handle('reviews:put', (_e, b: string, rv: Review, remove?: boolean) => wrap(() => workshop.putReview(b, rv, remove)))
+  ipcMain.handle('reviews:background', (_e, b: string) => wrap(() => workshop.bookBackground(b)))
+  // The workshop (feature 22)
+  ipcMain.handle('workshop:open', () => wrap(() => workshop.openWorkshop()))
+  ipcMain.handle('workshop:create', (_e, prompt: string, title?: string, fromPromptId?: string) => wrap(() => workshop.createExercise(prompt, title, undefined, fromPromptId)))
+  ipcMain.handle('workshop:update', (_e, id: string, patch: { title?: string; prompt?: string }) => wrap(() => workshop.updateExercise(id, patch)))
+  ipcMain.handle('workshop:delete', (_e, id: string) => wrap(() => workshop.deleteExercise(id)))
+  ipcMain.handle('workshop:load', (_e, id: string) => wrap(() => workshop.loadExercise(id)))
+  ipcMain.handle('workshop:save', (_e, id: string, doc: PMNode) => wrap(() => workshop.saveExercise(id, doc)))
+  ipcMain.handle('workshop:review', (_e, id: string, rv: Review, remove?: boolean) => wrap(() => workshop.putExerciseReview(id, rv, remove)))
+  ipcMain.handle('workshop:addPrompts', (_e, texts: string[], source: ExercisePrompt['source']) => wrap(() => workshop.addPrompts(texts, source)))
+  ipcMain.handle('workshop:removePrompt', (_e, id: string) => wrap(() => workshop.removePrompt(id)))
+  ipcMain.handle('workshop:editPrompt', (_e, id: string, text: string) => wrap(() => workshop.editPrompt(id, text)))
+  ipcMain.handle('workshop:import', () =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, {
+        title: 'ייבוא תרגילים (קובצי Word או טקסט)',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Word / טקסט', extensions: ['docx', 'txt', 'md'] }]
+      })
+      if (res.canceled || !res.filePaths.length) return null
+      return workshop.importExercises(res.filePaths)
+    })
+  )
+  ipcMain.handle('workshop:move', () =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, { title: 'איפה לשמור את הסדנה?', defaultPath: workshop.workshopPath(), properties: ['openDirectory', 'createDirectory'] })
+      if (res.canceled || !res.filePaths[0]) return null
+      return workshop.moveWorkshop(res.filePaths[0])
+    })
+  )
+  ipcMain.handle('workshop:showFile', (_e, id: string) => wrap(async () => shell.showItemInFolder(await workshop.exerciseFile(id))))
+  ipcMain.handle('workshop:openInWord', (_e, id: string) => wrap(async () => shell.openPath(await workshop.exerciseFile(id))))
   // Reading and export (features 31, 36, 16)
   ipcMain.handle('book:publish', (_e, b: string, p: PublishSettings) => wrap(() => project.setPublish(b, p)))
   ipcMain.handle('book:exportData', (_e, b: string) => wrap(() => project.exportData(b)))

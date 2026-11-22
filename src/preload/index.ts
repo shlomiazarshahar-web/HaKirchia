@@ -5,6 +5,7 @@ import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
+import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 
 type BookAnd<T> = OpResult<{ book: Book; value: T }>
@@ -51,6 +52,43 @@ const api = {
   pathForFile: (f: File): string => webUtils.getPathForFile(f),
   /** Paragraphs per chapter id, read from the files on disk (translation progress, feature 28) */
   paragraphCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:paraCounts', bookPath),
+  // Writing review with Claude (feature 19). The API key stays in the main process.
+  setAiSettings: (patch: Partial<AiSettings>): Promise<Partial<AiSettings>> => ipcRenderer.invoke('ai:settings', patch),
+  aiKeyState: (): Promise<{ has: boolean; hint: string }> => ipcRenderer.invoke('ai:keyState'),
+  setAiKey: (key: string): Promise<OpResult<{ has: boolean; hint: string }>> => ipcRenderer.invoke('ai:setKey', key),
+  /** value: the model's name, when the key works */
+  testAiKey: (): Promise<OpResult<string>> => ipcRenderer.invoke('ai:testKey'),
+  review: (jobId: string, req: ReviewRequest): Promise<OpResult<{ json: string; usage: Usage; model: string }>> => ipcRenderer.invoke('ai:review', jobId, req),
+  followUp: (jobId: string, req: ReviewRequest, rv: Review, chat: ChatTurn[], q: string): Promise<OpResult<{ text: string; usage: Usage }>> => ipcRenderer.invoke('ai:followUp', jobId, req, rv, chat, q),
+  promptIdeas: (jobId: string, theme: string, count: number, avoid: string[]): Promise<OpResult<{ prompts: string[]; usage: Usage }>> => ipcRenderer.invoke('ai:promptIdeas', jobId, theme, count, avoid),
+  cancelAi: (jobId: string): Promise<void> => ipcRenderer.invoke('ai:cancel', jobId),
+  /** Claude's answer so far, while it is being written */
+  onAiProgress: (fn: (jobId: string, text: string) => void) => {
+    const h = (_e: unknown, jobId: string, text: string) => fn(jobId, text)
+    ipcRenderer.on('ai:progress', h)
+    return () => {
+      ipcRenderer.removeListener('ai:progress', h)
+    }
+  },
+  listReviews: (bookPath: string): Promise<OpResult<Review[]>> => ipcRenderer.invoke('reviews:list', bookPath),
+  putReview: (bookPath: string, rv: Review, remove?: boolean): Promise<OpResult<Review[]>> => ipcRenderer.invoke('reviews:put', bookPath, rv, remove),
+  bookBackground: (bookPath: string): Promise<OpResult<string>> => ipcRenderer.invoke('reviews:background', bookPath),
+  // The workshop (feature 22)
+  openWorkshop: (): Promise<OpResult<Workshop>> => ipcRenderer.invoke('workshop:open'),
+  createExercise: (prompt: string, title?: string, fromPromptId?: string): Promise<OpResult<{ workshop: Workshop; value: Exercise }>> => ipcRenderer.invoke('workshop:create', prompt, title, fromPromptId),
+  updateExercise: (id: string, patch: { title?: string; prompt?: string }): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:update', id, patch),
+  deleteExercise: (id: string): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:delete', id),
+  loadExercise: (id: string): Promise<OpResult<LoadedChapter>> => ipcRenderer.invoke('workshop:load', id),
+  saveExercise: (id: string, doc: PMNode): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:save', id, doc),
+  putExerciseReview: (id: string, rv: Review, remove?: boolean): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:review', id, rv, remove),
+  addPrompts: (texts: string[], source: ExercisePrompt['source']): Promise<OpResult<{ workshop: Workshop; value: number }>> => ipcRenderer.invoke('workshop:addPrompts', texts, source),
+  removePrompt: (id: string): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:removePrompt', id),
+  editPrompt: (id: string, text: string): Promise<OpResult<{ workshop: Workshop; value: void }>> => ipcRenderer.invoke('workshop:editPrompt', id, text),
+  /** Asks for Word/text files. value is null when cancelled. */
+  importExercises: (): Promise<OpResult<{ workshop: Workshop; value: number } | null>> => ipcRenderer.invoke('workshop:import'),
+  moveWorkshop: (): Promise<OpResult<Workshop | null>> => ipcRenderer.invoke('workshop:move'),
+  showExerciseFile: (id: string): Promise<OpResult<void>> => ipcRenderer.invoke('workshop:showFile', id),
+  openExerciseInWord: (id: string): Promise<OpResult<string>> => ipcRenderer.invoke('workshop:openInWord', id),
   /** Makes the whole interface bigger or smaller, and remembers it */
   setZoom: (zoom: number): Promise<void> => {
     webFrame.setZoomFactor(zoom)
