@@ -5,6 +5,8 @@ import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, k
 import { api } from '../api'
 import { EDITOR_FONTS } from '../fonts'
 import { setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
+import { AiSettingsDialog } from './Review'
+import { useAiKey } from '../ai'
 
 /** A small panel under a toolbar button. Closes on Escape or a click outside. */
 export function Popover({
@@ -249,6 +251,8 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
   const { typography: t, customFonts, askStopNote: askStop } = usePrefs()
   const [spell, setSpell] = useState<SpellStatus | null>(null)
   const [word, setWord] = useState('')
+  const [aiOpen, setAiOpen] = useState(false)
+  const aiKey = useAiKey()
   useEffect(() => {
     api.spellStatus().then(setSpell)
   }, [])
@@ -340,6 +344,19 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
           </div>
           <p className="lp-note">הסרה מהרשימה לא משנה טקסט שכבר נכתב בגופן הזה.</p>
         </section>
+
+        <section>
+          <h3>ביקורת כתיבה עם Claude</h3>
+          <div className="set-row">
+            <span>{aiKey.has ? `מוגדר מפתח API (${aiKey.hint})` : 'עדיין לא הוגדר מפתח API'}</span>
+            <span className="grow" />
+            <button className="ib" onClick={() => setAiOpen(true)}>
+              הגדרות ביקורת…
+            </button>
+          </div>
+          <p className="lp-note">מפתח, מודל, הנחיות וסוגי ביקורת. הביקורת עצמה נפתחת מהכפתור "ביקורת" בסרגל העליון כשספר פתוח, או מתוך תרגיל בסדנה.</p>
+        </section>
+        {aiOpen && <AiSettingsDialog onClose={() => setAiOpen(false)} />}
 
         <div className="actions">
           <button className="btn" onClick={onClose} autoFocus>

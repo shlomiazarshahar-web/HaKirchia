@@ -1,3 +1,4 @@
+import type { AiSettings } from './review'
 // Types shared by the main process (disk, docx) and the window (UI).
 import type { PaneLayout } from './panes'
 import type { TypographySettings } from './hebrew'
@@ -133,6 +134,10 @@ export interface Settings {
   askStopNote?: boolean
   /** The translation screen's panes per book path (feature 12), as they were last left */
   translateLayout?: Record<string, PaneLayout>
+  /** Writing review with Claude (feature 19): model, instructions, review kinds. The API key is kept apart, encrypted. */
+  ai?: Partial<AiSettings>
+  /** The workshop's folder (feature 22), when the writer moved it */
+  workshopPath?: string
 }
 
 export interface FocusSettings {

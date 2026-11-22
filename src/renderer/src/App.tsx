@@ -37,6 +37,9 @@ import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from 
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
 import { setGlossaryTerms, setTermClick } from './background'
+import { ReviewPanel } from './components/Review'
+import { Workshop } from './components/Workshop'
+import { initAi } from './ai'
 
 type Toast = { text: string; error?: boolean } | null
 type Dialog =
@@ -111,6 +114,10 @@ export default function App() {
   /** Round 4: a comparison on screen (versions, alternative drafts), the drawer panel, a note just added */
   const [compare, setCompare] = useState<CompareRequest | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  /** Round 8: the review side panel (feature 19); the library's workshop tab and the exercise open in it (feature 22) */
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [homeTab, setHomeTab] = useState<'books' | 'workshop'>('books')
+  const [exerciseId, setExerciseId] = useState<string | null>(null)
   const [focusNote, setFocusNote] = useState<string | null>(null)
   const bookmarks = useBookmarks()
   const editorsVersion = useEditorsVersion()
@@ -136,6 +143,7 @@ export default function App() {
     api.getSettings().then((s) => {
       setTheme(s.theme)
       initPrefs(s)
+      initAi(s)
       lastChapter.current = s.lastChapter ?? {}
       savedLayouts.current = s.splitLayout ?? {}
       savedTr.current = s.translateLayout ?? {}
@@ -637,7 +645,16 @@ export default function App() {
     if (!book) return
     if (focusMode) exitFocus()
     setFind(null)
+    setReviewOpen(false)
     setDrawerOpen((o) => !o)
+  }
+  const toggleReview = () => {
+    if (!book) return
+    if (focusMode) exitFocus()
+    setFind(null)
+    setDrawerOpen(false)
+    if (view === 'board' || view === 'read') void switchView('write')
+    setReviewOpen((o) => !o)
   }
 
   /** Moves the selected text to the drawer (Ctrl+Shift+M); without a selection, opens the drawer */
@@ -1083,6 +1100,21 @@ export default function App() {
           <Icon name="shelf" />
           ספרייה
         </button>
+        {!book && (
+          <>
+            <span className="sep" />
+            <div className="tabs" role="tablist">
+              <button className="tab" role="tab" aria-selected={homeTab === 'books'} onClick={() => setHomeTab('books')}>
+                <Icon name="book" />
+                הספרים שלי
+              </button>
+              <button className="tab" role="tab" aria-selected={homeTab === 'workshop'} title="תרגילי כתיבה קצרים, בלי לפתוח ספר" onClick={() => setHomeTab('workshop')}>
+                <Icon name="workshop" />
+                סדנה
+              </button>
+            </div>
+          </>
+        )}
         {book && (
           <>
             <span className="sep" />
@@ -1128,6 +1160,10 @@ export default function App() {
             <button className="ib" title="מעבר מהיר לפרק, חלק או סימנייה (Ctrl+P)" onClick={() => setQuick(true)}>
               <Icon name="jump" />
               <span className="lbl">מעבר מהיר</span>
+            </button>
+            <button className="ib" title="ביקורת כתיבה עם Claude: על קטע מסומן, על הפרק או על כל הספר" aria-pressed={reviewOpen} onClick={toggleReview}>
+              <Icon name="review" />
+              <span className="lbl">ביקורת</span>
             </button>
             <button className="ib" title="מגירה: טקסט שנחתך או נמחק, ואפשר להחזיר אותו (Ctrl+Shift+M מעביר את הטקסט המסומן)" aria-pressed={drawerOpen} onClick={toggleDrawer}>
               <Icon name="drawer" />
@@ -1201,7 +1237,8 @@ export default function App() {
 
       <BgContext.Provider value={bgActions}>
       <div className="body">
-        {!book && (
+        {!book && homeTab === 'workshop' && <Workshop show={show} openId={exerciseId} onOpen={setExerciseId} />}
+        {!book && homeTab === 'books' && (
           <Home
             books={books}
             onOpen={openBook}
@@ -1329,10 +1366,18 @@ export default function App() {
               </main>
             )}
             {stopCard && stopChapter && inWrite && <StopCard sp={stopCard} chapterTitle={stopChapter.title} onClose={() => setStopCard(null)} />}
-            {inspected && !multi && !find && !drawerOpen && (
+            {inspected && !multi && !find && !drawerOpen && !reviewOpen && (
               <Inspector book={book} chapter={inspected} onMeta={updateMeta} onShowFile={() => api.showFile(chapterPath(inspected))} drafts={draftsCtx} focusNote={focusNote} />
             )}
           </>
+        )}
+        {book && reviewOpen && !find && !focusOn && !inBoard && !inRead && (
+          <ReviewPanel
+            key={book.path}
+            target={{ mode: 'book', book, chapter: inspected ?? null, editor, goTo: (id, t) => void goTo(id, t) }}
+            onClose={() => setReviewOpen(false)}
+            show={show}
+          />
         )}
         {book && drawerOpen && !find && !focusOn && !inBoard && !inRead && <DrawerPanel book={book} editor={editor} onClose={() => setDrawerOpen(false)} show={show} />}
         {book && find && !focusOn && !inRead && (

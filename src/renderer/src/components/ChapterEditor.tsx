@@ -182,13 +182,15 @@ export interface BodyProps {
   title?: string
   /** A background page (feature 11): its free text, saved to its own file. chapterId is then the page's id. */
   materialId?: string
+  /** A workshop exercise (feature 22): saved to its own file. bookPath is then the workshop folder. */
+  exerciseId?: string
 }
 
 /**
  * The text of one chapter, saved automatically to its .docx file. Used by the writing view and,
  * once per chapter, by the master. Reloads itself when the file changes outside the app.
  */
-export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError, altId, title, materialId }: BodyProps) {
+export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError, altId, title, materialId, exerciseId }: BodyProps) {
   const [readOnly, setReadOnly] = useState(warnings.length > 0)
   const [warn, setWarn] = useState(warnings)
   const dirty = useRef(false)
@@ -196,9 +198,9 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
   const latest = useRef<PMNode>(initial)
   const saving = useRef<Promise<void>>(Promise.resolve())
   // an alternative draft is a document of its own: other editors of the chapter must not take its text
-  const docKey = altId ? `alt:${altId}` : materialId ? `mat:${materialId}` : chapterId
+  const docKey = altId ? `alt:${altId}` : materialId ? `mat:${materialId}` : exerciseId ? `ex:${exerciseId}` : chapterId
   /** not a chapter of the book: find, bookmarks, notes, word counts and the drawer leave it alone */
-  const aside = !!altId || !!materialId
+  const aside = !!altId || !!materialId || !!exerciseId
   const ids = useRef({ bookPath, chapterId: docKey })
   const titleRef = useRef(title ?? '')
   titleRef.current = title ?? ''
@@ -222,7 +224,9 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
         ? await api.saveAlt(ids.current.bookPath, altId, latest.current)
         : materialId
           ? await api.saveMaterial(ids.current.bookPath, materialId, latest.current)
-          : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
+          : exerciseId
+            ? await api.saveExercise(exerciseId, latest.current)
+            : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
       if (!r.ok) {
         dirty.current = true
         cb.current.onSaveState('error')
