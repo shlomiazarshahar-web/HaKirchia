@@ -76,7 +76,9 @@ jobs:
           tag_name: v${{ steps.ver.outputs.version }}
           name: הכריכייה, גרסה ${{ steps.ver.outputs.version }}
           body: |
-            להורדה: HaKirchia-Setup (התקנה רגילה) או HaKirchia-Portable (בלי התקנה, פשוט להפעיל).
+            **להתקנה:** מורידים את HaKirchia-Setup-${{ steps.ver.outputs.version }}.exe ומפעילים. ההתקנה שואלת לאן להתקין, יוצרת קיצור דרך בשולחן העבודה ובתפריט התחל, ואפשר להסיר אותה מ"אפליקציות" בהגדרות Windows.
+            התקנה מעל גרסה קודמת מעדכנת אותה; הספרים וההגדרות נשארים.
+            **בלי התקנה:** HaKirchia-Portable-${{ steps.ver.outputs.version }}.exe, פשוט להפעיל.
             Windows עשוי להציג אזהרה "Windows protected your PC": לוחצים "More info" ואז "Run anyway".
           files: dist/*.exe
           make_latest: true

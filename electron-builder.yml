@@ -8,6 +8,7 @@ files:
   - build/icon.png
   - package.json
 asar: true
+copyright: '© 2026 הכריכייה'
 win:
   icon: build/icon.ico
   target:
@@ -16,11 +17,31 @@ win:
     - target: portable
       arch: [x64]
   artifactName: HaKirchia-${version}-${arch}.${ext}
+# The installer (version 1.0): Hebrew, with the logo, asks where to install and for whom,
+# puts shortcuts on the desktop and in the Start menu, and adds a normal uninstaller to
+# Windows "Apps". Uninstalling never touches the books (they live in the writer's own folders)
+# and keeps the app's settings, so installing again brings back the bookshelf.
 nsis:
   oneClick: false
-  allowToChangeInstallationDirectory: true
   perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  installerLanguages: [he_IL]
+  language: '1037'
+  multiLanguageInstaller: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  menuCategory: false
   shortcutName: הכריכייה
+  uninstallDisplayName: הכריכייה ${version}
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
   artifactName: HaKirchia-Setup-${version}.${ext}
 portable:
   artifactName: HaKirchia-Portable-${version}.${ext}

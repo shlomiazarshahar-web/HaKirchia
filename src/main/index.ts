@@ -425,7 +425,20 @@ function registerIpc(): void {
   ipcMain.handle('shell:openInWord', (_e, path: string) => shell.openPath(path))
 }
 
+// One window only: opening the app again (from the desktop or the Start menu) brings the open
+// window to the front instead of a second copy that would write the same chapter files
+if (!app.requestSingleInstanceLock()) app.quit()
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+})
+
 app.whenReady().then(() => {
+  // Same id as the installer's shortcuts (appId in electron-builder.yml), so the taskbar groups
+  // the running window with its pinned shortcut and shows our icon
+  if (process.platform === 'win32') app.setAppUserModelId('com.hakirchia.app')
   Menu.setApplicationMenu(null)
   registerIpc()
   exporter.registerPrintIpc()
