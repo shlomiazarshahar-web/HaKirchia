@@ -3,6 +3,7 @@ import type { RecentBook } from '@shared/types'
 import { Icon } from './Icons'
 import { RenameField } from './Binder'
 import wordmark from '../assets/wordmark.svg'
+import { UpdateStatus } from './Update'
 
 const COVER_COLORS = ['#0F3B33', '#6B2E3A', '#2D3F63', '#5A4A2A', '#3E2F57', '#2F5A4E']
 
@@ -115,6 +116,7 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, o
     <section className="home">
       <img className="wordmark" src={wordmark} alt="הַכְּרִיכִיָּה" />
       <div className="app-version">גרסה {__APP_VERSION__}</div>
+      <UpdateStatus />
       <div className="hhead">
         <h2>הספרים שלי</h2>
         <span className="grow" />

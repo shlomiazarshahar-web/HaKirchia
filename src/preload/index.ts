@@ -6,6 +6,7 @@ import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
+import type { UpdateState } from '../shared/update'
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 
 type BookAnd<T> = OpResult<{ book: Book; value: T }>
@@ -184,6 +185,19 @@ const api = {
     ipcRenderer.on('chapter:disk-changed', h)
     return () => {
       ipcRenderer.removeListener('chapter:disk-changed', h)
+    }
+  },
+  // Auto-update (version 1.1)
+  updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),
+  /** Saves, closes, installs the downloaded version and opens it */
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
+  /** Returns an unsubscribe function */
+  onUpdateState: (fn: (s: UpdateState) => void) => {
+    const h = (_e: unknown, s: UpdateState) => fn(s)
+    ipcRenderer.on('update:state', h)
+    return () => {
+      ipcRenderer.removeListener('update:state', h)
     }
   },
   /**

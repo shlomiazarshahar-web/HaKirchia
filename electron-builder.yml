@@ -43,5 +43,13 @@ nsis:
   runAfterFinish: true
   deleteAppDataOnUninstall: false
   artifactName: HaKirchia-Setup-${version}.${ext}
+# Auto-update (version 1.1): the installed app looks for new versions on this repository's
+# Releases page (the repository is public). The build writes latest.yml next to the installer;
+# the workflow uploads both, and the app reads latest.yml to learn the newest version.
+publish:
+  provider: github
+  owner: shlomiazarshahar-web
+  repo: HaKirchia
+  releaseType: release
 portable:
   artifactName: HaKirchia-Portable-${version}.${ext}

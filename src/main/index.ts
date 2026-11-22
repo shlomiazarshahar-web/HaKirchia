@@ -17,11 +17,21 @@ import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, Mater
 import { IMAGE_EXTS } from './background'
 import * as ai from './ai'
 import * as workshop from './workshop'
+import * as updater from './updater'
 import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn } from '../shared/review'
 
 let win: BrowserWindow | null = null
 let allowClose = false
 let closeTimer: ReturnType<typeof setTimeout> | null = null
+/** The writer asked to restart into the downloaded version: once everything is saved, install it */
+let installAfterClose = false
+
+/** Lets the window close for good: into the new version's installer, or just closed */
+function finishClose(): void {
+  allowClose = true
+  if (installAfterClose) updater.installNow()
+  else win?.close()
+}
 
 const overlayColors = (theme: Theme) =>
   theme === 'dark' ? { color: '#121716', symbolColor: '#E2E8E5', height: 34 } : { color: '#DDE3E0', symbolColor: '#1B2321', height: 34 }
@@ -83,10 +93,7 @@ function createWindow(): void {
     e.preventDefault()
     if (closeTimer) return
     win?.webContents.send('app:flush-before-close')
-    closeTimer = setTimeout(() => {
-      allowClose = true
-      win?.close()
-    }, 4000)
+    closeTimer = setTimeout(finishClose, 4000)
   })
   void loadAppPage(win)
 }
@@ -233,6 +240,16 @@ function registerIpc(): void {
   ipcMain.on('app:close-cancelled', () => {
     if (closeTimer) clearTimeout(closeTimer)
     closeTimer = null
+    installAfterClose = false
+  })
+  // auto-update (version 1.1)
+  ipcMain.handle('update:state', () => updater.updateState())
+  ipcMain.handle('update:check', () => updater.checkForUpdates())
+  ipcMain.handle('update:install', () => {
+    if (updater.updateState().kind !== 'ready') return
+    // closes the way it always does (saving first, maybe asking "what next?"), then installs
+    installAfterClose = true
+    win?.close()
   })
   ipcMain.handle('window:fullscreen', (_e, on: boolean) => {
     win?.setFullScreen(on)
@@ -333,8 +350,8 @@ function registerIpc(): void {
   ipcMain.handle('book:stopPoint', (_e, bookPath: string, sp: StopPoint | null) => wrap(() => project.setStopPoint(bookPath, sp)))
 
   ipcMain.on('app:flushed', () => {
-    allowClose = true
-    win?.close()
+    if (closeTimer) clearTimeout(closeTimer)
+    finishClose()
   })
 
   ipcMain.handle('library:list', (): RecentBook[] =>
@@ -443,6 +460,7 @@ app.whenReady().then(() => {
   registerIpc()
   exporter.registerPrintIpc()
   createWindow()
+  updater.setupUpdater(() => win)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

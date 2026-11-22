@@ -38,6 +38,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Test builds get a test version number
+        # e.g. 1.1.0-test.42: lower than the real 1.1.0, so a test copy updates itself to the
+        # real version once it is released (that is how auto-update gets tried end to end)
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: npm version "$(node -p "require('./package.json').version")-test.${{ github.run_number }}" --no-git-tag-version
       - name: Read the version number
         id: ver
         shell: bash
@@ -66,6 +72,7 @@ jobs:
           body: |
             גרסת בדיקה של בקשת השינוי #${{ github.event.pull_request.number }}, לפני מיזוג. מתעדכנת בכל שינוי.
             להורדה: HaKirchia-Setup (התקנה רגילה) או HaKirchia-Portable (בלי התקנה).
+            גרסה ${{ steps.ver.outputs.version }}: כשתצא הגרסה הרגילה, העותק הזה יתעדכן אליה מעצמו.
           files: dist/*.exe
           prerelease: true
           make_latest: false
@@ -80,5 +87,10 @@ jobs:
             התקנה מעל גרסה קודמת מעדכנת אותה; הספרים וההגדרות נשארים.
             **בלי התקנה:** HaKirchia-Portable-${{ steps.ver.outputs.version }}.exe, פשוט להפעיל.
             Windows עשוי להציג אזהרה "Windows protected your PC": לוחצים "More info" ואז "Run anyway".
-          files: dist/*.exe
+            מגרסה 1.1 והלאה האפליקציה המותקנת מתעדכנת מעצמה (הגרסה הניידת רק מודיעה שיש גרסה חדשה).
+          # latest.yml and the .blockmap are what the installed app reads to update itself
+          files: |
+            dist/*.exe
+            dist/latest.yml
+            dist/*.blockmap
           make_latest: true
