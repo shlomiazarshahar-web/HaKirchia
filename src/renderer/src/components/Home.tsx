@@ -114,6 +114,7 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, o
   return (
     <section className="home">
       <img className="wordmark" src={wordmark} alt="הַכְּרִיכִיָּה" />
+      <div className="app-version">גרסה {__APP_VERSION__}</div>
       <div className="hhead">
         <h2>הספרים שלי</h2>
         <span className="grow" />
