@@ -412,6 +412,8 @@ ${s}.bk-fnotes p { margin: 0 0 0.15em; text-indent: 0; text-align: start; }
 ${s}.bk-sec p.fn-cut { text-align-last: ${layout.justify ? 'justify' : 'auto'}; }
 ${s}.bk-sec p.fn-rest { text-indent: 0; orphans: 1; }
 ${s}.bk-sec p.fn-cut { widows: 1; }
+/* a page that starts here by our cut keeps no space above, as the page would have without the cut (a forced break keeps margins) */
+${s}.bk-sec .fn-cont { margin-top: 0 !important; }
 ${s}.bk-sec sup.fn[data-note] { color: inherit; }
 ${elements}
 `
