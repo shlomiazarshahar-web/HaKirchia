@@ -410,7 +410,8 @@ ${s}.bk-fnotes { line-height: 1.35; text-align: start; text-indent: 0; break-ins
 ${s}.bk-fnotes .fn-line { width: 30%; border-top: 1px solid #999; margin: 0.4em 0 0.35em; }
 ${s}.bk-fnotes p { margin: 0 0 0.15em; text-indent: 0; text-align: start; }
 ${s}.bk-sec p.fn-cut { text-align-last: ${layout.justify ? 'justify' : 'auto'}; }
-${s}.bk-sec p.fn-rest { text-indent: 0; }
+${s}.bk-sec p.fn-rest { text-indent: 0; orphans: 1; }
+${s}.bk-sec p.fn-cut { widows: 1; }
 ${s}.bk-sec sup.fn[data-note] { color: inherit; }
 ${elements}
 `

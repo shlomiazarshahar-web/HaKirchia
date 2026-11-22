@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RecentBook } from '@shared/types'
 import { Icon } from './Icons'
 import { RenameField } from './Binder'
@@ -45,6 +45,18 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, o
       return false
     }
   })
+  const menuRef = useRef<HTMLDivElement>(null)
+  // RTL: the menu opens to the left of the pointer, and stays inside the window.
+  useLayoutEffect(() => {
+    const el = menuRef.current
+    if (!menu || !el) return
+    const { width, height } = el.getBoundingClientRect()
+    const left = menu.x - width >= 8 ? menu.x - width : Math.min(menu.x, window.innerWidth - width - 8)
+    const top = Math.min(menu.y, window.innerHeight - height - 8)
+    el.style.left = `${Math.max(8, left)}px`
+    el.style.top = `${Math.max(8, top)}px`
+    el.style.visibility = 'visible'
+  }, [menu])
   useEffect(() => {
     if (!menu) return
     const close = () => setMenu(null)
@@ -138,7 +150,7 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, o
         </div>
       )}
       {menu && (
-        <div className="menu" role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+        <div ref={menuRef} className="menu" role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, visibility: 'hidden' }} onClick={(e) => e.stopPropagation()}>
           {menu.book.exists && (
             <button role="menuitem" onClick={() => (setMenu(null), onOpen(menu.book.path))}>
               <Icon name="book" /> פתיחה

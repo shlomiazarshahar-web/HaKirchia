@@ -51,22 +51,59 @@ export function placeFootnotes(flow: HTMLElement, geom: PageGeom): number {
     const page = at(refs[0].getBoundingClientRect(), f).page
     let group = refs.filter((r) => at(r.getBoundingClientRect(), f).page === page)
     let split: { node: Text; offset: number } | null = null
-    let notes: HTMLElement | null = null
-    for (let attempt = 0; attempt < 4 && group.length; attempt++) {
-      notes?.remove()
-      notes = notesBox(group)
-      // measure the notes at the width of a page, in the book's font
-      ;(refs[0].closest('section') ?? flow).append(notes)
-      const h = notes.offsetHeight
-      notes.remove()
-      split = findSplit(flow, refs[0], page, colH - h - SLACK, at, charRect)
-      // a cut never falls on a note mark: the mark's whole line moves on
-      if (split?.node.parentElement?.closest('sup.fn')) split = lineStartBefore(split.node, at(charRect(split.node, 0) ?? new DOMRect()).page, at, charRect) ?? split
-      const keep = split ? group.filter((r) => before(r, split!)) : group
-      if (keep.length === group.length) break
-      group = keep
+    /**
+     * Where this page's text ends when the notes go under it. Every mark before the cut has its note
+     * on this page (at most `limit` of them): a mark that would sit above the cut without its note
+     * moves on with its line.
+     */
+    const plan = (limit: number) => {
+      let n = Math.min(limit, group.length)
+      let inside = n
+      for (let attempt = 0; attempt < 6 && n > 0; attempt++) {
+        const probe = notesBox(refs.slice(0, n))
+        // measure the notes at the width of a page, in the book's font
+        ;(refs[0].closest('section') ?? flow).append(probe)
+        const h = probe.offsetHeight
+        probe.remove()
+        split = findSplit(flow, refs[0], page, colH - h - SLACK, at, charRect)
+        // a cut never falls on a note mark: the mark's whole line moves on
+        if (split?.node.parentElement?.closest('sup.fn')) split = lineStartBefore(split.node, at(charRect(split.node, 0) ?? new DOMRect()).page, at, charRect) ?? split
+        inside = split ? refs.filter((r) => before(r, split!)).length : refs.length
+        if (inside > limit) {
+          // more marks above the cut than notes allowed here: cut before the first one left out
+          const t = firstTextIn(refs[limit])
+          const start = t ? lineStartBefore(t, at(refs[limit].getBoundingClientRect()).page, at, charRect) : null
+          if (start) split = start
+          inside = split ? refs.filter((r) => before(r, split!)).length : refs.length
+        }
+        if (inside === n) break
+        n = Math.min(inside, limit)
+      }
+      group = refs.slice(0, Math.min(inside, limit))
     }
-    if (!group.length || !notes) {
+    plan(refs.length)
+    let notes: HTMLElement | null = null
+    while (group.length) {
+      notes = notesBox(group)
+      cutAt(split, notes, flow)
+      // the notes may not fit after all (a paragraph kept its lines together, say): move the page's last line on
+      for (let tries = 0; tries < 6 && at(notes.getBoundingClientRect()).page !== page; tries++) {
+        const last = lastTextBefore(notes, flow)
+        const start = last ? lineStartBefore(last.node, page, at, charRect, last.offset) : null
+        if (!start || !group.every((r) => before(r, start))) break
+        unsplit(notes)
+        notes.remove()
+        cutAt(start, notes, flow)
+      }
+      if (at(notes.getBoundingClientRect()).page === page) break
+      // still no room (the last line holds a mark): the last mark and its note wait for the next page
+      unsplit(notes)
+      notes.remove()
+      notes = null
+      if (group.length > 1) plan(group.length - 1)
+      else group = []
+    }
+    if (!notes) {
       // not even the first mark's line has room above its note: that line starts the next page
       const r = refs[0]
       const text = firstTextIn(r)
@@ -76,17 +113,6 @@ export function placeFootnotes(flow: HTMLElement, geom: PageGeom): number {
       // safety: the mark has moved; if it did not, give up on it so the loop ends
       if (at(r.getBoundingClientRect()).page === page) r.dataset.placed = 'stuck'
       continue
-    }
-    notes = notesBox(group)
-    cutAt(split, notes, flow)
-    // the notes may not fit after all (a paragraph kept its lines together, say): move the page's last line on
-    for (let tries = 0; tries < 6 && at(notes.getBoundingClientRect()).page !== page; tries++) {
-      const last = lastTextBefore(notes, flow)
-      const start = last ? lineStartBefore(last.node, page, at, charRect, last.offset) : null
-      if (!start || !group.every((r) => before(r, start))) break
-      unsplit(notes)
-      notes.remove()
-      cutAt(start, notes, flow)
     }
     group.forEach((r) => (r.dataset.placed = '1'))
     placed += group.length

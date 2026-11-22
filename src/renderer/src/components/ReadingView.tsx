@@ -154,6 +154,8 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
   useLayoutEffect(() => {
     const f = flow.current
     if (!f) return
+    // a fresh copy of the book every time: placing the notes changes the text, and doing it twice breaks the pages
+    f.innerHTML = html
     // footnotes go to the bottom of their page before the pages are counted
     if (layout.notesAt !== 'chapter') {
       placeFootnotes(f, { colW, colH, stride })
@@ -356,7 +358,6 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
               className={`rd-flow${measure ? '' : ' measuring'}`}
               dir="rtl"
               style={{ width: 2 * colW + gap, height: colH, columnWidth: colW, columnGap: gap, transform: `translateX(${spread * 2 * stride}px)` }}
-              dangerouslySetInnerHTML={{ __html: html }}
             />
           </div>
         </div>

@@ -840,10 +840,12 @@ body { background: #dde3e0; overflow: hidden; }
 .occ-n { font-variant-numeric: tabular-nums; color: var(--w-muted); font-size: 11.5px; min-width: 1.4em; text-align: center; }
 .occ-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .occ ul.occ-rows { grid-template-columns: 1fr; }
-.occ-row { display: flex; gap: 4px; }
-.occ-row > button:first-child { flex: 1; min-width: 0; }
-.occ .occ-row button.occ-c { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; padding: 0 8px; }
-.occ .occ-row button.occ-c:hover { filter: brightness(0.95); }
+.occ-row { display: flex; align-items: center; gap: 4px; padding-inline-end: 6px; border: 1px solid var(--w-line); border-radius: 6px; background: var(--w-panel); }
+.occ-row:hover, .occ-row:focus-within { border-color: var(--w-accent); }
+.occ .occ-row > button:first-child { flex: 1; min-width: 0; border: none; background: none; }
+.occ .occ-row > button:first-child:hover { background: none; }
+.occ .occ-row button.occ-c { all: unset; cursor: pointer; flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 1px 8px; }
+.occ .occ-row button.occ-c:hover, .occ .occ-row button.occ-c[aria-expanded='true'] { background: var(--w-accent); color: var(--w-panel); }
 .occ-hits { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; padding-inline-start: 22px; }
 .occ .occ-hit { display: block; font-size: 13px; line-height: 1.5; border-color: transparent; background: none; white-space: normal; }
 .occ .occ-hit mark { background: var(--w-hl); color: inherit; border-radius: 2px; }
@@ -965,7 +967,7 @@ body { background: #dde3e0; overflow: hidden; }
 .cimg figcaption { direction: rtl; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; padding-top: 4px; color: var(--w-ink); }
 .cimg figcaption > span { width: 100%; }
 .cimg-size { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px; border-radius: 50%; background: var(--w-accent); border: 2px solid var(--w-paper); cursor: nwse-resize; }
-.cgroup, .cg-palette button { --g: var(--w-thread); }
+:where(.cgroup, .cg-palette button) { --g: var(--w-thread); }
 [data-color='green'] { --g: #3f8f5a; }
 [data-color='blue'] { --g: #3a73c4; }
 [data-color='purple'] { --g: #8457c9; }
