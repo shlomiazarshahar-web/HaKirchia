@@ -62,6 +62,7 @@ export function IconSprite() {
       <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-2.3-5.7M20 4v5h-5" /></symbol>
       <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" /></symbol>
       <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" /></symbol>
+      <symbol id="i-import" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 14v6h14v-6" /></symbol>
       <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 14v6h14v-6" /></symbol>
       <symbol id="i-pages" viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v14h-7zM6.5 9h2M15.5 9h2M6.5 12h2M15.5 12h2" /></symbol>
       <symbol id="i-next" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></symbol>

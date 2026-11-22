@@ -1123,3 +1123,42 @@ body { background: #dde3e0; overflow: hidden; }
 .app .ch-title.ex-title { margin-bottom: 12px; }
 .ex-prompt { display: flex; flex-direction: column; gap: 4px; margin-bottom: 24px; font-size: 12px; color: var(--w-muted); }
 .ex-prompt textarea { font-family: var(--editor-font); font-size: 15px; line-height: 1.5; color: var(--w-ink); background: var(--w-panel); border: none; border-inline-start: 3px solid var(--w-thread); border-radius: 0 var(--radius) var(--radius) 0; padding: 8px 12px; resize: vertical; }
+
+/* Round 9: crash recovery (41), daily backups (49), importing a manuscript (42) */
+.dialog .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dialog.recovery { width: min(620px, calc(100vw - 40px)); max-height: calc(100vh - 60px); }
+.rc-list { display: flex; flex-direction: column; gap: 10px; overflow: auto; min-height: 0; }
+.rc-item { border: 1px solid var(--w-line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.rc-head { display: flex; align-items: baseline; gap: 8px; }
+.rc-kind, .rc-when, .rc-meta { font-size: 12px; color: var(--w-muted); }
+.rc-preview { font-family: 'Frank Ruhl Libre', serif; font-size: 14px; line-height: 1.6; background: var(--w-soft); border-radius: 6px; padding: 6px 10px; }
+.rc-missing { font-size: 12.5px; color: var(--w-danger); line-height: 1.5; }
+.ib.danger-text { color: var(--w-danger); }
+.statusbar .bk-status { white-space: nowrap; }
+.statusbar .bk-status.err { color: var(--w-danger); }
+.dialog.backups { width: min(620px, calc(100vw - 40px)); max-height: calc(100vh - 60px); }
+.bk-days { display: flex; flex-direction: column; gap: 4px; overflow: auto; min-height: 60px; border: 1px solid var(--w-line); border-radius: var(--radius); padding: 4px; }
+.bk-dayhead { all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px; width: calc(100% - 16px); }
+.bk-dayhead:hover, .bk-dayhead:focus-visible { background: var(--w-soft); }
+.bk-dayhead .chev { display: inline-block; width: 12px; color: var(--w-muted); transform: rotate(90deg); transition: transform 0.15s; }
+.bk-dayhead .chev.closed { transform: rotate(180deg); }
+.bk-chs { display: flex; flex-direction: column; gap: 2px; padding: 2px 28px 8px 8px; }
+.bk-ch { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 13.5px; }
+.bk-ch.same .bk-title { color: var(--w-muted); }
+.bk-ch.deleted .bk-title { text-decoration: line-through; text-decoration-color: var(--w-danger); }
+.bk-more summary { cursor: pointer; font-size: 13px; color: var(--w-muted); }
+.bk-more[open] summary { margin-bottom: 8px; }
+.bk-set { display: flex; flex-direction: column; gap: 8px; }
+.bk-set select { border: 1px solid var(--w-line); border-radius: 6px; background: var(--w-paper); color: var(--w-ink); padding: 3px 6px; }
+.bk-path { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; direction: ltr; }
+.dialog.import { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 50px); gap: 12px; }
+.dialog.import select { border: 1px solid var(--w-line); border-radius: var(--radius); background: var(--w-paper); color: var(--w-ink); padding: 6px 8px; margin-top: 4px; }
+.im-list { overflow: auto; min-height: 120px; max-height: 42vh; border: 1px solid var(--w-line); border-radius: var(--radius); padding: 4px; display: flex; flex-direction: column; gap: 2px; }
+.im-row { display: flex; align-items: flex-start; gap: 8px; padding: 6px; border-radius: 6px; }
+.im-row:hover { background: var(--w-soft); }
+.im-row input[type='checkbox'] { margin-top: 8px; }
+.im-row.joined { opacity: 0.6; }
+.im-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.im-title { border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--w-ink); padding: 4px 6px; font-weight: 600; font-size: 14px; }
+.im-title:hover, .im-title:focus { border-color: var(--w-line); background: var(--w-paper); }
+.im-preview { font-size: 12px; color: var(--w-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; }

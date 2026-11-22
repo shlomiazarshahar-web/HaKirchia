@@ -29,6 +29,8 @@ interface Props {
   onOpen: (path: string) => void
   onNew: () => void
   onOpenFolder: () => void
+  /** A new book from an existing manuscript in Word (feature 42) */
+  onImport: () => void
   onForget: (path: string) => void
   onRename: (path: string, title: string) => void
   onArchive: (path: string, archived: boolean) => void
@@ -36,7 +38,7 @@ interface Props {
 
 const ARCH_KEY = 'hakirchia.archiveOpen'
 
-export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, onArchive }: Props) {
+export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, onRename, onArchive }: Props) {
   const [menu, setMenu] = useState<{ book: RecentBook; x: number; y: number } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [archOpen, setArchOpen] = useState(() => {
@@ -120,6 +122,9 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onForget, onRename, o
       <div className="hhead">
         <h2>הספרים שלי</h2>
         <span className="grow" />
+        <button className="btn ghost" title="ספר חדש מקובץ Word ארוך (למשל ספר שהורד מגוגל דוקס), מחולק לפרקים לפי הכותרות" onClick={onImport}>
+          ייבוא כתב יד מ־Word
+        </button>
         <button className="btn ghost" onClick={onOpenFolder}>
           פתיחת תיקיית ספר קיימת
         </button>

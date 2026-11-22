@@ -6,6 +6,7 @@ import type { StopPoint } from './stoppoint'
 import type { ChapterSource } from './translation'
 import type { PublishSettings } from './publish'
 import type { Background } from './background'
+import type { BackupSettings } from './backup'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -138,6 +139,8 @@ export interface Settings {
   ai?: Partial<AiSettings>
   /** The workshop's folder (feature 22), when the writer moved it */
   workshopPath?: string
+  /** Daily dated copies of each open book (feature 49) */
+  backup?: Partial<BackupSettings>
 }
 
 export interface FocusSettings {

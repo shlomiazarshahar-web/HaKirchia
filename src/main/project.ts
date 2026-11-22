@@ -274,6 +274,8 @@ export function deleteChapter(bookPath: string, id: string) {
     if (m.sources?.[id]) delete m.sources[id]
     m.chapters = m.chapters.filter((c) => c.id !== id)
     fixup(m)
+    // saved here too: when the last chapter goes, no file is renamed and syncFileNames writes nothing
+    await writeManifest(bookPath, m)
     const notice = await syncFileNames(bookPath, m)
     return { book: toBook(bookPath, m), notice }
   })
@@ -787,4 +789,77 @@ export function renameBook(bookPath: string, title: string): Promise<{ book: Boo
     }
     return { book: toBook(want, m) }
   })
+}
+
+// ---------------------------------------------------------------------------
+// Round 9: bringing a chapter back from a daily backup (feature 49), and importing a whole
+// manuscript split into chapters (feature 42)
+// ---------------------------------------------------------------------------
+
+/**
+ * Puts a chapter file back as it was in a backup. The text there now is kept first as a version.
+ * A chapter that was deleted since comes back as a new chapter at the end of the book.
+ */
+export function restoreChapterFile(bookPath: string, chapterId: string, title: string, bytes: Uint8Array, label: string): Promise<{ book: Book; chapterId: string; notice?: string }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    let ch = m.chapters.find((c) => c.id === chapterId)
+    let notice: string | undefined
+    if (ch) {
+      const file = chapterPath(bookPath, ch)
+      if (existsSync(file)) await drafts.snapshot(bookPath, ch.id, new Uint8Array(await fs.readFile(file)), { label, auto: false })
+    } else {
+      const added = await addChapterUnlocked(bookPath, m, title)
+      ch = added.chapter
+      notice = added.notice
+    }
+    const file = chapterPath(bookPath, ch)
+    const tmp = file + '.saving'
+    await fs.writeFile(tmp, bytes)
+    try {
+      await fs.rename(tmp, file)
+    } catch {
+      await fs.rm(tmp, { force: true })
+      throw new Error('השחזור נכשל. אם קובץ הפרק פתוח ב-Word, יש לסגור אותו ולנסות שוב.')
+    }
+    // the open editors read the file again (it is not "remembered" as the app's own save on purpose)
+    known.delete(`${bookPath}|${ch.id}`)
+    return { book: toBook(bookPath, m), chapterId: ch.id, notice }
+  })
+}
+
+/** Adds chapters with their text at the end of the book. An empty book's only, empty chapter is reused for the first one. */
+export function importChapters(bookPath: string, items: { title: string; doc: PMNode }[]): Promise<{ book: Book; notice?: string }> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    let rest = items
+    // a book with one empty chapter (just created): the import takes its place
+    if (m.chapters.length === 1 && items.length) {
+      const only = m.chapters[0]
+      const file = chapterPath(bookPath, only)
+      const empty = !existsSync(file) || countWords(docText((await docxToDoc(new Uint8Array(await fs.readFile(file)))).doc)) === 0
+      if (empty) {
+        only.title = items[0].title.trim() || only.title
+        const bytes = await docToDocx(items[0].doc, only.title)
+        await fs.writeFile(file, bytes)
+        remember(bookPath, only.id, bytes)
+        rest = items.slice(1)
+      }
+    }
+    for (const it of rest) {
+      const { chapter } = await addChapterUnlocked(bookPath, m, it.title)
+      const bytes = await docToDocx(it.doc, chapter.title)
+      await fs.writeFile(chapterPath(bookPath, chapter), bytes)
+      remember(bookPath, chapter.id, bytes)
+    }
+    const notice = await syncFileNames(bookPath, m)
+    await writeManifest(bookPath, m)
+    return { book: toBook(bookPath, m), notice }
+  })
+}
+
+/** A new book made from an imported manuscript */
+export async function createBookFromChapters(parentDir: string, title: string, items: { title: string; doc: PMNode }[]): Promise<{ book: Book; notice?: string }> {
+  const book = await createBook(parentDir, title)
+  return importChapters(book.path, items)
 }
