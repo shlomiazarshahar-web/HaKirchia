@@ -65,8 +65,8 @@ function allEditors(bookPath?: string): Editor[] {
   for (const [k, set] of editors) if (!bookPath || k.startsWith(bookPath + '|')) for (const e of set) if (!e.isDestroyed) out.push(e)
   return out
 }
-/** Tells the plugins of the editors that something they show changed (search, bookmarks) */
-function poke(key: PluginKey, bookPath?: string) {
+/** Tells the plugins of the editors that something they show changed (search, bookmarks, glossary) */
+export function poke(key: PluginKey, bookPath?: string) {
   for (const e of allEditors(bookPath)) e.view.dispatch(e.state.tr.setMeta(key, true).setMeta('addToHistory', false))
 }
 

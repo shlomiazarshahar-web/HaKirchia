@@ -37,6 +37,12 @@ export function IconSprite() {
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" /><path d="M20 20l-4.5-4.5" /></symbol>
       <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M7 3h10v18l-5-4-5 4z" /></symbol>
       <symbol id="i-scene" viewBox="0 0 24 24"><path d="M4 6h16M4 18h16M7 12h.01M12 12h.01M17 12h.01" /></symbol>
+      <symbol id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" /></symbol>
+      <symbol id="i-place" viewBox="0 0 24 24"><path d="M12 21s-6-5.6-6-11a6 6 0 0112 0c0 5.4-6 11-6 11z" /><circle cx="12" cy="10" r="2.2" /></symbol>
+      <symbol id="i-research" viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6zM15 3v4h4M9 12h7M9 16h5" /></symbol>
+      <symbol id="i-glossary" viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3zM5 17a3 3 0 013-3h11" /><path d="M9 11l2-5 2 5M9.7 9.4h2.6" /></symbol>
+      <symbol id="i-timeline" viewBox="0 0 24 24"><path d="M4 12h16" /><circle cx="7" cy="12" r="2" /><circle cx="14" cy="12" r="2" /><path d="M7 10V5h5M14 14v5h5" /></symbol>
+      <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1.5" /><circle cx="9" cy="10" r="1.6" /><path d="M4 18l5-5 4 4 3-3 4 4" /></symbol>
       <symbol id="i-jump" viewBox="0 0 24 24"><path d="M5 12h11M12 7l5 5-5 5M20 5v14" /></symbol>
       <symbol id="i-history" viewBox="0 0 24 24"><path d="M4 12a8 8 0 102.3-5.7L4 8.6M4 4v4.6h4.6M12 8v4l3 2" /></symbol>
       <symbol id="i-note" viewBox="0 0 24 24"><path d="M5 4h14v11l-5 5H5zM14 20v-5h5M8 9h8M8 13h5" /></symbol>

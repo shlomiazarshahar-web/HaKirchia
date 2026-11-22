@@ -6,13 +6,14 @@
 // card above the title, and a story-time order (timeline, feature 21) would be another
 // value of `Order` that groups the same cards differently.
 
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
 import type { Book, Chapter, ChapterStatus, OutlineNode, PartNode } from '@shared/types'
 import { STATUS_LABELS } from '@shared/types'
 import { moveNode, updatePart, type DropTarget } from '@shared/outline'
 import { api, onDiskChange } from '../api'
 import { Icon } from './Icons'
 import { RenameField } from './Binder'
+import { useImageUrl } from '../background'
 
 interface Props {
   book: Book
@@ -27,6 +28,8 @@ interface Props {
   renamingId: string | null
   onRename: (id: string, title: string) => void
   onStartRename: (id: string | null) => void
+  /** Round 7: switches between cards, timeline and inspiration */
+  modeSwitch?: ReactNode
 }
 
 type Filter = 'all' | ChapterStatus
@@ -46,7 +49,7 @@ function groups(outline: OutlineNode[]): Group[] {
 
 type Over = { id: string; mark: 'before' | 'after' | 'into' }
 
-export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMenu, onPartMenu, onWords, renamingId, onRename, onStartRename }: Props) {
+export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMenu, onPartMenu, onWords, renamingId, onRename, onStartRename, modeSwitch }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
   const [words, setWords] = useState<Record<string, number>>({})
   const [drag, setDrag] = useState<string | null>(null)
@@ -56,6 +59,9 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
   const [statusMenu, setStatusMenu] = useState<string | null>(null)
 
   const byId = new Map(book.chapters.map((c) => [c.id, c]))
+  /** The first inspiration image of each chapter, shown at the top of its card (feature 37) */
+  const cover = new Map<string, string>()
+  for (const im of book.images ?? []) if (im.chapterId && !cover.has(im.chapterId)) cover.set(im.chapterId, im.file)
   const number = new Map(book.chapters.map((c, i) => [c.id, i + 1]))
   const fileKey = book.chapters.map((c) => c.id + c.file).join('|')
 
@@ -155,6 +161,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
           onContextMenu(ch, e.clientX, e.clientY)
         }}
       >
+        {cover.get(ch.id) && <CardCover bookPath={book.path} file={cover.get(ch.id)!} />}
         <div className="num">
           <span>פרק {number.get(ch.id)}</span>
           <span className="wc">{n === undefined ? '' : `${n.toLocaleString('he-IL')} מילים`}</span>
@@ -247,7 +254,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
   return (
     <section className="board" aria-label="לוח שעם" onClick={() => statusMenu && setStatusMenu(null)}>
       <div className="bbar">
-        <h2>{book.title} · לוח שעם</h2>
+        {modeSwitch ?? <h2>{book.title} · לוח שעם</h2>}
         <div className="fchips" role="group" aria-label="סינון לפי סטטוס">
           <button className="fchip" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>
             הכול <span className="cnt">{book.chapters.length}</span>
@@ -396,4 +403,9 @@ function SynopsisEditor({ value, onDone }: { value: string; onDone: (v: string |
       onBlur={() => finish(v)}
     />
   )
+}
+
+function CardCover({ bookPath, file }: { bookPath: string; file: string }) {
+  const url = useImageUrl(bookPath, file)
+  return <div className="ccover">{url && <img src={url} alt="" draggable={false} />}</div>
 }

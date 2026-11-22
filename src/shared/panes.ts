@@ -9,10 +9,20 @@ import type { Book } from './types'
  * 'pdf': the original of the chapter being translated (feature 12); it follows the chapter in focus.
  * 'web': Google Translate inside the app (feature 13).
  */
-export type PaneContent = { kind: 'chapter'; id: string } | { kind: 'master' } | { kind: 'alt'; id: string } | { kind: 'pdf' } | { kind: 'web' }
+export type PaneContent =
+  | { kind: 'chapter'; id: string }
+  | { kind: 'master' }
+  | { kind: 'alt'; id: string }
+  | { kind: 'pdf' }
+  | { kind: 'web' }
+  /** a background page (feature 11) */
+  | { kind: 'material'; id: string }
+  /** the glossary of terms and names (feature 20) */
+  | { kind: 'glossary' }
 
 /** Kinds that are shown at most once on the screen */
-const SINGLE = new Set(['master', 'pdf', 'web'])
+const SINGLE = new Set(['master', 'pdf', 'web', 'glossary'])
+const KINDS = ['chapter', 'master', 'alt', 'pdf', 'web', 'material', 'glossary']
 
 export interface Pane {
   /** Stable id, so moving a pane does not reload its editor */
@@ -29,6 +39,8 @@ export interface PaneLayout {
 export const MAX_PANES = 3
 /** dataTransfer type set by the binder when a chapter is dragged, so it can be dropped on a pane */
 export const CHAPTER_DRAG_TYPE = 'application/x-hakirchia-chapter'
+/** dataTransfer type set by the binder when a background page is dragged */
+export const MATERIAL_DRAG_TYPE = 'application/x-hakirchia-material'
 /** Narrowest a pane may be dragged, as a fraction of the screen */
 export const MIN_WIDTH = 0.2
 
@@ -61,13 +73,15 @@ export function normalizeLayout(layout: PaneLayout | undefined, book: Book, acti
   if (!layout?.panes?.length) return defaultLayout(book, activeId)
   const ids = new Set(book.chapters.map((c) => c.id))
   const alts = new Set((book.alts ?? []).map((a) => a.id))
+  const mats = new Set((book.materials ?? []).map((m) => m.id))
   const keep: number[] = []
   const seen = new Set<string>()
   layout.panes.forEach((p, i) => {
     if (keep.length >= MAX_PANES || !p?.content) return
     if (p.content.kind === 'chapter' && !ids.has(p.content.id)) return
     if (p.content.kind === 'alt' && !alts.has(p.content.id)) return
-    if (!['chapter', 'master', 'alt', 'pdf', 'web'].includes(p.content.kind)) return
+    if (p.content.kind === 'material' && !mats.has(p.content.id)) return
+    if (!KINDS.includes(p.content.kind)) return
     if (SINGLE.has(p.content.kind)) {
       if (seen.has(p.content.kind)) return
       seen.add(p.content.kind)

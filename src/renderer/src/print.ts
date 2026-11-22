@@ -7,6 +7,7 @@ import { findMarkers, oddPagePlan } from '@shared/bookhtml'
 import type { Section } from '@shared/bookhtml'
 import { api } from './api'
 import { registerFonts } from './prefs'
+import { fixPageStarts, PAGE_SLACK, placeFootnotes } from './footnotes'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -40,6 +41,25 @@ export async function runPrint(): Promise<void> {
     await registerFonts(settings.customFonts ?? [])
     await document.fonts.ready
     await frame()
+
+    if (job.notesAtPage) {
+      // footnotes at the bottom of their page: lay the book out in columns of one page, place them,
+      // fix where each page starts, then print as pages
+      const { colW, gap } = job.notesAtPage
+      const colH = job.notesAtPage.colH - PAGE_SLACK
+      root.classList.add('paginating')
+      Object.assign(root.style, { width: `${2 * colW + gap}px`, columnWidth: `${colW}px`, columnGap: `${gap}px`, columnFill: 'auto', position: 'relative' })
+      // the print rules give #root an automatic height; the columns need the page's
+      root.style.setProperty('height', `${colH}px`, 'important')
+      root.style.setProperty('overflow', 'visible', 'important')
+      root.style.setProperty('--ch', `${colH}px`)
+      await frame()
+      placeFootnotes(root, { colW, colH, stride: colW + gap })
+      fixPageStarts(root, { colW, colH, stride: colW + gap })
+      root.classList.remove('paginating')
+      root.removeAttribute('style')
+      await frame()
+    }
 
     if (job.oddPages || job.hasToc) {
       // First printing: on which page does each section start?

@@ -6,7 +6,7 @@
 import type { OutlineNode, PMMark, PMNode } from './types'
 import { isSceneBreak } from './scenes'
 import { isIndented, guessDir } from './docx'
-import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES, type BookInfo, type BookLayout, type MatterPage, type PublishSettings } from './publish'
+import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES, printedTitle, ELEMENTS, elStyle, type ElementKey, type BookInfo, type BookLayout, type MatterPage, type PublishSettings } from './publish'
 
 export interface BookChapterData {
   id: string
@@ -64,6 +64,62 @@ const fontSize = (v: unknown): string | null => {
   return s.endsWith('px') ? `${n * 0.75}pt` : `${n}pt`
 }
 
+/** A run's size in points ("12pt", "16px", 12), or null */
+const sizePt = (v: unknown): number | null => {
+  const s = fontSize(v)
+  return s ? parseFloat(s) : null
+}
+
+/**
+ * The chapter as the book prints it: text imported from Word or Google Docs often carries a size
+ * and a font on every run, which would hide the book's own size and font. The chapter's usual size
+ * and font (the ones most of its text has) are dropped, so that text follows the layout, and other
+ * sizes keep their proportion to it (a line written larger stays larger).
+ */
+export function fitToLayout(doc: PMNode, layout: Pick<BookLayout, 'fontSize'>): PMNode {
+  const sizes = new Map<number, number>()
+  const fonts = new Map<string, number>()
+  const count = (n: PMNode, inHeading: boolean) => {
+    if (n.type === 'text' && n.text && !inHeading) {
+      const ts = n.marks?.find((m) => m.type === 'textStyle')
+      const sz = sizePt(ts?.attrs?.fontSize) ?? 0
+      const f = fontName(ts?.attrs?.fontFamily) ?? ''
+      sizes.set(sz, (sizes.get(sz) ?? 0) + n.text.length)
+      fonts.set(f, (fonts.get(f) ?? 0) + n.text.length)
+    }
+    for (const c of n.content ?? []) count(c, inHeading || n.type === 'heading')
+  }
+  count(doc, false)
+  const top = <K,>(m: Map<K, number>): K | undefined => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+  const base = top(sizes) ?? 0
+  const baseFont = top(fonts) ?? ''
+  if (!base && !baseFont) return doc
+  const fix = (n: PMNode): PMNode => {
+    if (n.type === 'text') {
+      if (!n.marks?.some((m) => m.type === 'textStyle')) return n
+      const marks: PMMark[] = []
+      for (const m of n.marks) {
+        if (m.type !== 'textStyle') {
+          marks.push(m)
+          continue
+        }
+        const f = fontName(m.attrs?.fontFamily)
+        const sz = sizePt(m.attrs?.fontSize)
+        const font = f && f !== baseFont ? m.attrs?.fontFamily : null
+        let size: string | null = null
+        if (sz) {
+          if (!base) size = String(m.attrs?.fontSize)
+          else if (Math.abs(sz / base - 1) > 0.04) size = `${Math.round(((layout.fontSize * sz) / base) * 2) / 2}pt`
+        }
+        if (font || size) marks.push({ ...m, attrs: { ...m.attrs, fontFamily: font ?? null, fontSize: size } })
+      }
+      return { ...n, marks: marks.length ? marks : undefined }
+    }
+    return n.content ? { ...n, content: n.content.map(fix) } : n
+  }
+  return fix(doc)
+}
+
 function wrapMarks(html: string, marks: PMMark[] | undefined): string {
   let out = html
   const style: string[] = []
@@ -86,14 +142,20 @@ export interface NoteCollector {
   /** Prefix for the anchors, unique per chapter */
   prefix: string
   notes: string[]
-  /** 'end': numbered notes at the end of the chapter (reading view, PDF). 'epub': ePub pop-up notes. */
-  mode: 'end' | 'epub'
+  /**
+   * 'end': numbered notes at the end of the chapter. 'page': each note goes to the bottom of the page
+   * its mark is on (the reading view and the PDF place them after laying out the pages). 'epub': ePub pop-up notes.
+   */
+  mode: 'end' | 'page' | 'epub'
+  /** Notes of the chapters before: numbering runs through the whole book */
+  offset?: number
 }
 
 function noteRef(c: NoteCollector, text: string): string {
   c.notes.push(text)
-  const n = c.notes.length
-  const id = `${c.prefix}-n${n}`
+  const n = (c.offset ?? 0) + c.notes.length
+  const id = `${c.prefix}-n${c.notes.length}`
+  if (c.mode === 'page') return `<sup class="fn" id="${id}-ref" data-fn="${n}" data-note="${esc(text)}">${n}</sup>`
   const extra = c.mode === 'epub' ? ' epub:type="noteref"' : ''
   return `<sup class="fn"><a href="#${id}" id="${id}-ref"${extra}>${n}</a></sup>`
 }
@@ -145,17 +207,18 @@ export function chapterBodyHtml(doc: PMNode, notes: NoteCollector | null): strin
 }
 
 function notesHtml(c: NoteCollector): string {
-  if (!c.notes.length) return ''
+  if (!c.notes.length || c.mode === 'page') return ''
+  const first = (c.offset ?? 0) + 1
   if (c.mode === 'epub') {
     return c.notes
       .map((t, i) => {
         const id = `${c.prefix}-n${i + 1}`
-        return `<aside epub:type="footnote" id="${id}" class="bk-note"><p><a href="#${id}-ref">${i + 1}</a>. ${esc(t).replace(/\n/g, '<br/>')}</p></aside>`
+        return `<aside epub:type="footnote" id="${id}" class="bk-note"><p><a href="#${id}-ref">${first + i}</a>. ${esc(t).replace(/\n/g, '<br/>')}</p></aside>`
       })
       .join('\n')
   }
   const items = c.notes.map((t, i) => `<li id="${c.prefix}-n${i + 1}">${esc(t).replace(/\n/g, '<br/>')}</li>`).join('')
-  return `<div class="bk-notes"><div class="bk-notes-h">הערות</div><ol>${items}</ol></div>`
+  return `<div class="bk-notes"><div class="bk-notes-h">הערות</div><ol${first > 1 ? ` start="${first}"` : ''}>${items}</ol></div>`
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +227,8 @@ function notesHtml(c: NoteCollector): string {
 
 const dirOf = (t: string) => (guessDir(t) === 'ltr' ? ' dir="ltr"' : '')
 
-export function titlePageHtml(title: string, info: BookInfo): string {
+export function titlePageHtml(bookTitle: string, info: BookInfo): string {
+  const title = printedTitle(bookTitle, info)
   return [
     `<div class="bk-t"${dirOf(title)}>${esc(title)}</div>`,
     info.subtitle.trim() ? `<div class="bk-sub"${dirOf(info.subtitle)}>${esc(info.subtitle.trim())}</div>` : '',
@@ -223,6 +287,9 @@ export function tocEntries(data: BookData): TocEntry[] {
  * `noteMode` decides how footnotes come out.
  */
 export function bookSections(data: BookData, noteMode: 'end' | 'epub' = 'end', pages?: Record<string, number>): Section[] {
+  // notes at the bottom of their page, unless the book wants them at the end of each chapter
+  const mode: NoteCollector['mode'] = noteMode === 'epub' ? 'epub' : data.publish.layout.notesAt === 'chapter' ? 'end' : 'page'
+  let noteCount = 0
   const { publish } = data
   const toc = tocEntries(data)
   const out: Section[] = []
@@ -233,8 +300,9 @@ export function bookSections(data: BookData, noteMode: 'end' | 'epub' = 'end', p
   const chapter = (id: string, partTitle?: string) => {
     const c = byId.get(id)
     if (!c) return
-    const notes: NoteCollector = { prefix: `c${out.length}`, notes: [], mode: noteMode }
-    const body = chapterBodyHtml(c.doc, notes)
+    const notes: NoteCollector = { prefix: `c${out.length}`, notes: [], mode, offset: noteCount }
+    const body = chapterBodyHtml(fitToLayout(c.doc, publish.layout), notes)
+    noteCount += notes.notes.length
     const html = `<h1 class="bk-ch-title"${dirOf(c.title)}>${esc(c.title)}</h1>\n${body}\n${notesHtml(notes)}`
     out.push({ kind: 'chapter', id: c.id, title: c.title, html, ...(partTitle ? { partTitle } : {}) })
   }
@@ -274,11 +342,33 @@ export function pageGeometry(layout: BookLayout): { w: number; h: number; top: n
  * The look of the book's text, shared by the reading view, the PDF and the ePub.
  * `scope` is a selector the rules are put under (the reading view puts the book inside the app).
  */
-export function bookCss(layout: BookLayout, scope = ''): string {
+export function bookCss(layout: BookLayout, scope = '', relative = false): string {
   const s = scope ? scope + ' ' : ''
   const font = `'${layout.font.replace(/'/g, '')}', 'Frank Ruhl Libre', serif`
+  const el = (key: ElementKey, sel: string, weight = true) => {
+    const st = elStyle(layout, key)
+    const r: string[] = [relative ? `font-size: ${(st.size / layout.fontSize).toFixed(3)}em` : `font-size: ${st.size}pt`]
+    if (st.font) r.push(`font-family: '${st.font.replace(/'/g, '')}', ${font}`)
+    if (weight || st.bold) r.push(`font-weight: ${st.bold ? 700 : 500}`)
+    if (ELEMENTS[key].aligns.length && st.align !== 'auto') r.push(`text-align: ${st.align}`)
+    return sel
+      .split(',')
+      .map((x) => s + x.trim())
+      .join(', ') + ` { ${r.join('; ')}; }`
+  }
+  const elements = [
+    el('chapterTitle', '.bk-ch-title'),
+    el('partTitle', '.bk-part-title'),
+    el('bookTitle', '.bk-title .bk-t'),
+    el('subtitle', '.bk-title .bk-sub', false),
+    el('author', '.bk-title .bk-author', false),
+    el('matterTitle', '.bk-m-title'),
+    el('matterText', '.bk-m-text, .bk-title .bk-title-extra', false),
+    el('toc', '.bk-toc-list', false),
+    el('notes', '.bk-notes, .bk-fnotes', false)
+  ].join('\n')
   return `
-${s}.bk-sec { font-family: ${font}; font-size: ${layout.fontSize}pt; line-height: ${layout.lineHeight}; color: #1a1a1a; text-align: ${layout.justify ? 'justify' : 'start'}; hyphens: manual; orphans: 2; widows: 2; }
+${s}.bk-sec { font-family: ${font}; font-size: ${layout.fontSize}pt; line-height: ${layout.lineHeight}; color: #1a1a1a; text-align: ${layout.justify ? 'justify' : 'start'}; hyphens: manual; orphans: 2; widows: 2; text-rendering: geometricPrecision; }
 ${s}.bk-sec p { margin: 0; }
 ${s}.bk-sec p.ind { text-indent: 1.5em; }
 ${s}.bk-sec p.scene { text-align: center; text-indent: 0; margin: 0.8em 0; letter-spacing: 0.3em; break-after: avoid; }
@@ -287,25 +377,25 @@ ${s}.bk-sec h2 { font-size: 1.25em; font-weight: 600; margin: 1.2em 0 0.5em; tex
 ${s}.bk-sec h3 { font-size: 1.1em; font-weight: 600; margin: 1em 0 0.4em; text-align: start; break-after: avoid; }
 ${s}.bk-sec sup.fn { font-size: 0.7em; line-height: 0; }
 ${s}.bk-sec sup.fn a { color: inherit; text-decoration: none; }
-${s}.bk-ch-title { font-size: 1.9em; font-weight: 500; line-height: 1.25; text-align: center; margin: 3.2em 0 2em; break-after: avoid; }
-${s}.bk-part-title { font-size: 2.2em; font-weight: 500; line-height: 1.25; text-align: center; margin: 0; }
+${s}.bk-ch-title { line-height: 1.25; text-align: center; margin: 3.2em 0 2em; break-after: avoid; }
+${s}.bk-part-title { line-height: 1.25; text-align: center; margin: 0; }
 ${s}.bk-part { text-align: center; padding: 2em 0; }
-${s}.bk-part.own-page { display: flex; flex-direction: column; justify-content: center; align-items: center; }
-${s}.bk-notes { margin-top: 2em; font-size: 0.85em; line-height: 1.4; text-align: start; break-inside: auto; }
+${s}.bk-part.own-page { display: flex; flex-direction: column; justify-content: center; align-items: stretch; }
+${s}.bk-notes { margin-top: 2em; line-height: 1.4; text-align: start; break-inside: auto; }
 ${s}.bk-notes-h { font-weight: 600; margin-bottom: 0.4em; border-top: 1px solid #999; padding-top: 0.6em; width: 40%; }
 ${s}.bk-notes ol { margin: 0; padding-inline-start: 1.6em; }
 ${s}.bk-notes li { margin-bottom: 0.3em; }
 ${s}.bk-matter { text-align: start; }
 ${s}.bk-matter.centered { display: flex; flex-direction: column; justify-content: center; text-align: center; }
 ${s}.bk-matter.centered .bk-m-text { margin-bottom: 15%; }
-${s}.bk-title .bk-t { font-size: 2.6em; font-weight: 500; line-height: 1.2; }
-${s}.bk-title .bk-sub { font-size: 1.3em; margin-top: 0.6em; }
-${s}.bk-title .bk-author { font-size: 1.3em; margin-top: 3em; }
-${s}.bk-title .bk-title-extra { margin-top: 4em; font-size: 0.9em; }
+${s}.bk-title .bk-t { line-height: 1.2; }
+${s}.bk-title .bk-sub { margin-top: 0.6em; }
+${s}.bk-title .bk-author { margin-top: 3em; }
+${s}.bk-title .bk-title-extra { margin-top: 4em; }
 ${s}.bk-copyright { display: flex; flex-direction: column; justify-content: flex-end; font-size: 0.85em; }
 ${s}.bk-motto .bk-m-text { font-style: italic; }
 ${s}.bk-motto .bk-m-text p:last-child:not(:first-child) { font-style: normal; font-size: 0.9em; margin-top: 0.6em; }
-${s}.bk-m-title { font-size: 1.6em; font-weight: 500; text-align: center; margin: 2em 0 1.4em; }
+${s}.bk-m-title { text-align: center; margin: 2em 0 1.4em; }
 ${s}.bk-m-text p { margin: 0 0 0.5em; }
 ${s}.bk-toc-list { list-style: none; margin: 0; padding: 0; text-align: start; }
 ${s}.bk-toc-list li { display: flex; align-items: baseline; gap: 0.4em; margin: 0 0 0.45em; }
@@ -316,6 +406,16 @@ ${s}.bk-toc-list .t a { color: inherit; text-decoration: none; }
 ${s}.bk-toc-list .dots { flex: 1; border-bottom: 1px dotted #888; transform: translateY(-0.3em); min-width: 1em; }
 ${s}.bk-toc-list .pg { min-width: 1.5em; text-align: end; font-variant-numeric: tabular-nums; }
 ${s}.bk-sec a { color: inherit; }
+${s}.bk-fnotes { line-height: 1.35; text-align: start; text-indent: 0; break-inside: avoid; }
+${s}.bk-fnotes .fn-line { width: 30%; border-top: 1px solid #999; margin: 0.4em 0 0.35em; }
+${s}.bk-fnotes p { margin: 0 0 0.15em; text-indent: 0; text-align: start; }
+${s}.bk-sec p.fn-cut { text-align-last: ${layout.justify ? 'justify' : 'auto'}; }
+${s}.bk-sec p.fn-rest { text-indent: 0; orphans: 1; }
+${s}.bk-sec p.fn-cut { widows: 1; }
+/* a page that starts here by our cut keeps no space above, as the page would have without the cut (a forced break keeps margins) */
+${s}.bk-sec .fn-cont { margin-top: 0 !important; }
+${s}.bk-sec sup.fn[data-note] { color: inherit; }
+${elements}
 `
 }
 
@@ -332,7 +432,8 @@ export function printCss(layout: BookLayout, sections: Section[], bookTitle: str
   const g = pageGeometry(layout)
   const contentH = g.h - g.top - g.bottom
   const font = `'${layout.font.replace(/'/g, '')}', 'Frank Ruhl Libre', serif`
-  const box = `font-family: ${font}; font-size: ${Math.max(7, layout.fontSize - 3)}pt; color: #555;`
+  const hs = elStyle(layout, 'heads')
+  const box = `font-family: ${hs.font ? `'${hs.font.replace(/'/g, '')}', ${font}` : font}; font-size: ${hs.size}pt; ${hs.bold ? 'font-weight: 700; ' : ''}color: #555;`
   const num = layout.pageNumbers ? `@bottom-center { content: counter(page); ${box} }` : ''
   const rules: string[] = [
     `@page { size: ${g.w}mm ${g.h}mm; margin: ${g.top}mm ${g.outer}mm ${g.bottom}mm ${g.inner}mm; ${num} }`,
@@ -352,7 +453,12 @@ export function printCss(layout: BookLayout, sections: Section[], bookTitle: str
     `.bk-sec:first-child { break-before: auto; }`,
     `.bk-toc-list .t a, .bk-sec sup.fn a { text-decoration: none; }`,
     `.pmk { position: absolute; top: 0; right: 0; font-size: 2px; line-height: 1; color: #fff; white-space: nowrap; }`,
-    `.bk-sec { position: relative; }`
+    `.bk-sec { position: relative; }`,
+    // while the notes are placed, the book is laid out in columns of exactly one page each
+    `.paginating .bk-matter, .paginating .bk-part, .paginating .bk-chapter.new-page { break-before: column; }`,
+    `.paginating .bk-part.own-page { break-after: column; }`,
+    `.paginating .fn-cont { break-before: column; }`,
+    `#root:not(.paginating) .fn-cont { break-before: page; }`
   ]
   if (layout.runningHeads) {
     const head = (text: string) => `@top-center { content: ${cssString(text)}; ${box} }`

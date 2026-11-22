@@ -3,10 +3,12 @@ import type { Book, Chapter, PartNode } from '@shared/types'
 import { moveNode, updatePart, type Dragged, type DropTarget } from '@shared/outline'
 import type { OutlineNode } from '@shared/types'
 import { Icon } from './Icons'
-import { CHAPTER_DRAG_TYPE } from '@shared/panes'
+import { CHAPTER_DRAG_TYPE, MATERIAL_DRAG_TYPE } from '@shared/panes'
+import { KIND_ICON, KIND_LABEL, KIND_NEW, MATERIAL_KINDS, materialsOf, type Material, type MaterialKind } from '@shared/background'
 import { MASTER_LABEL } from '../labels'
 import { translationProgress } from '@shared/translation'
 import { useParagraphCounts } from '../translate'
+import { MATTER_KINDS, type MatterPage } from '@shared/publish'
 
 interface Props {
   book: Book
@@ -28,6 +30,17 @@ interface Props {
   onScene?: (pos: number) => void
   /** Shown under the chapters: the list of bookmarks */
   bookmarks?: ReactNode
+  /** Background materials (round 7): what is open now, and what to do */
+  openMaterialIds?: string[]
+  glossaryOpen?: boolean
+  onOpenMaterial?: (id: string) => void
+  onNewMaterial?: (kind: MaterialKind) => void
+  onOpenGlossary?: () => void
+  onMaterialMenu?: (m: Material, x: number, y: number) => void
+  /** Renames the book (and its folder) */
+  onRenameBook?: (title: string) => void
+  /** Opens the front and back pages, at one page or at the list of new pages ('new') */
+  onMatter?: (pageId?: string) => void
 }
 
 /** Where a drop would land, for drawing the line / highlight */
@@ -234,6 +247,7 @@ export function Binder(props: Props) {
 
   return (
     <nav className="binder" aria-label="עץ הספר">
+      <BookTitle title={book.title} onRename={props.onRenameBook} />
       <div className="bsec">
         <div
           className={`bitem master${masterActive ? ' active' : ''}`}
@@ -310,10 +324,8 @@ export function Binder(props: Props) {
         )}
       </div>
       {props.bookmarks}
-      <div className="bsec">
-        <div className="bhead">חומרי רקע</div>
-        <div className="bempty">דפי דמויות, מקומות ומחקר יגיעו בפיצ'ר נפרד.</div>
-      </div>
+      <MatterSection {...props} />
+      <MaterialsSection {...props} />
     </nav>
   )
 }
@@ -347,5 +359,193 @@ export function RenameField({ initial, label, onDone }: { initial: string; label
         if (e.key === 'Escape') finish(null)
       }}
     />
+  )
+}
+
+const FOLD_KEY = 'hakirchia.binderFolds'
+function readFolds(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(FOLD_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+
+function useFolds() {
+  const [folds, setFolds] = useState<Record<string, boolean>>(readFolds)
+  const toggle = (k: string) => {
+    const next = { ...readFolds(), [k]: !folds[k] }
+    setFolds(next)
+    try {
+      localStorage.setItem(FOLD_KEY, JSON.stringify(next))
+    } catch {
+      /* not remembered */
+    }
+  }
+  return [folds, toggle] as const
+}
+
+const matterName = (p: MatterPage) => ((p.kind === 'other' || p.kind === 'thanks' || p.kind === 'about') && p.heading ? p.heading : MATTER_KINDS[p.kind].label)
+
+/** The front and back pages (feature 36): a click opens the page for editing */
+function MatterSection(props: Props) {
+  const { book } = props
+  const [folds, toggle] = useFolds()
+  const closed = !!folds.matter
+  const pages = book.publish.matter
+  const row = (p: MatterPage) => (
+    <div key={p.id} className="bitem bsub" role="button" tabIndex={0} title="עריכת העמוד" onClick={() => props.onMatter?.(p.id)} onKeyDown={(e) => e.key === 'Enter' && props.onMatter?.(p.id)}>
+      <Icon name="file" />
+      <span className="name" dir="auto">
+        {matterName(p)}
+      </span>
+    </div>
+  )
+  const front = pages.filter((p) => p.where === 'front')
+  const back = pages.filter((p) => p.where === 'back')
+  return (
+    <div className="bsec">
+      <div className="bitem bfolder bmatter" role="button" tabIndex={0} aria-expanded={!closed} onClick={() => toggle('matter')} onKeyDown={(e) => e.key === 'Enter' && toggle('matter')}>
+        <span className={`chev${closed ? ' closed' : ''}`}>
+          <Icon name="chev" size={12} />
+        </span>
+        <Icon name="book" />
+        <span className="name">עמודי פתיחה וסיום</span>
+        <span className="count">{pages.length}</span>
+        <button className="ib icon addin" title="עמוד חדש: שער, הקדשה, תודות…" aria-label="עמוד חדש" onClick={(e) => (e.stopPropagation(), props.onMatter?.('new'))}>
+          <Icon name="plus" size={13} />
+        </button>
+      </div>
+      {!closed && (
+        <>
+          {front.map(row)}
+          {back.length > 0 && <div className="bsub-sep">אחרי הפרקים</div>}
+          {back.map(row)}
+          {pages.length === 0 && (
+            <div className="bitem bsub muted" role="button" tabIndex={0} onClick={() => props.onMatter?.('new')}>
+              <span className="name">הוספת שער, הקדשה, תודות…</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Background pages (feature 11) in groups, and the glossary (feature 20) */
+function MaterialsSection(props: Props) {
+  const { book } = props
+  const [folds, toggle] = useFolds()
+  const [menu, setMenu] = useState(false)
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [menu])
+  const open = new Set(props.openMaterialIds ?? [])
+  return (
+    <div className="bsec">
+      <div className="bhead">
+        חומרי רקע
+        <span className="bhead-btns">
+          <button className="ib" title="דף רקע חדש: דמות, מקום או מחקר" aria-haspopup="menu" aria-expanded={menu} onClick={(e) => (e.stopPropagation(), setMenu(!menu))}>
+            <Icon name="plus" />
+          </button>
+        </span>
+        {menu && (
+          <div className="menu bmenu" role="menu" onClick={(e) => e.stopPropagation()}>
+            {MATERIAL_KINDS.map((k) => (
+              <button key={k} role="menuitem" onClick={() => (setMenu(false), props.onNewMaterial?.(k))}>
+                <Icon name={KIND_ICON[k]} />
+                {KIND_NEW[k]}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div
+        className={`bitem${props.glossaryOpen ? ' active' : ''}`}
+        role="button"
+        tabIndex={0}
+        title="איך כל מונח ושם נכתב בספר, ומה הוא במקור"
+        onClick={() => props.onOpenGlossary?.()}
+        onKeyDown={(e) => e.key === 'Enter' && props.onOpenGlossary?.()}
+      >
+        <Icon name="glossary" />
+        <span className="name">מילון מונחים ושמות</span>
+        {book.glossary.length > 0 && <span className="count">{book.glossary.length}</span>}
+      </div>
+      {MATERIAL_KINDS.map((k) => {
+        const list = materialsOf(book.materials, k)
+        const closed = !!folds[k]
+        return (
+          <div key={k} className="bgroup" role="group">
+            <div className="bitem bfolder" role="button" tabIndex={0} aria-expanded={!closed} onClick={() => toggle(k)} onKeyDown={(e) => e.key === 'Enter' && toggle(k)}>
+              <span className={`chev${closed ? ' closed' : ''}`}>
+                <Icon name="chev" size={12} />
+              </span>
+              <Icon name="folder" />
+              <span className="name">{KIND_LABEL[k]}</span>
+              <span className="count">{list.length}</span>
+              <button className="ib icon addin" title={KIND_NEW[k]} aria-label={KIND_NEW[k]} onClick={(e) => (e.stopPropagation(), props.onNewMaterial?.(k))}>
+                <Icon name="plus" size={13} />
+              </button>
+            </div>
+            {!closed &&
+              list.map((m) => (
+                <div
+                  key={m.id}
+                  className={`bitem bsub${open.has(m.id) ? ' active' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  title="לחיצה פותחת לצד הפרק. אפשר גם לגרור לחלון"
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = 'copy'
+                    e.dataTransfer.setData(MATERIAL_DRAG_TYPE, m.id)
+                    e.dataTransfer.setData('text/plain', m.name)
+                  }}
+                  onClick={() => props.onOpenMaterial?.(m.id)}
+                  onKeyDown={(e) => e.key === 'Enter' && props.onOpenMaterial?.(m.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    props.onMaterialMenu?.(m, e.clientX, e.clientY)
+                  }}
+                >
+                  <Icon name={KIND_ICON[k]} />
+                  <span className="name" dir="auto">
+                    {m.name}
+                  </span>
+                </div>
+              ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** The book's name at the top of the binder; a click renames it (and its folder) */
+function BookTitle({ title, onRename }: { title: string; onRename?: (t: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  if (editing)
+    return (
+      <div className="btitle editing">
+        <RenameField
+          initial={title}
+          label="שם הספר"
+          onDone={(t) => {
+            setEditing(false)
+            if (t && t !== title) onRename?.(t)
+          }}
+        />
+      </div>
+    )
+  return (
+    <button className="btitle" title="שינוי שם הספר (גם שם התיקייה שלו משתנה)" onClick={() => setEditing(true)}>
+      <span dir="auto">{title}</span>
+      <Icon name="rename" size={13} />
+    </button>
   )
 }

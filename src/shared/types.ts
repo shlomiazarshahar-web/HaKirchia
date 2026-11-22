@@ -4,6 +4,7 @@ import type { TypographySettings } from './hebrew'
 import type { StopPoint } from './stoppoint'
 import type { ChapterSource } from './translation'
 import type { PublishSettings } from './publish'
+import type { Background } from './background'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -33,7 +34,8 @@ export interface ChapterRef {
 /** The binder tree: chapters and parts at the top level, chapters inside parts. */
 export type OutlineNode = ChapterRef | PartNode
 
-export interface Book {
+/** Background pages, glossary, inspiration images and timeline (round 7) are part of the book */
+export interface Book extends Background {
   /** Absolute path of the book folder */
   path: string
   title: string
@@ -77,6 +79,8 @@ export interface RecentBook {
   lastOpened: number
   /** false when the folder no longer exists on disk */
   exists: boolean
+  /** Put away in the library's archive (not deleted) */
+  archived?: boolean
 }
 
 /** A ProseMirror / TipTap JSON node */
@@ -110,7 +114,7 @@ export type Theme = 'light' | 'dark'
 
 export interface Settings {
   theme: Theme
-  recent: { path: string; title: string; chapterCount: number; lastOpened: number }[]
+  recent: { path: string; title: string; chapterCount: number; lastOpened: number; archived?: boolean }[]
   lastChapter: Record<string, string>
   defaultFolder?: string
   /** Split screen panes per book path, as they were last left */

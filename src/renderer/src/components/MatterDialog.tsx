@@ -11,18 +11,23 @@ interface Props {
   book: Book
   onSave: (p: PublishSettings) => void
   onClose: () => void
+  /** The page to show first (from the binder), or 'new' to open the list of kinds */
+  startId?: string
+  /** Renames the book (and its folder), from the title page */
+  onRenameBook?: (title: string) => void
 }
 
 const ADDABLE: MatterKind[] = ['title', 'copyright', 'dedication', 'motto', 'toc', 'thanks', 'about', 'other']
 
-export function MatterDialog({ book, onSave, onClose }: Props) {
+export function MatterDialog({ book, onSave, onClose, startId, onRenameBook }: Props) {
   const [info, setInfo] = useState(book.publish.info)
   const [pages, setPages] = useState<MatterPage[]>(book.publish.matter)
-  const [sel, setSel] = useState<string | null>(book.publish.matter[0]?.id ?? null)
-  const [adding, setAdding] = useState(false)
+  const [sel, setSel] = useState<string | null>(book.publish.matter.find((p) => p.id === startId)?.id ?? book.publish.matter[0]?.id ?? null)
+  const [adding, setAdding] = useState(startId === 'new')
+  const [title, setTitle] = useState(book.title)
   const first = useRef<HTMLInputElement>(null)
   const page = pages.find((p) => p.id === sel) ?? null
-  const changed = JSON.stringify(info) !== JSON.stringify(book.publish.info) || JSON.stringify(pages) !== JSON.stringify(book.publish.matter)
+  const changed = title.trim() !== book.title || JSON.stringify(info) !== JSON.stringify(book.publish.info) || JSON.stringify(pages) !== JSON.stringify(book.publish.matter)
 
   useEffect(() => first.current?.focus(), [sel])
 
@@ -51,7 +56,8 @@ export function MatterDialog({ book, onSave, onClose }: Props) {
     setSel(next[Math.min(at, next.length - 1)]?.id ?? null)
   }
   const save = () => {
-    onSave({ ...book.publish, info, matter: pages })
+    if (JSON.stringify(info) !== JSON.stringify(book.publish.info) || JSON.stringify(pages) !== JSON.stringify(book.publish.matter)) onSave({ ...book.publish, info, matter: pages })
+    if (title.trim() && title.trim() !== book.title) onRenameBook?.(title.trim())
     onClose()
   }
 
@@ -125,16 +131,20 @@ export function MatterDialog({ book, onSave, onClose }: Props) {
                 {page.kind === 'title' ? (
                   <>
                     <label className="field">
-                      שם הספר
-                      <input value={book.title} readOnly title="שם הספר כפי שהוא מופיע בספרייה" />
+                      השם על השער
+                      <input ref={first} dir="auto" value={info.coverTitle ?? ''} placeholder={title} title="מה שכתוב בשער ובראש העמודים. ריק: שם הספר" onChange={(e) => setInfo({ ...info, coverTitle: e.target.value })} />
                     </label>
                     <label className="field">
                       כותרת משנה
-                      <input ref={first} dir="auto" value={info.subtitle} placeholder="למשל: רומן" onChange={(e) => setInfo({ ...info, subtitle: e.target.value })} />
+                      <input dir="auto" value={info.subtitle} placeholder="למשל: רומן" onChange={(e) => setInfo({ ...info, subtitle: e.target.value })} />
                     </label>
                     <label className="field">
                       שם הכותב
                       <input dir="auto" value={info.author} onChange={(e) => setInfo({ ...info, author: e.target.value })} />
+                    </label>
+                    <label className="field">
+                      שם הספר בספרייה ובתיקייה <small>(לא מודפס כשיש שם על השער)</small>
+                      <input dir="auto" value={title} readOnly={!onRenameBook} title="שינוי השם משנה גם את שם התיקייה של הספר" onChange={(e) => setTitle(e.target.value)} />
                     </label>
                     <label className="field">
                       שורות נוספות בתחתית השער (לא חובה)

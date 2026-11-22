@@ -8,13 +8,16 @@
 import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
-import { CHAPTER_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
+import { CHAPTER_DRAG_TYPE, MATERIAL_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
 import { AltEditor, ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
 import { PdfPane } from './PdfPane'
 import { WebPane } from './WebPane'
 import { Icon } from './Icons'
 import { MASTER_LABEL } from '../labels'
+import { KIND_ICON, KIND_LABEL, MATERIAL_KINDS, materialsOf } from '@shared/background'
+import { MaterialPane } from './Background'
+import { GlossaryPane } from './Glossary'
 
 
 const WORST: SaveState[] = ['error', 'saving', 'dirty', 'saved']
@@ -90,6 +93,7 @@ export function SplitView(props: Props) {
         const ch = c.kind === 'chapter' ? byId.get(c.id) : undefined
         const alt = c.kind === 'alt' ? book.alts?.find((a) => a.id === c.id) : undefined
         const altOf = alt ? byId.get(alt.chapterId) : undefined
+        const mat = c.kind === 'material' ? book.materials.find((m) => m.id === c.id) : undefined
         const focused = pane.key === focusKey
         return (
           <PaneFrame
@@ -102,12 +106,16 @@ export function SplitView(props: Props) {
               onLayout(setPaneContent(layout, i, { kind: 'chapter', id }))
               onFocusPane(pane.key)
             }}
+            onDropMaterial={(id) => {
+              onLayout(setPaneContent(layout, i, { kind: 'material', id }))
+              onFocusPane(pane.key)
+            }}
             head={
               <>
-                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : 'file'} />
+                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : c.kind === 'glossary' ? 'glossary' : mat ? KIND_ICON[mat.kind] : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
                 {c.kind === 'pdf' && pdfChapter && <small className="pstat">של {pdfChapter.title}</small>}
-                {shown[pane.key] !== undefined && c.kind !== 'pdf' && c.kind !== 'web' && (
+                {shown[pane.key] !== undefined && (c.kind === 'chapter' || c.kind === 'master' || c.kind === 'alt') && (
                   <small className="pstat" title={ch ? ch.file : undefined}>
                     {shown[pane.key].toLocaleString('he-IL')} מילים{c.kind === 'master' ? ' בספר' : ''}
                   </small>
@@ -150,6 +158,18 @@ export function SplitView(props: Props) {
               <PdfPane book={book} chapter={pdfChapter} onBook={props.onBook} onError={props.onError} onNotice={props.onNotice} onNeedTranslatePane={props.onNeedTranslatePane} />
             ) : c.kind === 'web' ? (
               <WebPane />
+            ) : c.kind === 'glossary' ? (
+              <GlossaryPane />
+            ) : mat ? (
+              <MaterialPane
+                key={`${book.path}|mat|${mat.id}`}
+                material={mat}
+                onEditor={props.onEditor}
+                onRelease={props.onRelease}
+                onWords={(w) => setWords(pane.key, w)}
+                onSaveState={(s) => setState(pane.key, s)}
+                onError={props.onError}
+              />
             ) : c.kind === 'master' ? (
               <MasterView
                 key={`${book.path}|master`}
@@ -226,11 +246,25 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       className="ppick"
       aria-label={label}
       title="בחירת מה להציג בחלון הזה"
-      value={value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' ? value.kind : value.kind === 'alt' ? `a:${value.id}` : `c:${value.id}`}
+      value={
+        value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' || value.kind === 'glossary'
+          ? value.kind
+          : value.kind === 'alt'
+            ? `a:${value.id}`
+            : value.kind === 'material'
+              ? `m:${value.id}`
+              : `c:${value.id}`
+      }
       onChange={(e) => {
         const v = e.target.value
         onChange(
-          v === 'master' || v === 'pdf' || v === 'web' ? { kind: v } : v.startsWith('a:') ? { kind: 'alt', id: v.slice(2) } : { kind: 'chapter', id: v.slice(2) }
+          v === 'master' || v === 'pdf' || v === 'web' || v === 'glossary'
+            ? { kind: v }
+            : v.startsWith('a:')
+              ? { kind: 'alt', id: v.slice(2) }
+              : v.startsWith('m:')
+                ? { kind: 'material', id: v.slice(2) }
+                : { kind: 'chapter', id: v.slice(2) }
         )
       }}
     >
@@ -241,6 +275,21 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       </optgroup>
       {loose.length > 0 && <optgroup label="פרקים">{loose}</optgroup>}
       {groups}
+      <optgroup label="חומרי רקע">
+        <option value="glossary">מילון מונחים ושמות</option>
+      </optgroup>
+      {MATERIAL_KINDS.map((k) => {
+        const list = materialsOf(book.materials ?? [], k)
+        return list.length ? (
+          <optgroup key={k} label={`חומרי רקע: ${KIND_LABEL[k]}`}>
+            {list.map((m) => (
+              <option key={m.id} value={`m:${m.id}`}>
+                {m.name}
+              </option>
+            ))}
+          </optgroup>
+        ) : null
+      })}
       {(book.alts ?? []).length > 0 && (
         <optgroup label="טיוטות חלופיות">
           {(book.alts ?? []).map((a) => (
@@ -264,6 +313,7 @@ export function PaneFrame({
   paneKey,
   onFocus,
   onDropChapter,
+  onDropMaterial,
   children
 }: {
   head: ReactNode
@@ -277,10 +327,12 @@ export function PaneFrame({
   paneKey?: string
   onFocus: () => void
   onDropChapter?: (id: string) => void
+  onDropMaterial?: (id: string) => void
   children: ReactNode
 }) {
   const [dropOn, setDropOn] = useState(false)
-  const accepts = (e: DragEvent) => !!onDropChapter && e.dataTransfer.types.includes(CHAPTER_DRAG_TYPE)
+  const accepts = (e: DragEvent) =>
+    (!!onDropChapter && e.dataTransfer.types.includes(CHAPTER_DRAG_TYPE)) || (!!onDropMaterial && e.dataTransfer.types.includes(MATERIAL_DRAG_TYPE))
   return (
     <section
       className={`pane${focused ? ' focused' : ''}${bare ? ' bare' : ''}${dropOn ? ' drop' : ''}`}
@@ -301,7 +353,9 @@ export function PaneFrame({
         e.preventDefault()
         setDropOn(false)
         const id = e.dataTransfer.getData(CHAPTER_DRAG_TYPE)
+        const mid = e.dataTransfer.getData(MATERIAL_DRAG_TYPE)
         if (id) onDropChapter!(id)
+        else if (mid) onDropMaterial?.(mid)
       }}
     >
       {!bare && (
@@ -314,7 +368,7 @@ export function PaneFrame({
         {children}
         {drawer}
       </div>
-      {dropOn && <div className="pdrop">שחררו כאן כדי לפתוח את הפרק בחלון הזה</div>}
+      {dropOn && <div className="pdrop">שחררו כאן כדי לפתוח בחלון הזה</div>}
     </section>
   )
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { bookCss, bookSections, chapterBodyHtml, findMarkers, oddPagePlan, printCss, tocEntries, type BookData } from '../src/shared/bookhtml'
+import { bookCss, bookSections, chapterBodyHtml, fitToLayout, findMarkers, oddPagePlan, printCss, tocEntries, type BookData } from '../src/shared/bookhtml'
 import { bookToDocx } from '../src/shared/docx'
-import { defaultMatter, moveMatter, newMatterPage, normalizePublish } from '../src/shared/publish'
+import { defaultMatter, elStyle, moveMatter, newMatterPage, normalizePublish } from '../src/shared/publish'
 import type { PMNode } from '../src/shared/types'
 
 const p = (text: string, attrs?: Record<string, unknown>): PMNode => ({ type: 'paragraph', ...(attrs ? { attrs } : {}), content: text ? [{ type: 'text', text }] : [] })
@@ -70,12 +70,24 @@ describe('the book as HTML', () => {
     expect(a).toContain('<p class="flush">אחרי</p>')
     const b = s.find((x) => x.id === 'b')!.html
     expect(b).toContain('style="text-align: center"')
-    expect(b).toMatch(/<sup class="fn"><a href="#c\d+-n1"/)
-    expect(b).toContain('הערה &lt;ראשונה&gt;')
+    // notes go to the bottom of their page: the mark carries the note
+    expect(b).toMatch(/<sup class="fn" id="c\d+-n1-ref" data-fn="1" data-note="הערה &lt;ראשונה&gt;">1<\/sup>/)
+    expect(b).not.toContain('bk-notes')
     const title = s[0].html
     expect(title).toContain('הנמל')
     expect(title).toContain('רומן')
     expect(title).toContain('שלומי')
+  })
+  it('numbers notes through the whole book, also at the end of chapters', () => {
+    const data = sample()
+    const fn = (t: string): PMNode => ({ type: 'paragraph', content: [{ type: 'text', text: 'x' }, { type: 'footnote', attrs: { text: t } }] })
+    data.chapters[2].doc = doc(fn('שנייה'), fn('שלישית'))
+    expect(bookSections(data).find((x) => x.id === 'c')!.html).toContain('data-fn="3"')
+    data.publish.layout.notesAt = 'chapter'
+    const c = bookSections(data).find((x) => x.id === 'c')!.html
+    expect(c).toContain('<ol start="2">')
+    expect(c).toMatch(/>3<\/a><\/sup>/)
+    expect(bookSections(data, 'epub').find((x) => x.id === 'c')!.html).toContain('>3</a>. שלישית')
   })
   it('fills the table of contents with page numbers when known', () => {
     const s = bookSections(sample(), 'end', { a: 5, p1: 9, b: 11, c: 15 })
@@ -133,5 +145,36 @@ describe('the book as one Word file', () => {
     expect(await zip.file('word/footnotes.xml')!.async('string')).toContain('הערה &lt;ראשונה&gt;')
     expect(await zip.file('word/settings.xml')!.async('string')).toContain('<w:updateFields w:val="true"/>')
     expect(await zip.file('word/styles.xml')!.async('string')).toContain('w:ascii="David Libre"')
+  })
+})
+
+describe('fitToLayout (imported sizes and fonts follow the layout)', () => {
+  const run = (text: string, size?: string, font?: string) => ({ type: 'text', text, marks: [{ type: 'textStyle', attrs: { fontSize: size ?? null, fontFamily: font ?? null } }] })
+  const doc = {
+    type: 'doc',
+    content: [
+      { type: 'paragraph', content: [run('טקסט רגיל ארוך מאוד שמופיע ברוב הפרק', '11pt', 'Arial'), run('גדול', '22pt', 'Arial')] },
+      { type: 'paragraph', content: [run('עוד טקסט רגיל בגופן אחר', '11pt', 'David')] }
+    ]
+  }
+  it('drops the usual size and font, and scales the others', () => {
+    const out = fitToLayout(doc as never, { fontSize: 14 })
+    const [a, b] = out.content![0].content!
+    expect(a.marks).toBeUndefined()
+    expect(b.marks![0].attrs).toMatchObject({ fontSize: '28pt', fontFamily: null })
+    expect(out.content![1].content![0].marks![0].attrs).toMatchObject({ fontFamily: 'David', fontSize: null })
+  })
+  it('the body size reaches the reading view', () => {
+    const html = bookSections({ title: 'ס', chapters: [{ id: 'c', title: 'פרק', doc: doc as never }], outline: [{ type: 'chapter', id: 'c' }], publish: normalizePublish({ matter: [] }) }).map((s) => s.html).join('')
+    expect(html).not.toContain('11pt')
+  })
+  it('element styles: cleaned when read, and follow the body size when no size was chosen', () => {
+    const p = normalizePublish({ layout: { fontSize: 10, styles: { chapterTitle: { size: 999, align: 'bad', font: 'Heebo' }, toc: 'x' } } as never })
+    expect(p.layout.styles).toEqual({ chapterTitle: { size: 72, font: 'Heebo' } })
+    expect(elStyle(p.layout, 'chapterTitle')).toMatchObject({ size: 72, font: 'Heebo', align: 'center', auto: false })
+    expect(elStyle(p.layout, 'partTitle')).toMatchObject({ size: 22, auto: true })
+    const css = bookCss({ ...p.layout, styles: { notes: { size: 8 } } })
+    expect(css).toContain('.bk-notes, .bk-fnotes { font-size: 8pt')
+    expect(bookCss(p.layout, '', true)).toMatch(/\.bk-ch-title \{ font-size: 7\.200em/)
   })
 })

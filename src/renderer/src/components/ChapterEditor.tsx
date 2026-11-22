@@ -9,6 +9,7 @@ import { drawerCapture, privateNotes, refreshNotePlaces } from '../drafts'
 import { FootnoteList } from './Footnotes'
 import { applyJump, bookmarkFlags, refreshBookmarkPlaces, registerEditor, SceneBreaks, searchHighlight, takePendingJump } from '../nav'
 import { Icon } from './Icons'
+import { glossaryFlags } from '../background'
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error'
 
@@ -137,6 +138,7 @@ function TitleInput({ title, onRename }: { title: string; onRename: (t: string) 
     else if (t !== title) onRename(t)
   }
   return (
+    <div className="ch-title-wrap">
     <input
       className="ch-title"
       value={value}
@@ -153,6 +155,10 @@ function TitleInput({ title, onRename }: { title: string; onRename: (t: string) 
         }
       }}
     />
+      <button className="ib icon title-btn" title="גופן, גודל ומיקום של כותרות הפרקים" aria-label="עיצוב כותרות הפרקים" onClick={() => window.dispatchEvent(new CustomEvent('hakirchia:title-style'))}>
+        <Icon name="gear" />
+      </button>
+    </div>
   )
 }
 
@@ -174,13 +180,15 @@ export interface BodyProps {
   altId?: string
   /** The chapter's title, for pieces that go to the drawer */
   title?: string
+  /** A background page (feature 11): its free text, saved to its own file. chapterId is then the page's id. */
+  materialId?: string
 }
 
 /**
  * The text of one chapter, saved automatically to its .docx file. Used by the writing view and,
  * once per chapter, by the master. Reloads itself when the file changes outside the app.
  */
-export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError, altId, title }: BodyProps) {
+export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus, activateOn, onEditor, onRelease, onWords, onSaveState, onError, altId, title, materialId }: BodyProps) {
   const [readOnly, setReadOnly] = useState(warnings.length > 0)
   const [warn, setWarn] = useState(warnings)
   const dirty = useRef(false)
@@ -188,7 +196,9 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
   const latest = useRef<PMNode>(initial)
   const saving = useRef<Promise<void>>(Promise.resolve())
   // an alternative draft is a document of its own: other editors of the chapter must not take its text
-  const docKey = altId ? `alt:${altId}` : chapterId
+  const docKey = altId ? `alt:${altId}` : materialId ? `mat:${materialId}` : chapterId
+  /** not a chapter of the book: find, bookmarks, notes, word counts and the drawer leave it alone */
+  const aside = !!altId || !!materialId
   const ids = useRef({ bookPath, chapterId: docKey })
   const titleRef = useRef(title ?? '')
   titleRef.current = title ?? ''
@@ -208,7 +218,11 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     dirty.current = false
     cb.current.onSaveState('saving')
     const run = (async () => {
-      const r = altId ? await api.saveAlt(ids.current.bookPath, altId, latest.current) : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
+      const r = altId
+        ? await api.saveAlt(ids.current.bookPath, altId, latest.current)
+        : materialId
+          ? await api.saveMaterial(ids.current.bookPath, materialId, latest.current)
+          : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
       if (!r.ok) {
         dirty.current = true
         cb.current.onSaveState('error')
@@ -216,7 +230,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       } else {
         cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
         // bookmarks in this chapter may have moved with the text
-        if (editorRef.current && !editorRef.current.isDestroyed && !altId) {
+        if (editorRef.current && !editorRef.current.isDestroyed && !aside) {
           refreshBookmarkPlaces(editorRef.current)
           refreshNotePlaces(editorRef.current)
         }
@@ -230,7 +244,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
 
   const words = (e: Editor) => {
     const n = countWords(e.getText({ blockSeparator: '\n' }))
-    if (!altId) {
+    if (!aside) {
       reportWords(ids.current.bookPath, ids.current.chapterId, n)
       reportParagraphs(ids.current.bookPath, ids.current.chapterId, editorParagraphCount(e.state.doc))
     }
@@ -251,7 +265,8 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       searchHighlight(bookPath, docKey),
       bookmarkFlags(bookPath, docKey),
       privateNotes(bookPath, docKey),
-      drawerCapture(altId ? null : chapterId, () => titleRef.current)
+      drawerCapture(aside ? null : chapterId, () => titleRef.current),
+      ...(aside ? [] : [glossaryFlags(bookPath)])
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [bookPath, docKey]
@@ -299,7 +314,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     if (jump) setTimeout(() => !editor.isDestroyed && applyJump(editor, jump), 60)
     editorRef.current = editor
     // alternative drafts are not part of the book: find, bookmarks and notes leave them alone
-    const unregisterNav = altId ? () => undefined : registerEditor(ids.current.bookPath, ids.current.chapterId, editor)
+    const unregisterNav = aside ? () => undefined : registerEditor(ids.current.bookPath, ids.current.chapterId, editor)
     const unregister = registerFlusher(() => saveRef.current())
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
@@ -341,7 +356,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
     return () => {
       if (liveTimer.current) publishLive()
       stopLive()
-      if (dirty.current && !editor.isDestroyed && !altId) {
+      if (dirty.current && !editor.isDestroyed && !aside) {
         refreshBookmarkPlaces(editor)
         refreshNotePlaces(editor)
       }
