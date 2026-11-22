@@ -10,6 +10,7 @@ import { MASTER_LABEL } from './labels'
 import { api, flushAll, onWordsReport, setPendingStop } from './api'
 import { IconSprite, Icon } from './components/Icons'
 import { Home } from './components/Home'
+import { UpdateBanner } from './components/Update'
 import { Binder } from './components/Binder'
 import { type SaveState } from './components/ChapterEditor'
 import { MasterView } from './components/MasterView'
@@ -1611,6 +1612,7 @@ export default function App() {
         />
       )}
 
+      <UpdateBanner />
       {toast && (
         <div className={`toast${toast.error ? ' error' : ''}`} role="status" onClick={() => setToast(null)}>
           {toast.text}
