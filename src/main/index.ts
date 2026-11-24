@@ -258,6 +258,8 @@ function registerIpc(): void {
   // auto-update (version 1.1)
   ipcMain.handle('update:state', () => updater.updateState())
   ipcMain.handle('update:check', () => updater.checkForUpdates())
+  ipcMain.handle('update:tests', () => updater.wantsTestUpdates())
+  ipcMain.handle('update:setTests', (_e, on: boolean) => updater.setTestUpdates(on))
   ipcMain.handle('update:install', () => {
     if (updater.updateState().kind !== 'ready') return
     // closes the way it always does (saving first, maybe asking "what next?"), then installs
