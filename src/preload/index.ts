@@ -228,6 +228,9 @@ const api = {
   // Auto-update (version 1.1)
   updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),
+  /** Whether auto-update also brings test versions */
+  testUpdates: (): Promise<boolean> => ipcRenderer.invoke('update:tests'),
+  setTestUpdates: (on: boolean): Promise<void> => ipcRenderer.invoke('update:setTests', on),
   /** Saves, closes, installs the downloaded version and opens it */
   installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
   /** Returns an unsubscribe function */

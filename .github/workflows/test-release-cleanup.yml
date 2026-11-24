@@ -1,0 +1,20 @@
+name: ניקוי גרסת בדיקה
+
+# When a pull request is merged or closed, its test version (pre-release test-pr-N) is removed,
+# so the app's auto-update ("לקבל גם גרסאות בדיקה") never offers an old, finished test version.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: הסרת גרסת הבדיקה
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the test release and its tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "test-pr-${{ github.event.pull_request.number }}" --cleanup-tag -y --repo "${{ github.repository }}" || true
