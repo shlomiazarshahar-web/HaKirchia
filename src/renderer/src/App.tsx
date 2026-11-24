@@ -20,6 +20,7 @@ import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
 import { ConfirmDialog, NewBookDialog } from './components/Dialogs'
 import { NiqqudAtCursor, WritingSettings } from './components/HebrewTools'
+import { SynonymsHost } from './components/WordTools'
 import { FocusBar, StopCard, StopDialog } from './components/Focus'
 import { getPrefs, initPrefs, setTypewriterNow, usePrefs } from './prefs'
 import { stopHere, centerCursor } from './editor'
@@ -1490,6 +1491,7 @@ export default function App() {
 
       {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} />}
       {niqqudOpen && editor && !editor.isDestroyed && <NiqqudAtCursor editor={editor} onClose={() => setNiqqudOpen(false)} />}
+      <SynonymsHost />
       {compare && <CompareDialog req={compare} onClose={() => setCompare(null)} />}
       {quick && book && <QuickOpen entries={quickEntries()} onClose={() => setQuick(false)} />}
       {namer && editor && !editor.isDestroyed && <BookmarkNamer editor={editor} bookmark={namer} onClose={() => setNamer(null)} />}

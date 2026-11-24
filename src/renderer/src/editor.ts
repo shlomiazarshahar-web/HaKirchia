@@ -10,6 +10,7 @@ import type { Node as PMDoc } from '@tiptap/pm/model'
 import { locateStop, type StopPoint, type TextPiece } from '@shared/stoppoint'
 import { doubleQuoteFor, GERSHAYIM, MAQAF, NIQQUD_CLASS, singleQuoteFor, stripNiqqud } from '@shared/hebrew'
 import { getPrefs } from './prefs'
+import { NameCompletion, WordGrab } from './wordtools'
 
 export type Align = 'right' | 'center' | 'left' | 'justify'
 export type Dir = 'rtl' | 'ltr'
@@ -409,5 +410,8 @@ export const editorExtensions = [
   Placeholder.configure({ placeholder: 'כאן מתחילים לכתוב…' }),
   // marks the paragraph being written ("has-focus"); focus mode can fade all the others
   Focus.configure({ className: 'has-focus', mode: 'shallowest' }),
-  Typewriter
+  Typewriter,
+  // Hebrew writing tools (round 10): names completed with Tab, synonyms on right-click / Shift+F7
+  NameCompletion,
+  WordGrab
 ]

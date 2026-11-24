@@ -8,6 +8,7 @@ import * as project from './project'
 import { getSettings, rememberBook, updateSettings } from './settings'
 import * as fonts from './fonts'
 import * as spell from './spell'
+import { noteContextWord } from './spell'
 import * as exporter from './export'
 import type { PublishSettings } from '../shared/publish'
 import { promises as fsp } from 'fs'
@@ -16,6 +17,7 @@ import { allowedInTranslatePane, type ChapterSource, type SplitItem } from '../s
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 import { IMAGE_EXTS } from './background'
 import * as ai from './ai'
+import * as wordtools from './wordtools'
 import * as workshop from './workshop'
 import * as updater from './updater'
 import * as recovery from './recovery'
@@ -280,6 +282,10 @@ function registerIpc(): void {
   ipcMain.handle('ai:followUp', (e, jobId: string, req: ReviewRequest, rv: Review, chat: ChatTurn[], q: string) => wrap(() => ai.followUp(e.sender, jobId, req, rv, chat, q)))
   ipcMain.handle('ai:promptIdeas', (_e, jobId: string, theme: string, count: number, avoid: string[]) => wrap(() => ai.promptIdeas(jobId, theme, count, avoid)))
   ipcMain.handle('ai:cancel', (_e, jobId: string) => ai.cancel(jobId))
+  // Hebrew writing tools (round 10): synonyms from Claude, automatic niqqud from Dicta (or Claude)
+  ipcMain.handle('words:synonyms', (_e, word: string, sentence: string) => wrap(() => wordtools.synonyms(word, sentence)))
+  ipcMain.handle('words:nakdan', (_e, text: string, by: 'dicta' | 'claude') => wrap(() => wordtools.nakdan(text, by)))
+  ipcMain.on('context:word', (_e, word: string) => noteContextWord(word))
   ipcMain.handle('reviews:list', (_e, b: string) => wrap(() => workshop.readReviews(b)))
   ipcMain.handle('reviews:put', (_e, b: string, rv: Review, remove?: boolean) => wrap(() => workshop.putReview(b, rv, remove)))
   ipcMain.handle('reviews:background', (_e, b: string) => wrap(() => workshop.bookBackground(b)))
