@@ -7,6 +7,8 @@ import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
+import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
+import type { BackupChapter, BackupInfo, BackupSettings } from '../shared/backup'
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
 
 type BookAnd<T> = OpResult<{ book: Book; value: T }>
@@ -187,6 +189,42 @@ const api = {
       ipcRenderer.removeListener('chapter:disk-changed', h)
     }
   },
+  // Crash recovery (feature 41). `session` tells this run of the window apart from earlier ones.
+  writeRecovery: (session: string, entry: RecoveryEntry): Promise<void> => ipcRenderer.invoke('recovery:write', session, entry),
+  clearRecovery: (session: string, key: string): Promise<void> => ipcRenderer.invoke('recovery:clear', session, key),
+  listRecovery: (session: string): Promise<OpResult<RecoveryItem[]>> => ipcRenderer.invoke('recovery:list', session),
+  restoreRecovery: (key: string): Promise<OpResult<void>> => ipcRenderer.invoke('recovery:restore', key),
+  discardRecovery: (key: string): Promise<OpResult<void>> => ipcRenderer.invoke('recovery:discard', key),
+  /** value: the new file's path, or null when cancelled */
+  saveRecoveryAs: (key: string, name: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('recovery:saveAs', key, name),
+  // Daily backups (feature 49)
+  /** A copy of a book was just made (or failed). Returns an unsubscribe function. */
+  onBackupDone: (fn: (bookPath: string) => void) => {
+    const h = (_e: unknown, b: string) => fn(b)
+    ipcRenderer.on('backup:done', h)
+    return () => {
+      ipcRenderer.removeListener('backup:done', h)
+    }
+  },
+  /** The folder all backups go to */
+  backupRoot: (): Promise<string> => ipcRenderer.invoke('backup:root'),
+  backupInfo: (bookPath: string): Promise<OpResult<BackupInfo>> => ipcRenderer.invoke('backup:info', bookPath),
+  /** value: the day copied */
+  backupNow: (bookPath: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('backup:now', bookPath),
+  backupChapters: (bookPath: string, day: string): Promise<OpResult<BackupChapter[]>> => ipcRenderer.invoke('backup:chapters', bookPath, day),
+  restoreFromBackup: (bookPath: string, day: string, chapterId: string): Promise<OpResult<{ book: Book; chapterId: string; notice?: string }>> =>
+    ipcRenderer.invoke('backup:restoreChapter', bookPath, day, chapterId),
+  setBackupSettings: (patch: Partial<BackupSettings>): Promise<BackupSettings> => ipcRenderer.invoke('backup:settings', patch),
+  /** value: the new settings, or null when cancelled */
+  chooseBackupFolder: (): Promise<BackupSettings | null> => ipcRenderer.invoke('backup:chooseFolder'),
+  /** Opens the book's backups folder (or the folder of all backups) in Explorer */
+  openBackups: (bookPath?: string): Promise<string> => ipcRenderer.invoke('backup:open', bookPath),
+  // Importing a manuscript from Word (feature 42)
+  /** Asks for a Word file and reads its paragraphs. value is null when cancelled. */
+  pickManuscript: (): Promise<OpResult<{ fileName: string; blocks: PMNode[]; warnings: string[] } | null>> => ipcRenderer.invoke('import:pick'),
+  importToBook: (bookPath: string, items: { title: string; doc: PMNode }[]): Promise<OpResult<Book>> => ipcRenderer.invoke('import:toBook', bookPath, items),
+  importNewBook: (parentDir: string, title: string, items: { title: string; doc: PMNode }[]): Promise<OpResult<{ book: Book; notice?: string }>> =>
+    ipcRenderer.invoke('import:newBook', parentDir, title, items),
   // Auto-update (version 1.1)
   updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),

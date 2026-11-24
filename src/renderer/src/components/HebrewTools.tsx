@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { BackupSettingsFields } from './Safety'
 import type { Editor } from '@tiptap/react'
 import type { SpellStatus } from '@shared/types'
 import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, pressesFor, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
@@ -343,6 +344,18 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <p className="lp-note">הסרה מהרשימה לא משנה טקסט שכבר נכתב בגופן הזה.</p>
+        </section>
+
+        <section>
+          <h3>גיבוי יומי</h3>
+          <BackupSettingsFields />
+          <div className="set-row">
+            <span className="lp-note">את הגיבויים של ספר פותחים מהשורה "גיבוי" שבתחתית המסך כשהספר פתוח.</span>
+            <span className="grow" />
+            <button className="ib" onClick={() => void api.openBackups()}>
+              פתיחת תיקיית הגיבויים
+            </button>
+          </div>
         </section>
 
         <section>

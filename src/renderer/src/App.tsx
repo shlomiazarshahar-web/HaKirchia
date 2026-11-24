@@ -41,6 +41,10 @@ import { setGlossaryTerms, setTermClick } from './background'
 import { ReviewPanel } from './components/Review'
 import { Workshop } from './components/Workshop'
 import { initAi } from './ai'
+import { BackupDialog, BackupStatus, RecoveryDialog } from './components/Safety'
+import { ImportDialog } from './components/Import'
+import { SESSION } from './recovery'
+import type { RecoveryItem } from '@shared/recovery'
 
 type Toast = { text: string; error?: boolean } | null
 type Dialog =
@@ -51,6 +55,8 @@ type Dialog =
   | { kind: 'delete'; chapter: Chapter }
   | { kind: 'deletePart'; part: PartNode }
   | { kind: 'deleteMaterial'; material: Material }
+  | { kind: 'import'; into: boolean }
+  | { kind: 'backups' }
   | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | { material: Material; x: number; y: number } | null
 type View = 'write' | 'master' | 'board' | 'read'
@@ -82,6 +88,9 @@ export default function App() {
   const [saveState, setSaveState] = useState<SaveState>('saved')
   const [toast, setToast] = useState<Toast>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
+  /** Round 9: unsaved text left by an earlier run (feature 41); the status bar's backup line refreshes on tick (feature 49) */
+  const [recovery, setRecovery] = useState<RecoveryItem[] | null>(null)
+  const [backupTick, setBackupTick] = useState(0)
   const [menu, setMenu] = useState<Menu>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   /** Writing view: its panes (one, or 2–3 side by side), and the one in focus (by its stable key) */
@@ -155,6 +164,8 @@ export default function App() {
     })
     void refreshLibrary()
     api.onBeforeClose((wait) => beforeClose.current(wait))
+    // Text that an earlier run did not manage to save (a crash, a power cut, a drive that went away)
+    void api.listRecovery(SESSION).then((r) => r.ok && r.value?.length && setRecovery(r.value))
   }, [refreshLibrary])
 
   // Live word counts of the open book
@@ -1044,6 +1055,20 @@ export default function App() {
     return null
   }
 
+  /** Feature 42: the manuscript was imported (into a new book or the open one) */
+  const imported = (b: Book, notice?: string) => {
+    setDialog(null)
+    if (book && b.path === book.path) {
+      setBook(b)
+      void refreshWords(b.path)
+      show(notice ?? 'הפרקים נוספו בסוף הספר', !!notice)
+    } else {
+      enterBook(b)
+      if (notice) show(notice, true)
+      else show(`הספר "${b.title}" נוצר עם ${b.chapters.length} פרקים`)
+    }
+  }
+
   const toggleTheme = () => {
     const t: Theme = theme === 'light' ? 'dark' : 'light'
     setTheme(t)
@@ -1245,6 +1270,7 @@ export default function App() {
             onOpen={openBook}
             onNew={() => setDialog({ kind: 'newBook' })}
             onOpenFolder={openFolder}
+            onImport={() => setDialog({ kind: 'import', into: false })}
             onForget={(p) => api.forgetBook(p).then(refreshLibrary)}
             onRename={(p, t) =>
               void api.renameBook(p, t, true).then((r) => {
@@ -1300,6 +1326,7 @@ export default function App() {
               onSelect={selectChapter}
               onAdd={() => addChapter()}
               onAddPart={addPart}
+              onImport={() => void flushAll().then(() => setDialog({ kind: 'import', into: true }))}
               onRename={renameChapter}
               onStartRename={setRenamingId}
               onOutline={saveOutline}
@@ -1404,6 +1431,7 @@ export default function App() {
             <span>{SAVE_LABEL[saveState]}</span>
           </span>
         )}
+        {book && !empty && <BackupStatus bookPath={book.path} tick={backupTick} onOpen={() => setDialog({ kind: 'backups' })} />}
         {(inMaster || writeMaster) && !empty ? (
           masterFocus ? (
             <span>
@@ -1579,6 +1607,19 @@ export default function App() {
       )}
       {dialog?.kind === 'settings' && <WritingSettings onClose={() => setDialog(null)} />}
       {dialog?.kind === 'newBook' && <NewBookDialog onCancel={() => setDialog(null)} onCreate={createBook} />}
+      {dialog?.kind === 'import' && <ImportDialog into={dialog.into ? book : null} onCancel={() => setDialog(null)} onDone={imported} />}
+      {dialog?.kind === 'backups' && book && (
+        <BackupDialog
+          book={book}
+          show={show}
+          onBook={(b) => setBook(b)}
+          onClose={() => {
+            setDialog(null)
+            setBackupTick((t) => t + 1)
+          }}
+        />
+      )}
+      {recovery && <RecoveryDialog items={recovery} show={show} onClose={() => (setRecovery(null), void refreshLibrary())} />}
       {dialog?.kind === 'delete' && (
         <ConfirmDialog
           title={`למחוק את "${dialog.chapter.title}"?`}

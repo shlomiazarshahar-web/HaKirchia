@@ -20,6 +20,8 @@ interface Props {
   onSelect: (id: string) => void
   onAdd: () => void
   onAddPart: () => void
+  /** Import chapters from a Word manuscript (feature 42) */
+  onImport?: () => void
   onRename: (id: string, title: string) => void
   onStartRename: (id: string | null) => void
   onOutline: (outline: OutlineNode[]) => void
@@ -47,7 +49,7 @@ interface Props {
 type Over = { id: string; mark: 'before' | 'after' | 'into' } | { id: '__end'; mark: 'end' }
 
 export function Binder(props: Props) {
-  const { book, activeId, masterActive, onMaster, renamingId, onSelect, onAdd, onAddPart, onStartRename, onOutline } = props
+  const { book, activeId, masterActive, onMaster, renamingId, onSelect, onAdd, onAddPart, onImport, onStartRename, onOutline } = props
   const [drag, setDrag] = useState<Dragged | null>(null)
   const [over, setOver] = useState<Over | null>(null)
   const [target, setTarget] = useState<DropTarget | null>(null)
@@ -266,6 +268,11 @@ export function Binder(props: Props) {
         <div className="bhead">
           כתב היד
           <span className="bhead-btns">
+            {onImport && (
+              <button className="ib" title="ייבוא פרקים מקובץ Word ארוך, מחולקים לפי הכותרות" onClick={onImport}>
+                <Icon name="import" />
+              </button>
+            )}
             <button className="ib" title="חלק חדש (קבוצת פרקים)" onClick={onAddPart}>
               <Icon name="part-plus" />
             </button>

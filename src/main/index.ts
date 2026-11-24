@@ -18,6 +18,11 @@ import { IMAGE_EXTS } from './background'
 import * as ai from './ai'
 import * as workshop from './workshop'
 import * as updater from './updater'
+import * as recovery from './recovery'
+import * as backup from './backup'
+import { docxBlocks } from '../shared/docx'
+import { normalizeBackup, type BackupSettings } from '../shared/backup'
+import type { RecoveryEntry } from '../shared/recovery'
 import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn } from '../shared/review'
 
 let win: BrowserWindow | null = null
@@ -78,6 +83,12 @@ function createWindow(): void {
         shell.openExternal(url)
       }
     })
+  })
+  // The page crashed (or ran out of memory): load it again. Typing that was not saved yet waits in
+  // the recovery folder, and the app offers it back as it starts (feature 41).
+  win.webContents.on('render-process-gone', (_e, details) => {
+    if (details.reason === 'clean-exit' || !win || win.isDestroyed()) return
+    void loadAppPage(win)
   })
   spell.setupSpellcheck(win)
   win.once('ready-to-show', () => win?.show())
@@ -377,8 +388,67 @@ function registerIpc(): void {
   const opened = (book: Book) => {
     rememberBook(book.path, book.title, book.chapters.length)
     project.watchBook(book.path, (id) => win?.webContents.send('chapter:disk-changed', book.path, id))
+    backup.watchForBackup(book.path)
     return book
   }
+
+  // Crash recovery (feature 41): typing not yet in its Word file, kept on this computer's disk
+  ipcMain.handle('recovery:write', (_e, session: string, entry: RecoveryEntry) => recovery.writeEntry(session, entry).catch(() => undefined))
+  ipcMain.handle('recovery:clear', (_e, session: string, key: string) => recovery.clearEntry(session, key).catch(() => undefined))
+  ipcMain.handle('recovery:list', (_e, session: string) => wrap(() => recovery.listEntries(session)))
+  ipcMain.handle('recovery:restore', (_e, key: string) => wrap(() => recovery.restoreEntry(key)))
+  ipcMain.handle('recovery:discard', (_e, key: string) => wrap(() => recovery.discardEntry(key)))
+  ipcMain.handle('recovery:saveAs', (_e, key: string, name: string) => wrap(() => recovery.saveEntryAs(win!, key, name)))
+
+  // Daily backups (feature 49)
+  backup.onBackupDone((b) => win?.webContents.send('backup:done', b))
+  ipcMain.handle('backup:root', () => backup.rootDir())
+  ipcMain.handle('backup:info', (_e, b: string) => wrap(() => backup.backupInfo(b)))
+  ipcMain.handle('backup:now', (_e, b: string) => wrap(() => backup.backupNow(b, true)))
+  ipcMain.handle('backup:chapters', (_e, b: string, day: string) => wrap(() => backup.backupChapters(b, day)))
+  ipcMain.handle('backup:restoreChapter', (_e, b: string, day: string, chapterId: string) =>
+    wrap(async () => {
+      const r = await backup.restoreChapter(b, day, chapterId)
+      rememberBook(r.book.path, r.book.title, r.book.chapters.length)
+      return r
+    })
+  )
+  ipcMain.handle('backup:settings', (_e, patch: Partial<BackupSettings>) => updateSettings({ backup: normalizeBackup({ ...getSettings().backup, ...patch }) }).backup)
+  ipcMain.handle('backup:chooseFolder', async () => {
+    const res = await dialog.showOpenDialog(win!, { title: 'איפה לשמור את הגיבויים?', defaultPath: backup.rootDir(), properties: ['openDirectory', 'createDirectory'] })
+    if (res.canceled || !res.filePaths[0]) return null
+    return updateSettings({ backup: normalizeBackup({ ...getSettings().backup, folder: res.filePaths[0] }) }).backup
+  })
+  ipcMain.handle('backup:open', async (_e, b?: string) => {
+    const info = b ? await backup.backupInfo(b).catch(() => null) : null
+    const target = info?.dir ?? backup.rootDir()
+    await fsp.mkdir(target, { recursive: true }).catch(() => undefined)
+    return shell.openPath(target)
+  })
+
+  // Importing a manuscript from Word (feature 42)
+  ipcMain.handle('import:pick', () =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, {
+        title: 'בחירת כתב היד (קובץ Word)',
+        defaultPath: getSettings().defaultFolder ?? app.getPath('documents'),
+        filters: [{ name: 'Word', extensions: ['docx'] }],
+        properties: ['openFile']
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      const file = res.filePaths[0]
+      const { blocks, warnings } = await docxBlocks(new Uint8Array(await fsp.readFile(file)), { splitPages: true })
+      return { fileName: file.split(/[\\/]/).pop() ?? '', blocks, warnings }
+    })
+  )
+  ipcMain.handle('import:toBook', (_e, b: string, items: { title: string; doc: PMNode }[]) => wrapBook(() => project.importChapters(b, items)))
+  ipcMain.handle('import:newBook', (_e, parentDir: string, title: string, items: { title: string; doc: PMNode }[]) =>
+    wrap(async () => {
+      updateSettings({ defaultFolder: parentDir })
+      const { book, notice } = await project.createBookFromChapters(parentDir, title, items)
+      return { book: opened(book), notice }
+    })
+  )
 
   ipcMain.handle('book:create', (_e, parentDir: string, title: string) =>
     wrap(async () => {

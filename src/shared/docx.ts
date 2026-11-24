@@ -456,7 +456,7 @@ function styleBidi(id: string | undefined, ctx: ReturnType<typeof parseStyles>):
 function headingLevel(id: string | undefined, ctx: ReturnType<typeof parseStyles>): number | null {
   if (!id) return null
   const name = ctx.styles.get(id)?.name ?? id.toLowerCase()
-  if (name === 'title') return 1
+  if (name === 'title') return 0
   const m = /^heading\s*(\d)$/.exec(name) ?? /^heading(\d)$/.exec(id.toLowerCase())
   return m ? Number(m[1]) : null
 }
@@ -537,7 +537,12 @@ async function readFootnotes(zip: JSZip): Promise<Map<string, string>> {
   return out
 }
 
-export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: PMNode; title: string | null; warnings: string[] }> {
+/**
+ * The paragraphs of a Word file as they are, before any chapter rules: headings keep their Word
+ * level (the "Title" style is level 0). With `splitPages`, a page break ends its paragraph and the
+ * block after it gets attrs.pageBreak = true (used to split a whole manuscript into chapters).
+ */
+export async function docxBlocks(data: Uint8Array | ArrayBuffer, opts: { splitPages?: boolean } = {}): Promise<{ blocks: PMNode[]; warnings: string[] }> {
   const zip = await JSZip.loadAsync(data)
   const docFile = zip.file('word/document.xml')
   if (!docFile) throw new Error('הקובץ אינו מסמך Word תקין (חסר word/document.xml)')
@@ -550,11 +555,13 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
   const warnings = new Set<string>()
   const blocks: PMNode[] = []
 
-  const readParagraph = (p: El): PMNode => {
+  const readParagraph = (p: El): PMNode[] => {
     const pPr = child(p, 'pPr')
     const styleId = wAttr(child(pPr, 'pStyle'), 'val') ?? undefined
     const level = headingLevel(styleId, ctx)
     const inline: PMNode[] = []
+    /** where page breaks were, as positions in `inline` (only with splitPages) */
+    const pageBreakAt: number[] = []
     let plain = ''
 
     const pushText = (text: string, marks?: PMMark[]) => {
@@ -574,6 +581,7 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
             const rn = local(rc)
             if (rn === 't') pushText(rc.textContent ?? '', marks)
             else if (rn === 'tab') pushText('\t', marks)
+            else if (rn === 'br' && opts.splitPages && wAttr(rc, 'type') === 'page') pageBreakAt.push(inline.length)
             else if (rn === 'br' || rn === 'cr') inline.push({ type: 'hardBreak' })
             else if (rn === 'noBreakHyphen') pushText('‑', marks)
             else if (rn === 'drawing' || rn === 'pict' || rn === 'object') warnings.add('תמונה או אובייקט')
@@ -609,17 +617,49 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
     else if (jc === 'right') textAlign = dir === 'rtl' ? 'left' : 'right'
 
     const attrs: Record<string, unknown> = { dir, textAlign }
-    if (level) {
-      attrs.level = level
-      return { type: 'heading', attrs, content: inline.length ? inline : undefined }
+    const make = (content: PMNode[], extra?: Record<string, unknown>): PMNode => {
+      const a = { ...attrs, ...extra }
+      // a hard line break left at the edge of a piece (around a page break) means nothing
+      while (content[0]?.type === 'hardBreak') content = content.slice(1)
+      while (content[content.length - 1]?.type === 'hardBreak') content = content.slice(0, -1)
+      if (level !== null) return { type: 'heading', attrs: { ...a, level }, content: content.length ? content : undefined }
+      return { type: 'paragraph', attrs: a, content: content.length ? content : undefined }
     }
-    return { type: 'paragraph', attrs, content: inline.length ? inline : undefined }
+    if (!opts.splitPages) return [make(inline)]
+    const before = isOn(child(pPr, 'pageBreakBefore')) ? { pageBreak: true } : undefined
+    if (!pageBreakAt.length) return [make(inline, before)]
+    // a page break inside the paragraph: the text after it starts a new page
+    const out: PMNode[] = []
+    let from = 0
+    let flag = before
+    for (const at of [...pageBreakAt, inline.length]) {
+      const piece = inline.slice(from, at)
+      if (piece.some((n) => n.type !== 'hardBreak') || from === 0) out.push(make(piece, flag))
+      flag = { pageBreak: true }
+      from = at
+    }
+    // a paragraph that ends with a page break: the next paragraph starts the new page
+    if (pageBreakAt[pageBreakAt.length - 1] === inline.length && out.length) {
+      pendingBreak = true
+      if (!out[out.length - 1].content && out.length > 1) out.pop()
+    }
+    return out.filter((b, i) => i === 0 || b.content)
   }
+  let pendingBreak = false
 
   const walkBlocks = (el: El) => {
     for (const k of kids(el)) {
       const name = local(k)
-      if (name === 'p') blocks.push(readParagraph(k))
+      if (name === 'p') {
+        const got = readParagraph(k)
+        if (pendingBreak && got.length) {
+          // the break ended the previous paragraph; this one starts the new page
+          const carry = !got[0].attrs?.pageBreak
+          pendingBreak = false
+          if (carry) got[0].attrs = { ...got[0].attrs, pageBreak: true }
+        }
+        blocks.push(...got)
+      }
       else if (name === 'tbl') {
         warnings.add('טבלה')
         // keep the text of the table, cell by cell
@@ -630,6 +670,13 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
     }
   }
   if (body) walkBlocks(body)
+  return { blocks, warnings: [...warnings] }
+}
+
+export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: PMNode; title: string | null; warnings: string[] }> {
+  const { blocks, warnings } = await docxBlocks(data)
+  // the "Title" style counts as a chapter title, like Heading 1
+  for (const b of blocks) if (b.type === 'heading' && b.attrs?.level === 0) b.attrs = { ...b.attrs, level: 1 }
 
   // The first Heading 1 is the chapter title (that's how we write it). Other headings map to 2/3.
   let title: string | null = null
@@ -645,7 +692,7 @@ export async function docxToDoc(data: Uint8Array | ArrayBuffer): Promise<{ doc: 
     }
   }
   if (!blocks.length) blocks.push({ type: 'paragraph', attrs: { dir: 'rtl', textAlign: null } })
-  return { doc: { type: 'doc', content: blocks }, title, warnings: [...warnings] }
+  return { doc: { type: 'doc', content: blocks }, title, warnings }
 }
 
 /** True if this file was last written by הכריכייה (so overwriting it loses nothing). */

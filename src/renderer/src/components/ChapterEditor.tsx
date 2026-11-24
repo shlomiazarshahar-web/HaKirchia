@@ -3,6 +3,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react'
 import type { AltDraft, Book, Chapter, PMNode } from '@shared/types'
 import { countWords } from '@shared/docx'
 import { editorParagraphCount, reportParagraphs } from '../translate'
+import { journal, type Journal } from '../recovery'
 import { api, hasLiveTwin, onDiskChange, onLiveEdit, publishLiveEdit, registerFlusher, reportWords, takePendingStop } from '../api'
 import { editorExtensions, restoreStop } from '../editor'
 import { drawerCapture, privateNotes, refreshNotePlaces } from '../drafts'
@@ -209,6 +210,16 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
   const cb = useRef({ onEditor, onRelease, onWords, onSaveState, onError })
   cb.current = { onEditor, onRelease, onWords, onSaveState, onError }
 
+  // Crash recovery (feature 41): typing that is not in the file yet is also kept on this computer
+  const journalRef = useRef<Journal | null>(null)
+  if (!journalRef.current)
+    journalRef.current = journal(
+      altId ? 'alt' : materialId ? 'material' : exerciseId ? 'exercise' : 'chapter',
+      () => ({ bookPath: ids.current.bookPath, id: altId ?? materialId ?? exerciseId ?? ids.current.chapterId }),
+      () => (dirty.current ? latest.current : null)
+    )
+  const jr = journalRef.current
+
   const save = async () => {
     if (timer.current) {
       clearTimeout(timer.current)
@@ -229,9 +240,11 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
             : await api.saveChapter(ids.current.bookPath, ids.current.chapterId, latest.current)
       if (!r.ok) {
         dirty.current = true
+        jr.now()
         cb.current.onSaveState('error')
         cb.current.onError(r.error ?? 'השמירה נכשלה')
       } else {
+        if (!dirty.current) jr.clear()
         cb.current.onSaveState(dirty.current ? 'dirty' : 'saved')
         // bookmarks in this chapter may have moved with the text
         if (editorRef.current && !editorRef.current.isDestroyed && !aside) {
@@ -298,6 +311,7 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
         liveTimer.current = setTimeout(publishLive, 150)
       }
       dirty.current = true
+      jr.touch()
       cb.current.onSaveState('dirty')
       cb.current.onWords(words(editor))
       if (timer.current) clearTimeout(timer.current)
@@ -370,7 +384,8 @@ export function ChapterBody({ bookPath, chapterId, initial, warnings, autoFocus,
       unregister()
       if (activateOn === 'mount') cb.current.onEditor(null)
       else cb.current.onRelease?.(editor)
-      void saveRef.current()
+      // the last save clears the journal when it succeeds; a timer left would only rewrite it
+      void saveRef.current().finally(() => jr.dispose())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor])
