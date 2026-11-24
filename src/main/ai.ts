@@ -47,11 +47,11 @@ export async function setKey(key: string): Promise<KeyState> {
   return keyState()
 }
 
-function aiSettings(): AiSettings {
+export function aiSettings(): AiSettings {
   return normalizeAi(getSettings().ai)
 }
 
-async function client(): Promise<Anthropic> {
+export async function client(): Promise<Anthropic> {
   const key = await readKey()
   if (!key) throw new Error('עדיין לא הוגדר מפתח API. אפשר להגדיר אותו ב"הגדרות ביקורת".')
   return new Anthropic({ apiKey: key, maxRetries: 2 })

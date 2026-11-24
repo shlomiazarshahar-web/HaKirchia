@@ -8,6 +8,8 @@ import type { Node as PMDoc } from '@tiptap/pm/model'
 import type { Book } from '@shared/types'
 import { buildTermIndex, checkTerms, findFlags, KIND_ONE, matchAll, namesOf, type ChapterText, type Occurrence, type TermIndex } from '@shared/background'
 import { api } from './api'
+import { completionsFor } from '@shared/wordtools'
+import { setCompletions } from './wordtools'
 import { docFromJSON, editorsFor, poke, textBlocks, type Block, type JumpTarget } from './nav'
 
 // ---------------------------------------------------------------------------
@@ -116,6 +118,7 @@ export function setTermClick(fn: ((ref: string) => void) | null): void {
 
 /** The open book's glossary and names changed: the marks follow */
 export function setGlossaryTerms(book: Book, open: string[] = []): void {
+  setCompletions(completionsFor(book.glossary, book.materials))
   const want = new Set(open)
   const terms = checkTerms(book.glossary, book.materials)
   const next: Shown[] = [

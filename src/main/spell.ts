@@ -10,6 +10,11 @@ const LANGS = ['he', 'he-IL', 'en-US']
 const dictFile = () => join(app.getPath('userData'), 'מילון אישי.txt')
 const failed = new Set<string>()
 let words: string[] = []
+// The word under the mouse at the last right-click, sent by the window (Windows does not select it)
+let ctxWord = { word: '', at: 0 }
+export function noteContextWord(word: string): void {
+  ctxWord = { word: word.trim(), at: Date.now() }
+}
 
 function loadWords(): string[] {
   try {
@@ -56,6 +61,14 @@ export function setupSpellcheck(win: BrowserWindow): void {
         { label: `הוספת "${p.misspelledWord}" למילון האישי`, click: () => addWord(win, p.misspelledWord) },
         { type: 'separator' }
       )
+    }
+    // Synonyms (feature 43): for one word, selected or under the mouse
+    if (p.isEditable) {
+      const selWord = p.selectionText.trim()
+      const word = selWord && !/\s/.test(selWord) ? selWord : !selWord && Date.now() - ctxWord.at < 1500 ? ctxWord.word : ''
+      if (word && word.length <= 30) {
+        items.push({ label: `מילים נרדפות ל"${word}"…`, accelerator: 'Shift+F7', click: () => win.webContents.send('context:synonyms') }, { type: 'separator' })
+      }
     }
     const f = p.editFlags
     if (p.isEditable) {

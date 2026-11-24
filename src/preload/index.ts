@@ -5,6 +5,7 @@ import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
+import type { NakdanToken, SynonymSense } from '../shared/wordtools'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
 import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
@@ -66,6 +67,19 @@ const api = {
   findingReply: (jobId: string, req: ReviewRequest, rv: Review, f: Finding, msg: string): Promise<OpResult<{ reply: string; decision: string; usage: Usage }>> => ipcRenderer.invoke('ai:findingReply', jobId, req, rv, f, msg),
   promptIdeas: (jobId: string, theme: string, count: number, avoid: string[]): Promise<OpResult<{ prompts: string[]; usage: Usage }>> => ipcRenderer.invoke('ai:promptIdeas', jobId, theme, count, avoid),
   cancelAi: (jobId: string): Promise<void> => ipcRenderer.invoke('ai:cancel', jobId),
+  // Hebrew writing tools (round 10)
+  synonyms: (word: string, sentence: string): Promise<OpResult<SynonymSense[]>> => ipcRenderer.invoke('words:synonyms', word, sentence),
+  nakdan: (text: string, by: 'dicta' | 'claude'): Promise<OpResult<NakdanToken[]>> => ipcRenderer.invoke('words:nakdan', text, by),
+  /** The word under the mouse at a right-click, so the menu can offer its synonyms */
+  contextWord: (word: string): void => ipcRenderer.send('context:word', word),
+  /** "מילים נרדפות" was picked in the right-click menu */
+  onContextSynonyms: (fn: () => void) => {
+    const h = () => fn()
+    ipcRenderer.on('context:synonyms', h)
+    return () => {
+      ipcRenderer.removeListener('context:synonyms', h)
+    }
+  },
   /** Claude's answer so far, while it is being written */
   onAiProgress: (fn: (jobId: string, text: string) => void) => {
     const h = (_e: unknown, jobId: string, text: string) => fn(jobId, text)
@@ -229,6 +243,9 @@ const api = {
   // Auto-update (version 1.1)
   updateState: (): Promise<UpdateState> => ipcRenderer.invoke('update:state'),
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('update:check'),
+  /** Whether auto-update also brings test versions */
+  testUpdates: (): Promise<boolean> => ipcRenderer.invoke('update:tests'),
+  setTestUpdates: (on: boolean): Promise<void> => ipcRenderer.invoke('update:setTests', on),
   /** Saves, closes, installs the downloaded version and opens it */
   installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install'),
   /** Returns an unsubscribe function */

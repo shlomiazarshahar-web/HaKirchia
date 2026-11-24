@@ -139,6 +139,8 @@ export interface Settings {
   ai?: Partial<AiSettings>
   /** The workshop's folder (feature 22), when the writer moved it */
   workshopPath?: string
+  /** Auto-update also brings test versions (pre-releases of pull requests); unset = only when running one */
+  testUpdates?: boolean
   /** Daily dated copies of each open book (feature 49) */
   backup?: Partial<BackupSettings>
 }
