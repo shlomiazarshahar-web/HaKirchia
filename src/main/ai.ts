@@ -6,7 +6,7 @@ import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import type { BetaMessageParam, BetaTextBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import { getSettings } from './settings'
-import { costOf, normalizeAi, promptIdeasMessage, REVIEW_SCHEMA, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Review, type ReviewRequest, type Usage } from '../shared/review'
+import { costOf, findingThreadMessages, normalizeAi, parseReply, REPLY_SCHEMA, promptIdeasMessage, REVIEW_SCHEMA, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Finding, type Review, type ReviewRequest, type Usage } from '../shared/review'
 
 const keyFile = () => join(app.getPath('userData'), 'claude-key.bin')
 let keyCache: string | null | undefined
@@ -179,6 +179,27 @@ export async function followUp(wc: WebContents, jobId: string, req: ReviewReques
   }
   const r = await streamOnce(body, jobId, (snap) => !wc.isDestroyed() && wc.send('ai:progress', jobId, snap))
   return { text: r.text.trim(), usage: r.usage }
+}
+
+/** The writer's reply on one comment: the same text (cached), the review, the talk about this comment, and the reply */
+export async function findingReply(wc: WebContents, jobId: string, req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings'>, finding: Finding, message: string): Promise<{ reply: string; decision: string; usage: Usage }> {
+  const s = aiSettings()
+  const { ask } = reviewMessage(req)
+  const messages: BetaMessageParam[] = [
+    { role: 'user', content: contextBlocks(req, ask) },
+    { role: 'assistant', content: reviewAsText(rv) || '(אין הערות)' }
+  ]
+  for (const t of findingThreadMessages(finding, finding.thread ?? [], message)) messages.push({ role: t.role, content: t.text })
+  const body: Body = {
+    model: s.model,
+    max_tokens: 32000,
+    system: systemPrompt(s.instructions),
+    thinking: { type: 'adaptive' },
+    output_config: { effort: s.effort === 'xhigh' ? 'high' : s.effort, format: { type: 'json_schema', schema: REPLY_SCHEMA as unknown as Record<string, unknown> } },
+    messages
+  }
+  const r = await streamOnce(body, jobId, (snap) => !wc.isDestroyed() && wc.send('ai:progress', jobId, snap))
+  return { ...parseReply(r.text), usage: r.usage }
 }
 
 /** New writing prompts for the workshop */

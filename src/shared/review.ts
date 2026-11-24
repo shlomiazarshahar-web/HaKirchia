@@ -101,6 +101,10 @@ export interface Finding {
   /** For a whole-book review: which chapter the quote is in */
   chapterId?: string
   status: FindingStatus
+  /** The writer's conversation with Claude about this one comment */
+  thread?: ChatTurn[]
+  /** What was decided about this comment, in one line (Claude sums it up after a reply; the writer can edit it) */
+  decision?: string
 }
 
 export interface ChatTurn {
@@ -129,6 +133,8 @@ export interface Review {
   excerpt?: string
   /** The original (PDF) of translated chapters was sent along */
   withSource?: boolean
+  /** Earlier reviews (with their decisions) were sent along, so this one builds on them */
+  withHistory?: boolean
   model: string
   summary: string
   findings: Finding[]
@@ -220,6 +226,8 @@ export interface ReviewRequest {
   exercisePrompt?: string
   /** The book's title */
   bookTitle?: string
+  /** Earlier reviews of the same text and what was decided in them, already as text (historyText) */
+  history?: string
 }
 
 /** The JSON shape Claude answers in (structured outputs) */
@@ -275,16 +283,87 @@ export function reviewMessage(req: ReviewRequest): { context: string; ask: strin
   const parts: string[] = []
   if (req.bookTitle) parts.push(`שם הספר: ${req.bookTitle}`)
   if (req.background?.trim()) parts.push(`<חומרי_רקע>\n${req.background.trim()}\n</חומרי_רקע>`)
+  if (req.history?.trim()) parts.push(`<ביקורות_קודמות>\n${req.history.trim()}\n</ביקורות_קודמות>`)
   if (req.exercisePrompt?.trim()) parts.push(`<הנחיית_התרגיל>\n${req.exercisePrompt.trim()}\n</הנחיית_התרגיל>`)
   const what = req.scope === 'book' ? 'כל הספר, פרק אחרי פרק' : req.scope === 'selection' ? `קטע מסומן${req.contextTitle ? ` מתוך "${req.contextTitle}"` : ''}` : req.scope === 'exercise' ? 'תרגיל כתיבה' : 'פרק'
   parts.push(`הטקסט לביקורת (${what}):\n${textBlock(req.texts)}`)
   const asks: string[] = []
   if (req.kinds.length) asks.push(`בדוק את הטקסט לפי הסוגים האלה:\n${req.kinds.map((k) => `- ${k.name}: ${k.prompt}`).join('\n')}`)
+  if (req.history?.trim()) asks.push(HISTORY_ASK)
   if (req.exercisePrompt?.trim()) asks.push('התייחס גם לשאלה עד כמה הטקסט עונה על הנחיית התרגיל.')
   if (req.question?.trim()) asks.push(`שאלה מהכותב: ${req.question.trim()}`)
   if (!asks.length) asks.push('תן ביקורת כללית על הטקסט.')
   asks.push('ענה במבנה המבוקש: סיכום קצר ורשימת הערות, כל הערה עם ציטוט מדויק מהטקסט.')
   return { context: parts.join('\n\n'), ask: asks.join('\n\n') }
+}
+
+/** What Claude is asked to do with earlier reviews */
+export const HISTORY_ASK = `לפני הטקסט יש <ביקורות_קודמות>: ביקורות שכבר נתת על הטקסט הזה, מה הכותב עשה עם כל הערה ומה הוחלט בשיחות עליהן. בנה עליהן:
+- מה שהכותב החליט לגביו (למשל להשאיר משהו כמו שהוא, כי הוא מכוון) הוא החלטה שלו. אל תעלה את זה שוב, אלא אם יש סיבה חדשה וממשית, ואז אמור במפורש שזה חוזר ולמה.
+- הערה שסומנה "לא רלוונטי" לא חוזרת באותה צורה.
+- הערה שסומנה "טופל": בדוק אם התיקון באמת עובד, ואם כן אפשר לציין שזה השתפר.
+- הערה שנשארה פתוחה ועדיין נכונה: אפשר להזכיר אותה בקצרה ולציין שהיא עדיין פתוחה.
+- בשורה התחתונה, אמור גם מה השתנה מאז הביקורת הקודמת.`
+
+// ---------------------------------------------------------------------------
+// Earlier reviews as context for a new one
+// ---------------------------------------------------------------------------
+
+const STATUS_WORD: Record<FindingStatus, string> = { open: 'פתוח', done: 'טופל', dismissed: 'לא רלוונטי' }
+
+/** Which earlier reviews a new review of this target builds on: the same chapter (or exercise), whole-book reviews, and for a whole-book review all of them. Newest first. */
+export function relevantReviews(list: Review[], target: { scope: ReviewScope; targetId?: string }, before = Infinity): Review[] {
+  return list
+    .filter((r) => r.at < before)
+    .filter((r) => {
+      if (target.scope === 'book' || target.scope === 'exercise') return true
+      if (r.scope === 'book') return r.findings.some((f) => f.chapterId === target.targetId)
+      return r.targetId === target.targetId
+    })
+    .sort((a, b) => b.at - a.at)
+}
+
+function dateWord(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`
+}
+
+/**
+ * Earlier reviews as text: each review's summary, every comment with what the writer did with it, what
+ * was decided and the talk about it. For a chapter, comments of a whole-book review about other chapters
+ * are left out. Newest first, cut at maxChars (older reviews drop off first).
+ */
+export function historyText(reviews: Review[], target: { scope: ReviewScope; targetId?: string }, chapterTitle: (id?: string) => string | undefined = () => undefined, maxChars = 40000): string {
+  const out: string[] = []
+  let used = 0
+  for (const r of reviews) {
+    const findings = target.scope === 'chapter' || target.scope === 'selection' ? r.findings.filter((f) => r.scope !== 'book' || f.chapterId === target.targetId) : r.findings
+    const lines = [`<ביקורת תאריך="${dateWord(r.at)}" על="${esc(r.title)}">`]
+    if (r.question) lines.push(`שאלת הכותב: ${r.question}`)
+    if (r.excerpt) lines.push(`(ביקורת על קטע: "${r.excerpt.slice(0, 200)}${r.excerpt.length > 200 ? '…' : ''}")`)
+    if (r.summary) lines.push(`בשורה התחתונה: ${r.summary}`)
+    for (const f of findings) {
+      const where = r.scope === 'book' && target.scope === 'book' && chapterTitle(f.chapterId) ? ` (${chapterTitle(f.chapterId)})` : ''
+      lines.push(`- [${f.kind}${where}] ${f.quote ? `"${f.quote}": ` : ''}${f.comment}${f.suggestion ? ` ← ${f.suggestion}` : ''}`)
+      if (f.kind !== 'מה עובד' || f.status !== 'open') lines.push(`  מצב: ${STATUS_WORD[f.status]}`)
+      if (f.decision?.trim()) lines.push(`  הוחלט: ${f.decision.trim()}`)
+      for (const t of f.thread ?? []) lines.push(`  ${t.role === 'user' ? 'הכותב' : 'אתה'}: ${t.text.replace(/\s*\n\s*/g, ' ')}`)
+    }
+    if (r.next) lines.push(`מה הייתי עושה עכשיו: ${r.next}`)
+    if (r.chat.length) {
+      lines.push('שיחה על הביקורת:')
+      for (const t of r.chat) lines.push(`  ${t.role === 'user' ? 'הכותב' : 'אתה'}: ${t.text.replace(/\s*\n\s*/g, ' ')}`)
+    }
+    lines.push('</ביקורת>')
+    const block = lines.join('\n')
+    if (used + block.length > maxChars) {
+      if (!out.length) out.push(block.slice(0, maxChars) + '\n…(קוצר)')
+      break
+    }
+    out.push(block)
+    used += block.length
+  }
+  return out.join('\n\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +495,64 @@ export function reviewAsText(r: Pick<Review, 'summary' | 'findings' | 'lessons' 
   if (r.lessons) lines.push(`מה זה מלמד: ${r.lessons}`)
   if (r.next) lines.push(`מה הייתי עושה עכשיו: ${r.next}`)
   return lines.join('\n')
+}
+
+// ---------------------------------------------------------------------------
+// A conversation about one comment
+// ---------------------------------------------------------------------------
+
+/** Claude's answer to the writer's reply on one comment: the answer, and what is decided so far */
+export const REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: { type: 'string', description: 'התשובה לכותב, בטקסט רגיל, בקצרה ולעניין' },
+    decision: {
+      type: 'string',
+      description:
+        'מה הוחלט לגבי ההערה עד עכשיו, במשפט אחד קצר, כפי שהכותב היה רושם לעצמו (למשל: "משאיר את ההסמקה, היא מכוונת" או "מוחק את המשפט המסביר"). ריק אם עוד לא הוחלט כלום'
+    }
+  },
+  required: ['reply', 'decision'],
+  additionalProperties: false
+} as const
+
+/** One comment as text, to open a conversation about it */
+export function findingAsText(f: Pick<Finding, 'kind' | 'quote' | 'comment' | 'suggestion'>): string {
+  return `[${f.kind}] ${f.quote ? `"${f.quote}": ` : ''}${f.comment}${f.suggestion ? ` ← ${f.suggestion}` : ''}`
+}
+
+/** The writer's turns about a comment as messages: the first one carries the comment it is about */
+export function findingThreadMessages(f: Pick<Finding, 'kind' | 'quote' | 'comment' | 'suggestion' | 'decision'>, thread: ChatTurn[], message: string): ChatTurn[] {
+  const turns: ChatTurn[] = [...thread, { role: 'user', text: message }]
+  const lead = `הכותב מגיב על אחת ההערות שלך:\n${findingAsText(f)}${f.decision?.trim() ? `\n(הוחלט עד עכשיו: ${f.decision.trim()})` : ''}\n\nהתגובה שלו:\n`
+  const tail =
+    '\n\n(ענה לו על ההערה הזו בלבד, כמו עורך שמדבר עם כותב: אם הוא צודק או מסביר שזה מכוון, קבל את זה; אם לא, הסבר בכנות למה ההערה עדיין נכונה, ואפשר להציע דרך שלישית. בשדה decision רשום מה הוחלט עד עכשיו.)'
+  return turns.map((t, i) => (i === 0 ? { ...t, text: lead + t.text } : t)).map((t, i, all) => (i === all.length - 1 ? { ...t, text: t.text + tail } : t))
+}
+
+/** Reads Claude's answer about a comment. Not JSON: the words are the answer, nothing decided. */
+export function parseReply(json: string): { reply: string; decision: string } {
+  try {
+    const o = JSON.parse(json)
+    return { reply: String(o?.reply ?? '').trim(), decision: String(o?.decision ?? '').trim() }
+  } catch {
+    return { reply: json.trim(), decision: '' }
+  }
+}
+
+/** The answer's words while it is still being written (the JSON is not finished yet) */
+export function partialReply(partial: string): string {
+  const m = /"reply"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(partial)
+  if (!m) return ''
+  let body = m[1]
+  for (let cut = 0; cut < 6; cut++) {
+    try {
+      return JSON.parse(`"${body}"`)
+    } catch {
+      body = body.slice(0, -1) // a half-written escape at the end
+    }
+  }
+  return ''
 }
 
 // ---------------------------------------------------------------------------
