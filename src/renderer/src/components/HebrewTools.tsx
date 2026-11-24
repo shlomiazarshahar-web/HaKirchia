@@ -8,6 +8,7 @@ import { EDITOR_FONTS } from '../fonts'
 import { setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
 import { AiSettingsDialog } from './Review'
 import { useAiKey } from '../ai'
+import { AutoNiqqud } from './WordTools'
 
 /** A small panel under a toolbar button. Closes on Escape or a click outside. */
 export function Popover({
@@ -188,6 +189,7 @@ export function NiqqudPanel({ editor, keyboard = false, onClose }: { editor: Edi
           ? 'מקלידים את האות הראשונה של שם הסימן (ס = סגול). אותה אות שוב מחליפה לסימן הבא באותה אות. Esc סוגר.'
           : `מקלידים אות, ואז לוחצים על הסימן כדי להוסיף אותו לאות שלפני הסמן. מהמקלדת: ${NIQQUD_SHORTCUT}.`}
       </div>
+      <AutoNiqqud editor={editor} />
       <div className="nq-grid">
         {NIQQUD_MARKS.map((m) => (
           <button
@@ -289,6 +291,18 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
             </label>
           ))}
           <p className="lp-note">בפסקה באנגלית המירכאות הן “כאלה”. Backspace מיד אחרי שינוי מחזיר את מה שהוקלד.</p>
+        </section>
+
+        <section>
+          <h3>כלי כתיבה</h3>
+          <label className="set-row">
+            <input type="checkbox" checked={t.autocomplete} onChange={(e) => setTypography({ autocomplete: e.target.checked })} />
+            <span>השלמת שמות בזמן הקלדה</span>
+            <span className="set-ex">נוע ← נועה (Tab)</span>
+          </label>
+          <p className="lp-note">שמות של דמויות ומקומות (כולל שמות נוספים) ומונחים ממילון המונחים. אחרי שתי אותיות ההמשך מופיע באפור; Tab משלים, ↑↓ בוחרים כשיש כמה, Esc מסתיר. גם עם אותיות שימוש: ולנו ← ולנועה.</p>
+          <p className="lp-note">מילים נרדפות: לחיצה ימנית על מילה ← "מילים נרדפות", או Shift+F7 כמו בוורד. מגיעות מ־Claude עם מפתח ה־API שלמטה.</p>
+          <p className="lp-note">ניקוד אוטומטי: בפאנל הניקוד ({NIQQUD_SHORTCUT}) ← "נקד אוטומטית".</p>
         </section>
 
         <section>

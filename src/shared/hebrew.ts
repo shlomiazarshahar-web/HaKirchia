@@ -172,6 +172,8 @@ export interface TypographySettings {
   dashes: boolean
   /** "..." becomes "…" */
   ellipsis: boolean
+  /** Names of characters and places and glossary terms are offered while typing; Tab takes them (feature 51) */
+  autocomplete: boolean
 }
 
 export const DEFAULT_TYPOGRAPHY: TypographySettings = {
@@ -179,7 +181,8 @@ export const DEFAULT_TYPOGRAPHY: TypographySettings = {
   geresh: true,
   maqaf: true,
   dashes: true,
-  ellipsis: true
+  ellipsis: true,
+  autocomplete: true
 }
 
 export const QUOTE_STYLES: { id: QuoteStyle; label: string; sample: string }[] = [
