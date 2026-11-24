@@ -599,6 +599,11 @@ export function chapterParagraphCount(doc: PMNode): number {
   return 1 + (doc.content ?? []).filter((n) => countsAsParagraph(plain(n))).length
 }
 
+/** The same paragraphs as text (the title first), for the translation memory (feature 46) */
+export function chapterParagraphTexts(doc: PMNode, title: string): string[] {
+  return [title, ...(doc.content ?? []).map((n) => plain(n).replace(/\s+/g, ' ').trim()).filter(countsAsParagraph)]
+}
+
 export interface Progress {
   done: number
   total: number

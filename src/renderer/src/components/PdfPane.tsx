@@ -15,6 +15,7 @@ import { api, flushAll, notifyDiskChange } from '../api'
 import { editorsFor, useEditorsVersion } from '../nav'
 import { loadParagraphCounts, loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
 import { Icon } from './Icons'
+import { TranslationMemory } from './TranslationMemory'
 
 interface Props {
   book: Book
@@ -81,8 +82,10 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
     void save({ pdf, ...(start ? { start } : {}) })
   }
 
+  const [busyAdd, setBusyAdd] = useState(false)
   const addFile = async () => {
-    const r = await api.addSourcePdf(book.path)
+    setBusyAdd(true)
+    const r = await api.addSourcePdf(book.path).finally(() => setBusyAdd(false))
     if (!r.ok) return onError(r.error ?? 'לא ניתן להוסיף את הקובץ')
     if (!r.value) return
     await refreshFiles()
@@ -106,7 +109,7 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
         <div className="pdf-empty">
           <Icon name="pdf" size={28} />
           <p>
-            לפרק <b>{chapter.title}</b> עוד לא נבחר מקור. בוחרים את ה־PDF של הספר המקורי, וההעתק שלו נשמר בתיקיית הספר (בתיקייה "מקור").
+            לפרק <b>{chapter.title}</b> עוד לא נבחר מקור. בוחרים את הספר המקורי (PDF, ePub או Word), וההעתק שלו נשמר בתיקיית הספר (בתיקייה "מקור"). ePub ו־Word הופכים ל־PDF פעם אחת, כשמוסיפים אותם.
           </p>
           {files && files.length > 0 && (
             <div className="pdf-files">
@@ -118,9 +121,9 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
               ))}
             </div>
           )}
-          <button className="btn" onClick={() => void addFile()}>
+          <button className="btn" disabled={busyAdd} onClick={() => void addFile()}>
             <Icon name="plus" />
-            {files && files.length ? 'קובץ PDF אחר…' : 'בחירת קובץ PDF…'}
+            {busyAdd ? 'מכין את הקובץ…' : files && files.length ? 'קובץ מקור אחר…' : 'בחירת קובץ מקור…'}
           </button>
         </div>
       </div>
@@ -508,6 +511,15 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     onNotice(`הפרק נגמר ב: "${opening(paras[i].text)}"`)
   }
 
+  // translation memory (feature 46): a phrase marked in the original, looked up among earlier translations
+  const [tmQuery, setTmQuery] = useState<string | null>(null)
+  const lookUp = () => {
+    const sel = window.getSelection()
+    const text = sel && !sel.isCollapsed && view.current?.contains(sel.anchorNode) ? sel.toString().replace(/\s+/g, ' ').trim() : ''
+    if (!text) return onNotice('סמנו ביטוי ב־PDF, ואז "בזיכרון" מראה איך תרגמתם אותו קודם')
+    setTmQuery(text)
+  }
+
   const send = () => {
     const sel = window.getSelection()
     let text = ''
@@ -546,7 +558,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
             {f}
           </option>
         ))}
-        <option value="+">קובץ PDF אחר…</option>
+        <option value="+">קובץ מקור אחר (PDF, ePub, Word)…</option>
         <option value="-">ניתוק הפרק מהמקור</option>
       </select>
       {pdf && (
@@ -566,6 +578,10 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
       >
         <Icon name="link" />
         <span className="lbl2">{synced ? 'מסונכרן' : 'לא מסונכרן'}</span>
+      </button>
+      <button className="ib" title="איך תרגמתם קודם את הביטוי המסומן ב־PDF (זיכרון תרגום)" onMouseDown={(e) => e.preventDefault()} onClick={lookUp}>
+        <Icon name="history" />
+        <span className="lbl2">בזיכרון</span>
       </button>
       <button className="ib" title="שליחת הטקסט המסומן (או הפסקה שנבחרה) לגוגל תרגום (Ctrl+Shift+T)" onClick={send}>
         <Icon name="send" />
@@ -728,6 +744,22 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
             )
           })}
       </div>
+      {paras && paras.length > 0 && (
+        <TranslationMemory
+          book={book}
+          chapter={chapter}
+          editor={editor}
+          paras={paras}
+          from={from}
+          to={to}
+          picked={picked}
+          reached={reached}
+          query={tmQuery}
+          onClearQuery={() => setTmQuery(null)}
+          onNotice={onNotice}
+          onError={onError}
+        />
+      )}
     </div>
   )
 }

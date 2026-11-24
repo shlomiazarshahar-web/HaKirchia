@@ -23,6 +23,8 @@ import * as updater from './updater'
 import * as recovery from './recovery'
 import * as backup from './backup'
 import { docxBlocks } from '../shared/docx'
+import { sourceKind } from '../shared/sourcefile'
+import { sourceToPdf } from './sourcefile'
 import { normalizeBackup, type BackupSettings } from '../shared/backup'
 import type { RecoveryEntry } from '../shared/recovery'
 import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn } from '../shared/review'
@@ -170,12 +172,20 @@ function registerIpc(): void {
   ipcMain.handle('source:add', (_e, b: string) =>
     wrap(async () => {
       const res = await dialog.showOpenDialog(win!, {
-        title: 'בחירת קובץ המקור (PDF)',
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+        title: 'בחירת קובץ המקור (PDF, ePub או Word)',
+        filters: [
+          { name: 'ספר מקור (PDF, ePub, Word)', extensions: ['pdf', 'epub', 'docx'] },
+          { name: 'PDF', extensions: ['pdf'] },
+          { name: 'ePub', extensions: ['epub'] },
+          { name: 'Word', extensions: ['docx'] }
+        ],
         properties: ['openFile']
       })
       if (res.canceled || !res.filePaths[0]) return null
-      return project.addSourcePdf(b, res.filePaths[0])
+      const file = res.filePaths[0]
+      // ePub and Word are printed to a PDF once (feature 52), so the source pane works the same
+      if (sourceKind(file) !== 'pdf') return project.addSourcePdf(b, file, await sourceToPdf(file))
+      return project.addSourcePdf(b, file)
     })
   )
   ipcMain.handle('source:read', (_e, b: string, name: string) => wrap(() => project.readSourcePdf(b, name)))
@@ -230,6 +240,8 @@ function registerIpc(): void {
   )
   ipcMain.handle('images:read', (_e, b: string, file: string) => wrap(() => project.readImage(b, file)))
   ipcMain.handle('book:paraCounts', (_e, b: string) => wrap(() => project.paragraphCounts(b)))
+  ipcMain.handle('book:paraTexts', (_e, b: string) => wrap(() => project.paragraphTexts(b)))
+  ipcMain.handle('words:tmPhrase', (_e, source: string, phrase: string, target: string) => wrap(() => wordtools.tmPhrase(source, phrase, target)))
   ipcMain.handle('settings:typography', (_e, typography: TypographySettings) => {
     updateSettings({ typography })
   })

@@ -13,7 +13,7 @@ import * as drafts from './drafts'
 import * as bg from './background'
 import { normalizeBackground, type GlossaryEntry, type InspirationGroup, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
 import { flatten, normalizeOutline } from '../shared/outline'
-import { chapterParagraphCount, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
+import { chapterParagraphCount, chapterParagraphTexts, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
 import { normalizePublish, type PublishSettings } from '../shared/publish'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
@@ -508,9 +508,10 @@ export async function listSourcePdfs(bookPath: string): Promise<string[]> {
 }
 
 /** Copies a PDF into the book's "מקור" folder (an identical file already there is reused). Returns its name there. */
-export async function addSourcePdf(bookPath: string, from: string): Promise<string> {
+export async function addSourcePdf(bookPath: string, from: string, converted?: Uint8Array): Promise<string> {
   await fs.mkdir(sourcesDir(bookPath), { recursive: true })
-  const bytes = await fs.readFile(from)
+  // an ePub or Word original arrives already printed to PDF (feature 52); it keeps its own name
+  const bytes = converted ? Buffer.from(converted) : await fs.readFile(from)
   const base = basename(from, extname(from))
   for (let n = 1; ; n++) {
     const name = n === 1 ? `${base}.pdf` : `${base} (${n}).pdf`
@@ -601,6 +602,26 @@ export function paragraphCounts(bookPath: string): Promise<Record<string, number
         out[ch.id] = chapterParagraphCount(res.doc)
       } catch {
         // counted as just the title
+      }
+    }
+    return out
+  })
+}
+
+/** The paragraphs of the chapters linked to an original, as text (the translation memory, feature 46) */
+export function paragraphTexts(bookPath: string): Promise<Record<string, string[]>> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const out: Record<string, string[]> = {}
+    for (const ch of m.chapters) {
+      if (!m.sources?.[ch.id]) continue
+      const file = chapterPath(bookPath, ch)
+      if (!existsSync(file)) continue
+      try {
+        const res = await docxToDoc(new Uint8Array(await fs.readFile(file)))
+        out[ch.id] = chapterParagraphTexts(res.doc, ch.title)
+      } catch {
+        // left out of the memory
       }
     }
     return out
