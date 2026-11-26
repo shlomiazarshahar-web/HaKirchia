@@ -524,7 +524,11 @@ export default function App() {
       else if (l.panes.length < MAX_PANES) {
         l = addPane(l, { kind: 'chapter', id }, i)
         i = i + 1
-      } else i = l.panes.findIndex((_, j) => j !== i)
+      } else {
+        // full: never over the original, Google Translate or the review
+        const j = l.panes.findIndex((p, k) => k !== i && !['pdf', 'web', 'review'].includes(p.content.kind))
+        i = j >= 0 ? j : l.panes.findIndex((_, k) => k !== i)
+      }
     }
     l = setPaneContent(l, i, { kind: 'chapter', id })
     updateSplit(l)
@@ -1149,6 +1153,8 @@ export default function App() {
   const writeMaster = focusedPane?.content.kind === 'master'
   const masterFocus = inMaster || writeMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
   const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : writeMaster ? (masterFocus ?? null) : writeChapter
+  // The review pane takes the focus when its buttons are pressed: it reviews the chapter last in focus
+  const reviewChapter = inspected ?? (inWrite && focusedPane && focusedPane.content.kind !== 'master' ? (book!.chapters.find((c) => c.id === activeId) ?? null) : null)
   const overlay = api.platform === 'win32' || api.platform === 'linux'
   const empty = !!book && book.chapters.length === 0
   const totalWords = book ? book.chapters.reduce((sum, c) => sum + (bookWords[c.id] ?? 0), 0) : 0
@@ -1437,7 +1443,7 @@ export default function App() {
                 onNotice={(m) => show(m)}
                 onNeedTranslatePane={needTranslatePane}
                 renderReview={(onClose) => (
-                  <ReviewPanel key={book.path} target={{ mode: 'book', book, chapter: inspected ?? null, editor, goTo: (id, t) => void goTo(id, t) }} onClose={onClose} show={show} />
+                  <ReviewPanel key={book.path} target={{ mode: 'book', book, chapter: reviewChapter, editor, goTo: (id, t) => void goTo(id, t) }} onClose={onClose} show={show} />
                 )}
               />
             ) : (
