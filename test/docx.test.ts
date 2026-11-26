@@ -56,7 +56,7 @@ print(d.paragraphs[1].text)
 `, file]).toString()
     expect(out).toContain('Heading 1')
     expect(out).toContain('מרים קראה בקול')
-    execFileSync('soffice', ['--headless', '--convert-to', 'txt:Text', '--outdir', dir, file], { stdio: 'ignore', timeout: 90000 })
+    execFileSync('soffice', [`-env:UserInstallation=file://${dir}/lo-profile`, '--headless', '--convert-to', 'txt:Text', '--outdir', dir, file], { stdio: 'ignore', timeout: 90000 })
   }, 120000)
 })
 

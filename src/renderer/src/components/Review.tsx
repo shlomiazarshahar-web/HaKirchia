@@ -15,6 +15,9 @@ import {
   MODELS,
   newId,
   parseReview,
+  partialReply,
+  historyText,
+  relevantReviews,
   type Exercise,
   type Finding,
   type FindingStatus,
@@ -129,7 +132,7 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
           </button>
         </div>
       ) : open ? (
-        <ReviewView key={open.id} review={open} target={target} onBack={() => setOpenId(null)} onSave={save} show={show} />
+        <ReviewView key={open.id} review={open} list={list} target={target} onBack={() => setOpenId(null)} onSave={save} show={show} />
       ) : (
         <>
           <div className="rv-tabs" role="tablist">
@@ -144,6 +147,7 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
             <NewReview
               target={target}
               current={current}
+              list={list}
               running={job.jobId !== null}
               partial={job.partial}
               onCancel={job.cancel}
@@ -187,16 +191,18 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
 // A new review
 // ---------------------------------------------------------------------------
 
-type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'withSource'>
+type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'withSource' | 'withHistory'>
 
 /** Builds the request: the texts are read now (open editors win over the files) */
-export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: ReviewKind[], withBackground: boolean): Promise<ReviewRequest | string> {
+export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: ReviewKind[], withBackground: boolean, earlier: Review[] = []): Promise<ReviewRequest | string> {
   const k = kinds.filter((x) => meta.kinds.includes(x.name)).map((x) => ({ name: x.name, prompt: x.prompt }))
+  const titleOf = (id?: string) => (target.mode === 'book' && id ? target.book.chapters.find((c) => c.id === id)?.title : undefined)
+  const history = meta.withHistory && earlier.length ? historyText(earlier, meta, titleOf) || undefined : undefined
   if (target.mode === 'exercise') {
     const ed = target.editor
     const paras = ed && !ed.isDestroyed ? textBlocks(ed.state.doc).map((b) => b.text) : []
     if (!paras.join('').trim()) return 'התרגיל עדיין ריק'
-    return { scope: 'exercise', texts: [{ title: target.exercise.title, paras }], kinds: k, question: meta.question, exercisePrompt: target.exercise.prompt }
+    return { scope: 'exercise', texts: [{ title: target.exercise.title, paras }], kinds: k, question: meta.question, exercisePrompt: target.exercise.prompt, history }
   }
   const { book } = target
   let texts: ReviewText[] = []
@@ -229,12 +235,13 @@ export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: Revi
     const r = await api.bookBackground(book.path)
     if (r.ok) background = r.value
   }
-  return { scope: meta.scope, texts, contextTitle, kinds: k, question: meta.question, background, bookTitle: book.title }
+  return { scope: meta.scope, texts, contextTitle, kinds: k, question: meta.question, background, bookTitle: book.title, history }
 }
 
 function NewReview({
   target,
   current,
+  list,
   running,
   partial,
   onCancel,
@@ -243,6 +250,7 @@ function NewReview({
 }: {
   target: ReviewTarget
   current: Chapter | null
+  list: Review[]
   running: boolean
   partial: string
   onCancel: () => void
@@ -255,6 +263,7 @@ function NewReview({
   const [question, setQuestion] = useState('')
   const [withBg, setWithBg] = useState(true)
   const [withSrc, setWithSrc] = useState(true)
+  const [withHist, setWithHist] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [sel, setSel] = useState(() => selectionOf(target.editor))
@@ -297,6 +306,11 @@ function NewReview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, current?.id, sel?.text, target.mode === 'exercise' ? target.exercise.id : target.book.path])
 
+  // earlier reviews of what would be reviewed now, to build on
+  const histTarget = target.mode === 'exercise' ? { scope: 'exercise' as ReviewScope, targetId: target.exercise.id } : scope === 'book' ? { scope, targetId: undefined } : { scope, targetId: scope === 'selection' ? (sel?.chapterId ?? current?.id) : current?.id }
+  const earlier = relevantReviews(list, histTarget)
+  const decided = earlier.reduce((n, r) => n + r.findings.filter((f) => f.status !== 'open' || f.decision || f.thread?.length).length, 0)
+
   const toggle = (name: string) => setPicked((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]))
   const run = async () => {
     setError(null)
@@ -313,8 +327,9 @@ function NewReview({
     }
     if (!picked.length && !meta.question) return setError('בוחרים לפחות סוג ביקורת אחד, או כותבים שאלה')
     if (hasSrc && withSrc) meta.withSource = true
+    if (earlier.length && withHist) meta.withHistory = true
     setPreparing(true)
-    const req = await buildRequest(target, meta, ai.kinds, hasBg && withBg)
+    const req = await buildRequest(target, meta, ai.kinds, hasBg && withBg, earlier)
     setPreparing(false)
     if (typeof req === 'string') return setError(req)
     await onRun(req, meta)
@@ -376,6 +391,12 @@ function NewReview({
           <input type="checkbox" checked={withSrc} onChange={(e) => setWithSrc(e.target.checked)} /> להשוות למקור (ה־PDF שמקושר {scope === 'book' ? 'לפרקים' : 'לפרק'}). כדאי לבחור גם "תרגום"
         </label>
       )}
+      {earlier.length > 0 && (
+        <label className="chk">
+          <input type="checkbox" checked={withHist} onChange={(e) => setWithHist(e.target.checked)} /> להתחשב {earlier.length === 1 ? 'בביקורת הקודמת' : `ב־${earlier.length} הביקורות הקודמות`}
+          {decided ? ` ובמה שהחלטת בהן (${decided} הערות שטופלו, נדחו או נדונו)` : ''}
+        </label>
+      )}
       <label className="field">
         שאלה או בקשה (לא חובה)
         <textarea dir="auto" rows={3} value={question} placeholder="למשל: האם הסוף של הפרק מרגיש מוקדם מדי?" onChange={(e) => setQuestion(e.target.value)} />
@@ -386,7 +407,7 @@ function NewReview({
       </button>
       <div className="lp-note">
         {modelLabel}
-        {size !== null && size > 0 ? ` · בערך ${formatCost(estimate(model, size))}` : ''}. הטקסט נשלח ל־Anthropic לצורך הביקורת בלבד.
+        {size !== null && size > 0 ? ` · בערך ${formatCost(estimate(model, size + (withHist && earlier.length ? Math.min(40000, historyText(earlier, histTarget).length) : 0)))}` : ''}. הטקסט נשלח ל־Anthropic לצורך הביקורת בלבד.
       </div>
     </div>
   )
@@ -398,7 +419,7 @@ function NewReview({
 
 const STATUS_LABEL: Record<FindingStatus, string> = { open: 'פתוחות', done: 'טופלו', dismissed: 'לא רלוונטיות' }
 
-function ReviewView({ review, target, onBack, onSave, show }: { review: Review; target: ReviewTarget; onBack: () => void; onSave: (rv: Review, remove?: boolean) => Promise<void>; show: (t: string, e?: boolean) => void }) {
+function ReviewView({ review, list, target, onBack, onSave, show }: { review: Review; list: Review[]; target: ReviewTarget; onBack: () => void; onSave: (rv: Review, remove?: boolean) => Promise<void>; show: (t: string, e?: boolean) => void }) {
   const ai = useAi()
   const job = useAiJob()
   const [rv, setRv] = useState(review)
@@ -407,6 +428,17 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
   const [q, setQ] = useState('')
   const [missing, setMissing] = useState<Set<string>>(new Set())
   const [confirmDel, setConfirmDel] = useState(false)
+  /** Comments whose conversation is shown */
+  const [openThreads, setOpenThreads] = useState<Set<string>>(new Set())
+  const toggleThread = (id: string) =>
+    setOpenThreads((o) => {
+      const n = new Set(o)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  /** The comment Claude is answering about right now */
+  const [replyFor, setReplyFor] = useState<string | null>(null)
   const chatEnd = useRef<HTMLDivElement>(null)
   useEffect(() => setRv(review), [review])
 
@@ -420,7 +452,34 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
     setRv(next)
     void onSave(next)
   }
-  const setFinding = (id: string, s: FindingStatus) => update({ ...rv, findings: rv.findings.map((f) => (f.id === id ? { ...f, status: s } : f)) })
+  const patchFinding = (base: Review, id: string, patch: Partial<Finding>): Review => ({ ...base, findings: base.findings.map((f) => (f.id === id ? { ...f, ...patch } : f)) })
+  const setFinding = (id: string, s: FindingStatus) => update(patchFinding(rv, id, { status: s }))
+  const setDecision = (id: string, decision: string) => update(patchFinding(rv, id, { decision: decision.trim() || undefined }))
+
+  /** The same request the review was made with (the text as it is now), for follow-ups */
+  const request = () => buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
+
+  /** The writer answers one comment; Claude answers and sums up what was decided */
+  const reply = async (f: Finding, message: string): Promise<boolean> => {
+    if (job.jobId) return false
+    const req = await request()
+    if (typeof req === 'string') return show(req, true), false
+    const asked = patchFinding(rv, f.id, { thread: [...(f.thread ?? []), { role: 'user', text: message }] })
+    setRv(asked)
+    setReplyFor(f.id)
+    const id = job.start()
+    const r = await api.findingReply(id, req, rv, f, message)
+    job.done()
+    setReplyFor(null)
+    if (!r.ok || !r.value) {
+      setRv(rv)
+      show(r.error ?? 'התגובה לא נשלחה', true)
+      return false
+    }
+    const thread = [...(f.thread ?? []), { role: 'user' as const, text: message }, { role: 'assistant' as const, text: r.value.reply }]
+    update({ ...patchFinding(rv, f.id, { thread, ...(r.value.decision ? { decision: r.value.decision } : {}) }), usage: addUsage(rv.usage, r.value.usage) })
+    return true
+  }
 
   const jump = async (f: Finding) => {
     if (!f.quote) return
@@ -456,7 +515,7 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
   const ask = async () => {
     const question = q.trim()
     if (!question || job.jobId) return
-    const req = await buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection')
+    const req = await request()
     if (typeof req === 'string') return show(req, true)
     setQ('')
     const asked: Review = { ...rv, chat: [...rv.chat, { role: 'user', text: question }] }
@@ -477,7 +536,12 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
 
   const copyAll = async () => {
     const lines = [`ביקורת: ${rv.title} (${when(rv.at)})`, '', rv.summary, '']
-    for (const f of rv.findings) lines.push(`[${f.kind}]${chapterTitle(f.chapterId) && rv.scope === 'book' ? ` ${chapterTitle(f.chapterId)}:` : ''}${f.quote ? ` "${f.quote}"` : ''}`, f.comment + (f.suggestion ? ` ← ${f.suggestion}` : ''), '')
+    for (const f of rv.findings) {
+      lines.push(`[${f.kind}]${chapterTitle(f.chapterId) && rv.scope === 'book' ? ` ${chapterTitle(f.chapterId)}:` : ''}${f.quote ? ` "${f.quote}"` : ''}`, f.comment + (f.suggestion ? ` ← ${f.suggestion}` : ''))
+      for (const t of f.thread ?? []) lines.push(`  ${t.role === 'user' ? 'אני' : 'Claude'}: ${t.text}`)
+      if (f.decision) lines.push(`  הוחלט: ${f.decision}`)
+      lines.push('')
+    }
     if (rv.lessons) lines.push('מה זה מלמד על הכתיבה שלך:', rv.lessons, '')
     if (rv.next) lines.push('מה הייתי עושה עכשיו:', rv.next, '')
     for (const t of rv.chat) lines.push(t.role === 'user' ? `שאלה: ${t.text}` : t.text, '')
@@ -574,7 +638,26 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
                   ← {f.suggestion}
                 </div>
               )}
+              {f.decision && !openThreads.has(f.id) && (
+                <div className="rv-decision" dir="auto">
+                  <b>הוחלט:</b> {f.decision}
+                </div>
+              )}
+              {openThreads.has(f.id) && (
+                <FindingThread
+                  finding={f}
+                  busy={replyFor === f.id}
+                  partial={replyFor === f.id ? partialReply(job.partial) : ''}
+                  locked={!!job.jobId}
+                  onReply={(m) => reply(f, m)}
+                  onDecision={(d) => setDecision(f.id, d)}
+                  onCancel={job.cancel}
+                />
+              )}
               <div className="dw-actions">
+                <button className="ib" title="לענות על ההערה הזו ולדבר עליה עם Claude" aria-expanded={openThreads.has(f.id)} onClick={() => toggleThread(f.id)}>
+                  {openThreads.has(f.id) ? 'הסתרת השיחה' : f.thread?.length ? `שיחה (${f.thread.filter((t) => t.role === 'user').length})` : 'תגובה'}
+                </button>
                 {f.status === 'open' ? (
                   <>
                     <button className="ib" title="סימון שטיפלתי בזה" onClick={() => setFinding(f.id, 'done')}>
@@ -649,6 +732,94 @@ function ReviewView({ review, target, onBack, onSave, show }: { review: Review; 
       <div className="lp-note rv-foot">
         {MODELS.find((m) => m.id === rv.model)?.label ?? rv.model} · עלות עד עכשיו {formatCost(rv.usage.cost)}
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// A conversation about one comment
+// ---------------------------------------------------------------------------
+
+function FindingThread({
+  finding,
+  busy,
+  partial,
+  locked,
+  onReply,
+  onDecision,
+  onCancel
+}: {
+  finding: Finding
+  busy: boolean
+  partial: string
+  /** Claude is busy with something else in this review */
+  locked: boolean
+  onReply: (message: string) => Promise<boolean>
+  onDecision: (text: string) => void
+  onCancel: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  const [decision, setDecision] = useState(finding.decision ?? '')
+  const box = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => setDecision(finding.decision ?? ''), [finding.decision])
+  useEffect(() => box.current?.focus(), [])
+  const send = async () => {
+    const m = draft.trim()
+    if (!m || locked) return
+    setDraft('')
+    if (!(await onReply(m))) setDraft(m)
+  }
+  const thread = finding.thread ?? []
+  return (
+    <div className="rv-thread">
+      {thread.map((t, i) => (
+        <div key={i} className={`rv-msg ${t.role}`} dir="auto">
+          {t.text}
+        </div>
+      ))}
+      {busy && (
+        <div className="rv-msg assistant pending" dir="auto">
+          {partial || 'Claude חושב…'}
+        </div>
+      )}
+      <div className="rv-ask">
+        <textarea
+          ref={box}
+          dir="auto"
+          rows={2}
+          value={draft}
+          disabled={locked}
+          placeholder={thread.length ? 'המשך השיחה על ההערה…' : 'מה דעתך על ההערה? למשל: "זה מכוון, כי…" או "איך היית מתקן?"'}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              void send()
+            }
+          }}
+        />
+        {busy ? (
+          <button className="ib" onClick={onCancel}>
+            ביטול
+          </button>
+        ) : (
+          <button className="ib icon" title="שליחה (Enter)" aria-label="שליחת תגובה" disabled={!draft.trim() || locked} onClick={() => void send()}>
+            <Icon name="send" />
+          </button>
+        )}
+      </div>
+      <label className="rv-decision-edit">
+        <span>מה הוחלט</span>
+        <input
+          dir="auto"
+          value={decision}
+          placeholder="Claude ימלא אחרי השיחה, ואפשר לכתוב בעצמך"
+          title="ביקורות הבאות יתחשבו בהחלטה הזו"
+          onChange={(e) => setDecision(e.target.value)}
+          onBlur={() => decision.trim() !== (finding.decision ?? '') && onDecision(decision)}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+      </label>
     </div>
   )
 }

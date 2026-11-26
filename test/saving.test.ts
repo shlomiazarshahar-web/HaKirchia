@@ -52,7 +52,7 @@ describe('footnotes in Word files (feature 15)', () => {
     const file = join(dir, 'ch.docx')
     writeFileSync(file, await docToDocx(doc, 'כותרת'))
     // converting back to docx through LibreOffice keeps the footnotes only if it understood them
-    execFileSync('soffice', ['--headless', '--convert-to', 'docx:MS Word 2007 XML', '--outdir', join(dir, 'out'), file], { stdio: 'ignore', timeout: 90000 })
+    execFileSync('soffice', [`-env:UserInstallation=file://${dir}/lo-profile`, '--headless', '--convert-to', 'docx:MS Word 2007 XML', '--outdir', join(dir, 'out'), file], { stdio: 'ignore', timeout: 90000 })
     const back = await docxToDoc(new Uint8Array(require('fs').readFileSync(join(dir, 'out', 'ch.docx'))))
     const notes: string[] = []
     const walk = (n: PMNode) => (n.type === 'footnote' ? notes.push(String(n.attrs?.text)) : (n.content ?? []).forEach(walk))
