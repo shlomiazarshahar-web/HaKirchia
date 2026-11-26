@@ -6,7 +6,7 @@ import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
 import type { PublishSettings } from '../shared/publish'
 import type { NakdanToken, SynonymSense } from '../shared/wordtools'
-import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
+import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
 import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
 import type { BackupChapter, BackupInfo, BackupSettings } from '../shared/backup'
@@ -66,6 +66,7 @@ const api = {
   testAiKey: (): Promise<OpResult<string>> => ipcRenderer.invoke('ai:testKey'),
   review: (jobId: string, req: ReviewRequest): Promise<OpResult<{ json: string; usage: Usage; model: string }>> => ipcRenderer.invoke('ai:review', jobId, req),
   followUp: (jobId: string, req: ReviewRequest, rv: Review, chat: ChatTurn[], q: string): Promise<OpResult<{ text: string; usage: Usage }>> => ipcRenderer.invoke('ai:followUp', jobId, req, rv, chat, q),
+  findingReply: (jobId: string, req: ReviewRequest, rv: Review, f: Finding, msg: string): Promise<OpResult<{ reply: string; decision: string; usage: Usage }>> => ipcRenderer.invoke('ai:findingReply', jobId, req, rv, f, msg),
   promptIdeas: (jobId: string, theme: string, count: number, avoid: string[]): Promise<OpResult<{ prompts: string[]; usage: Usage }>> => ipcRenderer.invoke('ai:promptIdeas', jobId, theme, count, avoid),
   cancelAi: (jobId: string): Promise<void> => ipcRenderer.invoke('ai:cancel', jobId),
   // Hebrew writing tools (round 10)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backgroundText, costOf, findQuote, findingsSoFar, normalizeAi, parseReview, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS } from '../src/shared/review'
+import { backgroundText, costOf, findQuote, findingsSoFar, findingThreadMessages, historyText, HISTORY_ASK, newId, normalizeAi, parseReply, parseReview, partialReply, relevantReviews, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS, type Finding, type Review } from '../src/shared/review'
 
 describe('findQuote', () => {
   const paras = ['היא חיככה את ידיה זו בזו כשחשבה על הספה.', 'ה"מחר" של יובל: "היא תתחיל לרוץ מחר".', 'שָׁלוֹם   עולם, אמר הדוד.']
@@ -122,5 +122,60 @@ describe('settings and helpers', () => {
     expect(t).toContain('[דמות] נועה (גם: נוני)')
     expect(t).toContain('גיל: 30')
     expect(t).toContain('- אוואטר (במקור: Avatar); כתיב שגוי: אווטר')
+  })
+})
+
+describe('earlier reviews and conversations about comments', () => {
+  const mk = (over: Partial<Review>): Review => ({ id: newId(), at: 1, scope: 'chapter', title: 'פרק', kinds: [], model: 'claude-opus-5-5', summary: '', findings: [], chat: [], usage: { input: 0, output: 0, cost: 0 }, ...over })
+  const f = (over: Partial<Finding>): Finding => ({ id: newId(), kind: 'סגנון והרגלים', quote: '', comment: 'הערה', status: 'open', ...over })
+  const a = mk({ at: 10, targetId: 'c1', summary: 'פרק טוב', findings: [f({ quote: 'היא הסמיקה', comment: 'תגובת גוף גנרית', status: 'dismissed', decision: 'משאיר, ההסמקה מכוונת', thread: [{ role: 'user', text: 'זה מכוון' }, { role: 'assistant', text: 'מקבל' }] })] })
+  const b = mk({ at: 20, targetId: 'c2', summary: 'פרק אחר' })
+  const book = mk({ at: 30, scope: 'book', title: 'כל הספר', findings: [f({ chapterId: 'c1', comment: 'על פרק 1' }), f({ chapterId: 'c2', comment: 'על פרק 2' })] })
+  const list = [book, b, a]
+
+  it('picks the same chapter and whole-book reviews that talk about it, newest first', () => {
+    expect(relevantReviews(list, { scope: 'chapter', targetId: 'c1' }).map((r) => r.at)).toEqual([30, 10])
+    expect(relevantReviews(list, { scope: 'book' }).length).toBe(3)
+    expect(relevantReviews(list, { scope: 'chapter', targetId: 'c1' }, 30).map((r) => r.at)).toEqual([10])
+  })
+
+  it('writes statuses, decisions and the talk, and leaves out other chapters of a whole-book review', () => {
+    const t = historyText(relevantReviews(list, { scope: 'chapter', targetId: 'c1' }), { scope: 'chapter', targetId: 'c1' })
+    expect(t).toContain('מצב: לא רלוונטי')
+    expect(t).toContain('הוחלט: משאיר, ההסמקה מכוונת')
+    expect(t).toContain('הכותב: זה מכוון')
+    expect(t).toContain('על פרק 1')
+    expect(t).not.toContain('על פרק 2')
+    expect(t.indexOf('כל הספר')).toBeLessThan(t.indexOf('פרק טוב'))
+  })
+
+  it('drops the oldest reviews when there is too much', () => {
+    const t = historyText([book, a], { scope: 'book' }, () => undefined, 300)
+    expect(t).toContain('על פרק 1')
+    expect(t).not.toContain('פרק טוב')
+  })
+
+  it('sends the history before the text, and asks to respect decisions', () => {
+    const m = reviewMessage({ scope: 'chapter', texts: [{ title: 'א', paras: ['טקסט'] }], kinds: [], history: 'היסטוריה' })
+    expect(m.context.indexOf('<ביקורות_קודמות>')).toBeLessThan(m.context.indexOf('טקסט'))
+    expect(m.ask).toContain(HISTORY_ASK)
+    expect(reviewMessage({ scope: 'chapter', texts: [{ title: 'א', paras: ['טקסט'] }], kinds: [] }).ask).not.toContain(HISTORY_ASK)
+  })
+
+  it('puts the comment in the first reply and the instructions in the last', () => {
+    const msgs = findingThreadMessages(f({ quote: 'ציטוט', comment: 'הבעיה' }), [{ role: 'user', text: 'ראשון' }, { role: 'assistant', text: 'תשובה' }], 'שני')
+    expect(msgs.map((x) => x.role)).toEqual(['user', 'assistant', 'user'])
+    expect(msgs[0].text).toContain('"ציטוט": הבעיה')
+    expect(msgs[0].text).toContain('ראשון')
+    expect(msgs[2].text.startsWith('שני')).toBe(true)
+    expect(msgs[2].text).toContain('decision')
+  })
+
+  it('reads the answer, also while it is being written', () => {
+    expect(parseReply('{"reply":"נכון","decision":"משאיר"}')).toEqual({ reply: 'נכון', decision: 'משאיר' })
+    expect(parseReply('סתם טקסט')).toEqual({ reply: 'סתם טקסט', decision: '' })
+    expect(partialReply('{"reply":"שורה\\nשנייה עם \\"מירכאות')).toBe('שורה\nשנייה עם "מירכאות')
+    expect(partialReply('{"reply":"חצי\\')).toBe('חצי')
+    expect(partialReply('{"rep')).toBe('')
   })
 })

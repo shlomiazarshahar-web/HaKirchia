@@ -27,7 +27,7 @@ import { sourceKind } from '../shared/sourcefile'
 import { sourceToPdf } from './sourcefile'
 import { normalizeBackup, type BackupSettings } from '../shared/backup'
 import type { RecoveryEntry } from '../shared/recovery'
-import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn } from '../shared/review'
+import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn, Finding } from '../shared/review'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -294,6 +294,7 @@ function registerIpc(): void {
   ipcMain.handle('ai:testKey', () => wrap(() => ai.testKey()))
   ipcMain.handle('ai:review', (e, jobId: string, req: ReviewRequest) => wrap(() => ai.review(e.sender, jobId, req)))
   ipcMain.handle('ai:followUp', (e, jobId: string, req: ReviewRequest, rv: Review, chat: ChatTurn[], q: string) => wrap(() => ai.followUp(e.sender, jobId, req, rv, chat, q)))
+  ipcMain.handle('ai:findingReply', (e, jobId: string, req: ReviewRequest, rv: Review, f: Finding, msg: string) => wrap(() => ai.findingReply(e.sender, jobId, req, rv, f, msg)))
   ipcMain.handle('ai:promptIdeas', (_e, jobId: string, theme: string, count: number, avoid: string[]) => wrap(() => ai.promptIdeas(jobId, theme, count, avoid)))
   ipcMain.handle('ai:cancel', (_e, jobId: string) => ai.cancel(jobId))
   // Hebrew writing tools (round 10): synonyms from Claude, automatic niqqud from Dicta (or Claude)

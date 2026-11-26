@@ -1079,6 +1079,12 @@ body { background: #dde3e0; overflow: hidden; }
 .rv-msg.user { align-self: flex-start; background: var(--w-soft); }
 .rv-msg.assistant { align-self: flex-end; background: var(--w-paper); border: 1px solid var(--w-line); }
 .rv-msg.pending { color: var(--w-muted); }
+.rv-thread { display: flex; flex-direction: column; gap: 6px; border-top: 1px dashed var(--w-line); padding-top: 6px; margin-top: 2px; }
+.rv-thread .rv-msg { font-size: 13px; }
+.rv-decision { font-size: 12.5px; line-height: 1.5; background: var(--w-soft); border-radius: var(--radius); padding: 4px 8px; white-space: pre-wrap; }
+.rv-decision b { color: var(--w-accent); font-weight: 600; }
+.rv-decision-edit { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--w-muted); }
+.rv-decision-edit input { flex: 1; font: inherit; font-size: 12.5px; color: var(--w-ink); background: var(--w-paper); border: 1px solid var(--w-line); border-radius: var(--radius); padding: 3px 6px; }
 .rv-ask { display: flex; gap: 4px; align-items: flex-end; }
 .rv-ask textarea { flex: 1; resize: none; font: inherit; font-size: 13.5px; color: var(--w-ink); background: var(--w-paper); border: 1px solid var(--w-line); border-radius: var(--radius); padding: 6px 8px; }
 .rv-foot { font-size: 11px; }
