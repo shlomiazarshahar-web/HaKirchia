@@ -5,10 +5,10 @@
 // PaneFrame and PaneRow are generic on purpose: the translation screen (feature 12) will put a PDF
 // and the embedded Google Translate in the same kind of panes, with the same draggable borders.
 
-import { Fragment, useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
-import { CHAPTER_DRAG_TYPE, MATERIAL_DRAG_TYPE, resizeBorder, swapPanes, closePane, setPaneContent, type PaneContent, type PaneLayout } from '@shared/panes'
+import { CHAPTER_DRAG_TYPE, MATERIAL_DRAG_TYPE, MAX_PANES, evenSplit, layoutRects, nextContent, resizeSplit, splitPane, swapPanes, closePane, setPaneContent, treeOf, type PaneContent, type PaneLayout, type PaneNode } from '@shared/panes'
 import { AltEditor, ChapterEditor, type SaveState } from './ChapterEditor'
 import { MasterView } from './MasterView'
 import { PdfPane } from './PdfPane'
@@ -51,6 +51,8 @@ interface Props {
   onBook: (b: Book) => void
   onNotice: (msg: string) => void
   onNeedTranslatePane: () => void
+  /** The writing review (feature 19) when it is shown as a pane */
+  renderReview: (onClose: () => void) => ReactNode
 }
 
 export function SplitView(props: Props) {
@@ -87,7 +89,7 @@ export function SplitView(props: Props) {
   }
 
   return (
-    <PaneRow widths={layout.widths} only={props.only ? layout.panes.findIndex((p) => p.key === props.only) : -1} onWidths={(widths) => onLayout({ ...layout, widths })}>
+    <PaneArea tree={treeOf(layout)} only={props.only ?? null} onTree={(tree) => onLayout({ ...layout, tree })}>
       {layout.panes.map((pane, i) => {
         const c = pane.content
         const ch = c.kind === 'chapter' ? byId.get(c.id) : undefined
@@ -112,7 +114,7 @@ export function SplitView(props: Props) {
             }}
             head={
               <>
-                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : c.kind === 'glossary' ? 'glossary' : mat ? KIND_ICON[mat.kind] : 'file'} />
+                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : c.kind === 'glossary' ? 'glossary' : c.kind === 'review' ? 'review' : mat ? KIND_ICON[mat.kind] : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
                 {c.kind === 'pdf' && pdfChapter && <small className="pstat">של {pdfChapter.title}</small>}
                 {shown[pane.key] !== undefined && (c.kind === 'chapter' || c.kind === 'master' || c.kind === 'alt') && (
@@ -143,8 +145,18 @@ export function SplitView(props: Props) {
                     <Icon name="info" />
                   </button>
                 )}
+                {n < MAX_PANES && (
+                  <>
+                    <button className="ib icon" title="פיצול החלון לשניים, זה לצד זה" aria-label="פיצול לצד" onClick={() => onLayout(splitPane(layout, i, nextContent(layout, book, i), 'h'))}>
+                      <Icon name="split-h" />
+                    </button>
+                    <button className="ib icon" title="פיצול החלון לשניים, זה מעל זה" aria-label="פיצול למטה" onClick={() => onLayout(splitPane(layout, i, nextContent(layout, book, i), 'v'))}>
+                      <Icon name="split-v" />
+                    </button>
+                  </>
+                )}
                 {i < n - 1 && (
-                  <button className="ib icon" title="החלפת מקום עם החלון שמשמאל" aria-label="החלפת מקום עם החלון שמשמאל" onClick={() => onLayout(swapPanes(layout, i, i + 1))}>
+                  <button className="ib icon" title="החלפת מקום עם החלון הבא" aria-label="החלפת מקום עם החלון הבא" onClick={() => onLayout(swapPanes(layout, i, i + 1))}>
                     <Icon name="swap" />
                   </button>
                 )}
@@ -154,7 +166,9 @@ export function SplitView(props: Props) {
               </>
             }
           >
-            {c.kind === 'pdf' ? (
+            {c.kind === 'review' ? (
+              <div className="pane-review">{props.renderReview(() => onLayout(closePane(layout, i)))}</div>
+            ) : c.kind === 'pdf' ? (
               <PdfPane book={book} chapter={pdfChapter} onBook={props.onBook} onError={props.onError} onNotice={props.onNotice} onNeedTranslatePane={props.onNeedTranslatePane} />
             ) : c.kind === 'web' ? (
               <WebPane />
@@ -214,7 +228,7 @@ export function SplitView(props: Props) {
           </PaneFrame>
         )
       })}
-    </PaneRow>
+    </PaneArea>
   )
 }
 
@@ -247,7 +261,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       aria-label={label}
       title="בחירת מה להציג בחלון הזה"
       value={
-        value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' || value.kind === 'glossary'
+        value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' || value.kind === 'glossary' || value.kind === 'review'
           ? value.kind
           : value.kind === 'alt'
             ? `a:${value.id}`
@@ -258,7 +272,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       onChange={(e) => {
         const v = e.target.value
         onChange(
-          v === 'master' || v === 'pdf' || v === 'web' || v === 'glossary'
+          v === 'master' || v === 'pdf' || v === 'web' || v === 'glossary' || v === 'review'
             ? { kind: v }
             : v.startsWith('a:')
               ? { kind: 'alt', id: v.slice(2) }
@@ -269,6 +283,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       }}
     >
       <option value="master">{MASTER_LABEL}</option>
+      <option value="review">ביקורת כתיבה (Claude)</option>
       <optgroup label="תרגום">
         <option value="pdf">המקור (PDF) של הפרק</option>
         <option value="web">גוגל תרגום</option>
@@ -398,64 +413,84 @@ export function PaneDrawer({ label, onClose, children }: { label: string; onClos
   )
 }
 
-/** Panes in a row with draggable borders between them. Widths are fractions that add up to 1. */
-export function PaneRow({ widths, onWidths, only = -1, children }: { widths: number[]; onWidths: (w: number[]) => void; only?: number; children: ReactNode[] }) {
-  const row = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ index: number; x: number; start: number[] } | null>(null)
-  const [dragging, setDragging] = useState(false)
+/**
+ * The panes, placed by the layout tree (round 11, Blender-like): every pane is positioned on its own
+ * over one area, so splitting or closing a pane never reloads the others. Every border between
+ * panes can be dragged; a double click makes that split even.
+ */
+export function PaneArea({ tree, onTree, only = null, children }: { tree: PaneNode; onTree: (t: PaneNode) => void; only?: string | null; children: ReactNode[] }) {
+  const area = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ path: number[]; index: number; dir: 'h' | 'v'; at: number; span: number; start: PaneNode } | null>(null)
+  const [dragging, setDragging] = useState<'h' | 'v' | null>(null)
+  const { rects, borders } = layoutRects(tree)
+  const rtl = () => !!area.current && getComputedStyle(area.current).direction === 'rtl'
 
-  const begin = (index: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+  const begin = (b: (typeof borders)[number]) => (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.currentTarget.setPointerCapture(e.pointerId)
-    drag.current = { index, x: e.clientX, start: widths }
-    setDragging(true)
+    drag.current = { path: b.path, index: b.index, dir: b.dir, at: b.dir === 'h' ? e.clientX : e.clientY, span: b.span, start: tree }
+    setDragging(b.dir)
   }
   const move = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current
-    if (!d || !row.current) return
-    const W = row.current.getBoundingClientRect().width
-    const rtl = getComputedStyle(row.current).direction === 'rtl'
-    // In right-to-left, the first pane is on the right: moving the border left makes it wider
-    const dx = (e.clientX - d.x) * (rtl ? -1 : 1)
-    onWidths(resizeBorder(d.start, d.index, dx / W))
+    if (!d || !area.current) return
+    const box = area.current.getBoundingClientRect()
+    const whole = d.dir === 'h' ? box.width : box.height
+    // in right-to-left the first pane is on the right: moving the border left makes it wider
+    const px = d.dir === 'h' ? (e.clientX - d.at) * (rtl() ? -1 : 1) : e.clientY - d.at
+    onTree(resizeSplit(d.start, d.path, d.index, px / Math.max(1, whole * d.span)))
   }
   const end = () => {
     drag.current = null
-    setDragging(false)
+    setDragging(null)
   }
-  const nudge = (index: number) => (e: React.KeyboardEvent) => {
-    const rtl = row.current && getComputedStyle(row.current).direction === 'rtl'
-    const step = e.key === 'ArrowLeft' ? 0.03 : e.key === 'ArrowRight' ? -0.03 : 0
+  const nudge = (b: (typeof borders)[number]) => (e: React.KeyboardEvent) => {
+    let step = 0
+    if (b.dir === 'h') step = e.key === 'ArrowLeft' ? 0.03 : e.key === 'ArrowRight' ? -0.03 : 0
+    else step = e.key === 'ArrowDown' ? 0.03 : e.key === 'ArrowUp' ? -0.03 : 0
     if (!step) return
     e.preventDefault()
-    onWidths(resizeBorder(widths, index, rtl ? step : -step))
+    onTree(resizeSplit(tree, b.path, b.index, b.dir === 'h' && !rtl() ? -step : step))
   }
+  const pct = (v: number) => `${v * 100}%`
 
   return (
-    <div className={`panes${dragging ? ' resizing' : ''}`} ref={row}>
-      {children.map((child, i) => (
-        <Fragment key={(child as { key?: string }).key ?? i}>
-          {i > 0 && only < 0 && (
-            <div
-              className="prz"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="גבול בין חלונות, גרירה משנה את הרוחב"
-              tabIndex={0}
-              title="גרירה לשינוי הרוחב. לחיצה כפולה: רוחב שווה"
-              onPointerDown={begin(i - 1)}
-              onPointerMove={move}
-              onPointerUp={end}
-              onPointerCancel={end}
-              onDoubleClick={() => onWidths(widths.map(() => 1 / widths.length))}
-              onKeyDown={nudge(i - 1)}
-            />
-          )}
-          <div className="pslot" style={only < 0 ? { flex: `${widths[i] ?? 1} 1 0` } : only === i ? { flex: '1 1 0' } : { display: 'none' }}>
+    <div className={`panes area${dragging ? ` resizing ${dragging}` : ''}`} ref={area}>
+      {children.map((child, i) => {
+        const key = (child as { key?: string }).key ?? String(i)
+        const r = rects.get(key)
+        const style: React.CSSProperties = only
+          ? only === key
+            ? { insetInlineStart: 0, top: 0, width: '100%', height: '100%' }
+            : { display: 'none' }
+          : r
+            ? { insetInlineStart: pct(r.x), top: pct(r.y), width: pct(r.w), height: pct(r.h) }
+            : { display: 'none' }
+        return (
+          <div key={key} className="pslot" style={style}>
             {child}
           </div>
-        </Fragment>
-      ))}
+        )
+      })}
+      {!only &&
+        borders.map((b) => (
+          <div
+            key={`${b.path.join('.')}:${b.index}`}
+            className={`prz ${b.dir}`}
+            role="separator"
+            aria-orientation={b.dir === 'h' ? 'vertical' : 'horizontal'}
+            aria-label={b.dir === 'h' ? 'גבול בין חלונות, גרירה משנה את הרוחב' : 'גבול בין חלונות, גרירה משנה את הגובה'}
+            tabIndex={0}
+            title={b.dir === 'h' ? 'גרירה לשינוי הרוחב. לחיצה כפולה: חלוקה שווה' : 'גרירה לשינוי הגובה. לחיצה כפולה: חלוקה שווה'}
+            style={b.dir === 'h' ? { insetInlineStart: pct(b.x), top: pct(b.y), height: pct(b.h) } : { insetInlineStart: pct(b.x), top: pct(b.y), width: pct(b.w) }}
+            onPointerDown={begin(b)}
+            onPointerMove={move}
+            onPointerUp={end}
+            onPointerCancel={end}
+            onDoubleClick={() => onTree(evenSplit(tree, b.path))}
+            onKeyDown={nudge(b)}
+          />
+        ))}
     </div>
   )
 }

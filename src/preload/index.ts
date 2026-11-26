@@ -56,6 +56,8 @@ const api = {
   pathForFile: (f: File): string => webUtils.getPathForFile(f),
   /** Paragraphs per chapter id, read from the files on disk (translation progress, feature 28) */
   paragraphCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:paraCounts', bookPath),
+  paragraphTexts: (bookPath: string): Promise<OpResult<Record<string, string[]>>> => ipcRenderer.invoke('book:paraTexts', bookPath),
+  tmPhrase: (source: string, phrase: string, target: string): Promise<OpResult<string>> => ipcRenderer.invoke('words:tmPhrase', source, phrase, target),
   // Writing review with Claude (feature 19). The API key stays in the main process.
   setAiSettings: (patch: Partial<AiSettings>): Promise<Partial<AiSettings>> => ipcRenderer.invoke('ai:settings', patch),
   aiKeyState: (): Promise<{ has: boolean; hint: string }> => ipcRenderer.invoke('ai:keyState'),

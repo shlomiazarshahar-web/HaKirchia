@@ -15,6 +15,7 @@ import { api, flushAll, notifyDiskChange } from '../api'
 import { editorsFor, useEditorsVersion } from '../nav'
 import { loadParagraphCounts, loadPdf, pdfImages, pdfParagraphs, sendToTranslate, useParagraphCounts, type LoadedPdf } from '../translate'
 import { Icon } from './Icons'
+import { TranslationMemory } from './TranslationMemory'
 
 interface Props {
   book: Book
@@ -81,8 +82,10 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
     void save({ pdf, ...(start ? { start } : {}) })
   }
 
+  const [busyAdd, setBusyAdd] = useState(false)
   const addFile = async () => {
-    const r = await api.addSourcePdf(book.path)
+    setBusyAdd(true)
+    const r = await api.addSourcePdf(book.path).finally(() => setBusyAdd(false))
     if (!r.ok) return onError(r.error ?? 'לא ניתן להוסיף את הקובץ')
     if (!r.value) return
     await refreshFiles()
@@ -106,7 +109,7 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
         <div className="pdf-empty">
           <Icon name="pdf" size={28} />
           <p>
-            לפרק <b>{chapter.title}</b> עוד לא נבחר מקור. בוחרים את ה־PDF של הספר המקורי, וההעתק שלו נשמר בתיקיית הספר (בתיקייה "מקור").
+            לפרק <b>{chapter.title}</b> עוד לא נבחר מקור. בוחרים את הספר המקורי (PDF, ePub או Word), וההעתק שלו נשמר בתיקיית הספר (בתיקייה "מקור"). ePub ו־Word הופכים ל־PDF פעם אחת, כשמוסיפים אותם.
           </p>
           {files && files.length > 0 && (
             <div className="pdf-files">
@@ -118,9 +121,9 @@ export function PdfPane({ book, chapter, onBook, onError, onNotice, onNeedTransl
               ))}
             </div>
           )}
-          <button className="btn" onClick={() => void addFile()}>
+          <button className="btn" disabled={busyAdd} onClick={() => void addFile()}>
             <Icon name="plus" />
-            {files && files.length ? 'קובץ PDF אחר…' : 'בחירת קובץ PDF…'}
+            {busyAdd ? 'מכין את הקובץ…' : files && files.length ? 'קובץ מקור אחר…' : 'בחירת קובץ מקור…'}
           </button>
         </div>
       </div>
@@ -351,13 +354,39 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     v.scrollTop = top + frac * paraHeight(i) - 12
   }
 
-  // Open at the start of the chapter
+  /** Brings the PDF to the paragraph at the top of the chapter (the chapter leads). False when it can't. */
+  const followChapter = (quiet = 120): boolean => {
+    const cur = chapterSide(editor)
+    if (!cur || !cur.blocks.length || !paras?.length) return false
+    const y = cur.scroller.scrollTop + 12
+    let k = 0
+    for (let j = 0; j < cur.blocks.length; j++) {
+      if (topIn(cur.blocks[j], cur.scroller) <= y) k = j
+      else break
+    }
+    const el = cur.blocks[k]
+    const frac = Math.max(0, Math.min(1, (y - topIn(el, cur.scroller)) / Math.max(1, el.offsetHeight)))
+    quietUntil.current.pdf = Date.now() + quiet
+    const i = from + k
+    if (i > to) scrollToPara(Math.max(from, to), 1)
+    else scrollToPara(i, frac)
+    return true
+  }
+
+  // Open where the chapter is: when the pane comes back (after another page was shown in it), the
+  // chapter is not moved; the PDF follows it. A chapter still at its top opens the PDF at its start.
   const opened = useRef('')
   useEffect(() => {
     if (!pdf || !paras || !view.current) return
     const key = `${chapter.id}|${src.start?.page}|${src.start?.para}`
     if (opened.current === key) return
     opened.current = key
+    const side0 = chapterSide(editor)
+    if (synced && side0 && side0.scroller.scrollTop > 20) {
+      requestAnimationFrame(() => followChapter(400))
+      return
+    }
+    quietUntil.current.pdf = Date.now() + 400
     if (paras.length && from < paras.length) requestAnimationFrame(() => scrollToPara(from))
     else if (src.start) {
       const el = pageEls.current.get(src.start.page)
@@ -413,20 +442,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     if (!s || !paras) return
     const onScroll = () => {
       if (!synced || Date.now() < quietUntil.current.chapter) return
-      const cur = chapterSide(editor)
-      if (!cur || !cur.blocks.length) return
-      const y = cur.scroller.scrollTop + 12
-      let k = 0
-      for (let j = 0; j < cur.blocks.length; j++) {
-        if (topIn(cur.blocks[j], cur.scroller) <= y) k = j
-        else break
-      }
-      const el = cur.blocks[k]
-      const frac = Math.max(0, Math.min(1, (y - topIn(el, cur.scroller)) / Math.max(1, el.offsetHeight)))
-      quietUntil.current.pdf = Date.now() + 120
-      const i = from + k
-      if (i > to) scrollToPara(Math.max(from, to), 1)
-      else scrollToPara(i, frac)
+      followChapter()
     }
     const onMove = (e: MouseEvent) => {
       const cur = chapterSide(editor)
@@ -508,6 +524,15 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     onNotice(`הפרק נגמר ב: "${opening(paras[i].text)}"`)
   }
 
+  // translation memory (feature 46): a phrase marked in the original, looked up among earlier translations
+  const [tmQuery, setTmQuery] = useState<string | null>(null)
+  const lookUp = () => {
+    const sel = window.getSelection()
+    const text = sel && !sel.isCollapsed && view.current?.contains(sel.anchorNode) ? sel.toString().replace(/\s+/g, ' ').trim() : ''
+    if (!text) return onNotice('סמנו ביטוי ב־PDF, ואז "בזיכרון" מראה איך תרגמתם אותו קודם')
+    setTmQuery(text)
+  }
+
   const send = () => {
     const sel = window.getSelection()
     let text = ''
@@ -546,7 +571,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
             {f}
           </option>
         ))}
-        <option value="+">קובץ PDF אחר…</option>
+        <option value="+">קובץ מקור אחר (PDF, ePub, Word)…</option>
         <option value="-">ניתוק הפרק מהמקור</option>
       </select>
       {pdf && (
@@ -566,6 +591,10 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
       >
         <Icon name="link" />
         <span className="lbl2">{synced ? 'מסונכרן' : 'לא מסונכרן'}</span>
+      </button>
+      <button className="ib" title="איך תרגמתם קודם את הביטוי המסומן ב־PDF (זיכרון תרגום)" onMouseDown={(e) => e.preventDefault()} onClick={lookUp}>
+        <Icon name="history" />
+        <span className="lbl2">בזיכרון</span>
       </button>
       <button className="ib" title="שליחת הטקסט המסומן (או הפסקה שנבחרה) לגוגל תרגום (Ctrl+Shift+T)" onClick={send}>
         <Icon name="send" />
@@ -728,6 +757,22 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
             )
           })}
       </div>
+      {paras && paras.length > 0 && (
+        <TranslationMemory
+          book={book}
+          chapter={chapter}
+          editor={editor}
+          paras={paras}
+          from={from}
+          to={to}
+          picked={picked}
+          reached={reached}
+          query={tmQuery}
+          onClearQuery={() => setTmQuery(null)}
+          onNotice={onNotice}
+          onError={onError}
+        />
+      )}
     </div>
   )
 }

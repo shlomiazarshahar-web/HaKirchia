@@ -3,11 +3,12 @@ import type { Editor } from '@tiptap/react'
 import type { Book, Bookmark, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
-import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, translationLayout, type PaneLayout } from '@shared/panes'
+import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, splitPane, translationLayout, type PaneContent, type PaneLayout } from '@shared/panes'
 import { loadParagraphCounts, sendToTranslate, useParagraphCounts } from './translate'
 import { bookProgress } from '@shared/translation'
 import { MASTER_LABEL } from './labels'
 import { api, flushAll, onWordsReport, setPendingStop } from './api'
+import { SideResizer } from './components/SideResizer'
 import { IconSprite, Icon } from './components/Icons'
 import { Home } from './components/Home'
 import { UpdateBanner } from './components/Update'
@@ -394,19 +395,64 @@ export default function App() {
     void refreshWords(book.path)
   }
 
-  /** The translation screen: the chapter, its original (PDF) and Google Translate side by side */
-  const openTranslate = async () => {
-    if (!book || book.chapters.length === 0 || (view === 'write' && trMode)) return
-    await flushAll()
-    setEditor(null)
-    setMasterFocusId(null)
-    setInfoKey(null)
-    const { layout, focus } = layoutFor(book, true, activeId)
-    setTrMode(true)
-    setSplit(layout)
-    setFocusKey(focus)
-    setView('write')
-    void refreshWords(book.path)
+  /**
+   * "התחלת תרגום" (round 11, instead of a separate translation tab): in the writing view, the
+   * original (PDF / ePub / Word) and Google Translate open beside the chapter. A book without an
+   * original yet asks for the file first and links it to the chapter in focus.
+   */
+  const startTranslation = async () => {
+    if (!book || !split || book.chapters.length === 0) return
+    if (view !== 'write') {
+      await flushAll()
+      setEditor(null)
+      setMasterFocusId(null)
+      setView('write')
+    }
+    if (focusMode) exitFocus()
+    let b = book
+    const chId = (() => {
+      const p = split.panes.find((x) => x.key === focusKey)
+      return p?.content.kind === 'chapter' ? p.content.id : (activeId ?? b.chapters[0].id)
+    })()
+    if (!b.sources?.[chId]) {
+      const files = await api.listSourcePdfs(b.path)
+      let pdf: string | null = files.length === 1 ? files[0] : null
+      if (!files.length) {
+        const r = await api.addSourcePdf(b.path)
+        if (!r.ok) return show(r.error ?? 'לא הצלחתי להוסיף את הקובץ', true)
+        pdf = r.value ?? null
+      }
+      if (pdf && !Object.values(b.sources ?? {}).some((s) => s.pdf === pdf)) {
+        const r = await api.setSource(b.path, chId, { pdf })
+        if (r.ok && r.value) {
+          b = r.value
+          setBook(b)
+        }
+      }
+    }
+    let l = split
+    let i = l.panes.findIndex((p) => p.content.kind === 'chapter' && p.content.id === chId)
+    if (i < 0) {
+      i = Math.max(0, l.panes.findIndex((p) => p.key === focusKey))
+      l = setPaneContent(l, i, { kind: 'chapter', id: chId })
+    }
+    const chapterKey = l.panes[i].key
+    const add = (content: PaneContent, besideKind?: string) => {
+      if (l.panes.some((p) => p.content.kind === content.kind)) return
+      if (l.panes.length >= MAX_PANES) {
+        // full: the original takes the place of a pane that is not the chapter
+        const at = [...l.panes.keys()].reverse().find((j) => l.panes[j].key !== chapterKey && l.panes[j].content.kind !== 'pdf') ?? -1
+        if (at >= 0) l = setPaneContent(l, at, content)
+        return
+      }
+      const host = besideKind ? l.panes.findIndex((p) => p.content.kind === besideKind) : -1
+      l = splitPane(l, host >= 0 ? host : l.panes.findIndex((p) => p.key === chapterKey), content, 'h')
+    }
+    add({ kind: 'pdf' })
+    add({ kind: 'web' }, 'pdf')
+    updateSplit(l)
+    focusPane(chapterKey)
+    void refreshWords(b.path)
   }
 
   /** Text was sent to Google Translate but no such pane is open: open one */
@@ -478,7 +524,11 @@ export default function App() {
       else if (l.panes.length < MAX_PANES) {
         l = addPane(l, { kind: 'chapter', id }, i)
         i = i + 1
-      } else i = l.panes.findIndex((_, j) => j !== i)
+      } else {
+        // full: never over the original, Google Translate or the review
+        const j = l.panes.findIndex((p, k) => k !== i && !['pdf', 'web', 'review'].includes(p.content.kind))
+        i = j >= 0 ? j : l.panes.findIndex((_, k) => k !== i)
+      }
     }
     l = setPaneContent(l, i, { kind: 'chapter', id })
     updateSplit(l)
@@ -666,8 +716,12 @@ export default function App() {
     if (focusMode) exitFocus()
     setFind(null)
     setDrawerOpen(false)
-    if (view === 'board' || view === 'read') void switchView('write')
-    setReviewOpen((o) => !o)
+    if (view === 'master') return setReviewOpen((o) => !o)
+    // in the writing view the review is a pane of the split, placed and sized like any other
+    setReviewOpen(false)
+    const at = split ? split.panes.findIndex((p) => p.content.kind === 'review') : -1
+    if (split && at >= 0 && view === 'write') return updateSplit(closePane(split, at))
+    void openBeside({ kind: 'review' })
   }
 
   /** Moves the selected text to the drawer (Ctrl+Shift+M); without a selection, opens the drawer */
@@ -779,7 +833,7 @@ export default function App() {
   // ---------------------------------------------------------------------------
 
   /** Shows something next to the pane in focus (a background page, the glossary), or brings it forward when already shown */
-  const openBeside = async (content: { kind: 'material'; id: string } | { kind: 'glossary' }) => {
+  const openBeside = async (content: { kind: 'material'; id: string } | { kind: 'glossary' } | { kind: 'review' }) => {
     if (!book || !split) return
     if (view !== 'write') {
       await flushAll()
@@ -793,16 +847,22 @@ export default function App() {
     const i = Math.max(0, split.panes.findIndex((p) => p.key === focusKey))
     let l: PaneLayout
     let at: number
-    const aside = split.panes.findIndex((p) => p.content.kind === 'material' || p.content.kind === 'glossary')
+    const isPage = content.kind === 'material' || content.kind === 'glossary'
+    const aside = isPage ? split.panes.findIndex((p) => p.content.kind === 'material' || p.content.kind === 'glossary') : -1
+    // the original and Google Translate are never pushed out (round 11: a new background page used to open over the PDF)
+    const kept = (k: string) => k === 'pdf' || k === 'web'
     if (aside >= 0) {
       // a background page is already open: it makes way for this one
       at = aside
       l = setPaneContent(split, at, content)
     } else if (split.panes.length < MAX_PANES) {
-      l = addPane(split, content, i)
-      at = i + 1
+      // next to the translation panes it goes under Google Translate (or the PDF); else beside the pane in focus
+      const host = ['web', 'pdf'].map((k) => split.panes.findIndex((p) => p.content.kind === k)).find((j) => j >= 0) ?? -1
+      l = host >= 0 ? splitPane(split, host, content, 'v') : splitPane(split, i, content, 'h')
+      at = l.panes.findIndex((p) => !split.panes.some((q) => q.key === p.key))
     } else {
-      at = split.panes.findIndex((_, j) => j !== i)
+      at = [...split.panes.keys()].reverse().find((j) => j !== i && !kept(split.panes[j].content.kind) && split.panes[j].content.kind !== 'chapter') ?? [...split.panes.keys()].reverse().find((j) => j !== i && !kept(split.panes[j].content.kind)) ?? -1
+      if (at < 0) return show('אין מקום לחלון נוסף. סגרו אחד החלונות ונסו שוב', true)
       l = setPaneContent(split, at, content)
     }
     updateSplit(l)
@@ -1093,6 +1153,8 @@ export default function App() {
   const writeMaster = focusedPane?.content.kind === 'master'
   const masterFocus = inMaster || writeMaster ? (book!.chapters.find((c) => c.id === masterFocusId) ?? null) : null
   const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : writeMaster ? (masterFocus ?? null) : writeChapter
+  // The review pane takes the focus when its buttons are pressed: it reviews the chapter last in focus
+  const reviewChapter = inspected ?? (inWrite && focusedPane && focusedPane.content.kind !== 'master' ? (book!.chapters.find((c) => c.id === activeId) ?? null) : null)
   const overlay = api.platform === 'win32' || api.platform === 'linux'
   const empty = !!book && book.chapters.length === 0
   const totalWords = book ? book.chapters.reduce((sum, c) => sum + (bookWords[c.id] ?? 0), 0) : 0
@@ -1162,17 +1224,6 @@ export default function App() {
                 <Icon name="book" />
                 קריאה
               </button>
-              <button
-                className="tab"
-                role="tab"
-                aria-selected={view === 'write' && trMode}
-                disabled={empty}
-                title="הפרק, המקור שלו (PDF) וגוגל תרגום זה לצד זה. החלונות והרוחב ניתנים לשינוי כמו בכתיבה"
-                onClick={() => void openTranslate()}
-              >
-                <Icon name="translate" />
-                תרגום
-              </button>
             </div>
           </>
         )}
@@ -1188,7 +1239,16 @@ export default function App() {
               <Icon name="jump" />
               <span className="lbl">מעבר מהיר</span>
             </button>
-            <button className="ib" title="ביקורת כתיבה עם Claude: על קטע מסומן, על הפרק או על כל הספר" aria-pressed={reviewOpen} onClick={toggleReview}>
+            <button
+              className="ib"
+              title="התחלת תרגום: המקור (PDF, ePub או Word) וגוגל תרגום נפתחים בחלונות ליד הפרק. בספר בלי מקור, בוחרים קודם את הקובץ"
+              aria-pressed={inWrite && !!split?.panes.some((p) => p.content.kind === 'pdf')}
+              onClick={() => void startTranslation()}
+            >
+              <Icon name="translate" />
+              <span className="lbl">התחלת תרגום</span>
+            </button>
+            <button className="ib" title="ביקורת כתיבה עם Claude: על קטע מסומן, על הפרק או על כל הספר" aria-pressed={reviewOpen || (inWrite && !!split?.panes.some((p) => p.content.kind === 'review'))} onClick={toggleReview}>
               <Icon name="review" />
               <span className="lbl">ביקורת</span>
             </button>
@@ -1345,6 +1405,7 @@ export default function App() {
               onRenameBook={(t) => void renameBook(t)}
               onMatter={(pageId) => setDialog({ kind: 'matter', pageId })}
             />
+            <SideResizer cssVar="--binder-w" storageKey="hakirchia.binderWidth" min={180} max={520} side="start" label="גבול סרגל הפרקים, גרירה משנה את הרוחב" />
             {inMaster ? (
               <MasterView
                 key={book.path}
@@ -1381,6 +1442,9 @@ export default function App() {
                 onBook={setBook}
                 onNotice={(m) => show(m)}
                 onNeedTranslatePane={needTranslatePane}
+                renderReview={(onClose) => (
+                  <ReviewPanel key={book.path} target={{ mode: 'book', book, chapter: reviewChapter, editor, goTo: (id, t) => void goTo(id, t) }} onClose={onClose} show={show} />
+                )}
               />
             ) : (
               <main className="desk">
@@ -1400,7 +1464,8 @@ export default function App() {
             )}
           </>
         )}
-        {book && reviewOpen && !find && !focusOn && !inBoard && !inRead && (
+        {book && reviewOpen && inMaster && !find && !focusOn && <SideResizer cssVar="--side-w" storageKey="hakirchia.sideWidth" min={260} max={720} side="end" label="גבול החלונית, גרירה משנה את הרוחב" />}
+        {book && reviewOpen && inMaster && !find && !focusOn && (
           <ReviewPanel
             key={book.path}
             target={{ mode: 'book', book, chapter: inspected ?? null, editor, goTo: (id, t) => void goTo(id, t) }}
@@ -1408,7 +1473,9 @@ export default function App() {
             show={show}
           />
         )}
+        {book && drawerOpen && !find && !focusOn && !inBoard && !inRead && <SideResizer cssVar="--side-w" storageKey="hakirchia.sideWidth" min={260} max={720} side="end" label="גבול החלונית, גרירה משנה את הרוחב" />}
         {book && drawerOpen && !find && !focusOn && !inBoard && !inRead && <DrawerPanel book={book} editor={editor} onClose={() => setDrawerOpen(false)} show={show} />}
+        {book && find && !focusOn && !inRead && <SideResizer cssVar="--side-w" storageKey="hakirchia.sideWidth" min={260} max={720} side="end" label="גבול החלונית, גרירה משנה את הרוחב" />}
         {book && find && !focusOn && !inRead && (
           <SearchPanel
             key={book.path}
