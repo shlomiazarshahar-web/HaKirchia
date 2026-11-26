@@ -354,13 +354,39 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     v.scrollTop = top + frac * paraHeight(i) - 12
   }
 
-  // Open at the start of the chapter
+  /** Brings the PDF to the paragraph at the top of the chapter (the chapter leads). False when it can't. */
+  const followChapter = (quiet = 120): boolean => {
+    const cur = chapterSide(editor)
+    if (!cur || !cur.blocks.length || !paras?.length) return false
+    const y = cur.scroller.scrollTop + 12
+    let k = 0
+    for (let j = 0; j < cur.blocks.length; j++) {
+      if (topIn(cur.blocks[j], cur.scroller) <= y) k = j
+      else break
+    }
+    const el = cur.blocks[k]
+    const frac = Math.max(0, Math.min(1, (y - topIn(el, cur.scroller)) / Math.max(1, el.offsetHeight)))
+    quietUntil.current.pdf = Date.now() + quiet
+    const i = from + k
+    if (i > to) scrollToPara(Math.max(from, to), 1)
+    else scrollToPara(i, frac)
+    return true
+  }
+
+  // Open where the chapter is: when the pane comes back (after another page was shown in it), the
+  // chapter is not moved; the PDF follows it. A chapter still at its top opens the PDF at its start.
   const opened = useRef('')
   useEffect(() => {
     if (!pdf || !paras || !view.current) return
     const key = `${chapter.id}|${src.start?.page}|${src.start?.para}`
     if (opened.current === key) return
     opened.current = key
+    const side0 = chapterSide(editor)
+    if (synced && side0 && side0.scroller.scrollTop > 20) {
+      requestAnimationFrame(() => followChapter(400))
+      return
+    }
+    quietUntil.current.pdf = Date.now() + 400
     if (paras.length && from < paras.length) requestAnimationFrame(() => scrollToPara(from))
     else if (src.start) {
       const el = pageEls.current.get(src.start.page)
@@ -416,20 +442,7 @@ function PdfReader({ book, chapter, src, files, onSave, onBook, onLink, onAddFil
     if (!s || !paras) return
     const onScroll = () => {
       if (!synced || Date.now() < quietUntil.current.chapter) return
-      const cur = chapterSide(editor)
-      if (!cur || !cur.blocks.length) return
-      const y = cur.scroller.scrollTop + 12
-      let k = 0
-      for (let j = 0; j < cur.blocks.length; j++) {
-        if (topIn(cur.blocks[j], cur.scroller) <= y) k = j
-        else break
-      }
-      const el = cur.blocks[k]
-      const frac = Math.max(0, Math.min(1, (y - topIn(el, cur.scroller)) / Math.max(1, el.offsetHeight)))
-      quietUntil.current.pdf = Date.now() + 120
-      const i = from + k
-      if (i > to) scrollToPara(Math.max(from, to), 1)
-      else scrollToPara(i, frac)
+      followChapter()
     }
     const onMove = (e: MouseEvent) => {
       const cur = chapterSide(editor)
