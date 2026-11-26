@@ -128,6 +128,7 @@ export function Binder(props: Props) {
     if (ch.id === activeId && !masterActive) cls.push('active')
     if (drag?.type === 'chapter' && ch.id === drag.id) cls.push('dragging')
     if (over?.id === ch.id) cls.push(`over-${over.mark}`)
+    if (ch.noExport) cls.push('noexp')
     const sc = props.scenes && props.scenes.chapterId === ch.id && props.scenes.items.length > 1 ? props.scenes : null
     return (
       <Fragment key={ch.id}>
@@ -174,6 +175,11 @@ export function Binder(props: Props) {
             </span>
           ) : null
         })()}
+        {ch.noExport && (
+          <span className="noexp-tag" title="לא בייצוא: לא נכנס למצב קריאה ולשום ייצוא (לחיצה ימנית לשינוי)">
+            לא בייצוא
+          </span>
+        )}
         {sc && <span className="count" title={`${sc.items.length} סצנות`}>{sc.items.length}</span>}
       </div>
       {sc && (

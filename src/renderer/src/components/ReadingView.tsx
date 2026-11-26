@@ -74,10 +74,24 @@ export function ReadingView({ book, startId, onPublish, onEditMatter, onExport, 
     }
   }, [book.path, structure])
 
+  // the scene break image (feature 48), read from the book's folder
+  const [sceneImage, setSceneImage] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    if (!layout.sceneImage) return setSceneImage(undefined)
+    api.readSceneImage(book.path, layout.sceneImage).then((r) => alive && setSceneImage(r.ok && r.value ? r.value : undefined))
+    return () => {
+      alive = false
+    }
+  }, [book.path, layout.sceneImage, layout.sceneImageTick])
+
   const sections = useMemo(() => {
     if (!docs) return null
-    return bookSections({ title: book.title, chapters: book.chapters.map((c) => ({ id: c.id, title: c.title, doc: docs[c.id] ?? { type: 'doc', content: [] } })), outline: book.outline, publish: book.publish }, 'end')
-  }, [docs, book])
+    return bookSections(
+      { title: book.title, chapters: book.chapters.map((c) => ({ id: c.id, title: c.title, noExport: c.noExport, doc: docs[c.id] ?? { type: 'doc', content: [] } })), outline: book.outline, publish: book.publish, sceneImage },
+      'end'
+    )
+  }, [docs, book, sceneImage])
 
   const setLayout = (patch: Partial<BookLayout>) => onPublish({ ...book.publish, layout: { ...layout, ...patch } })
 
@@ -88,7 +102,7 @@ export function ReadingView({ book, startId, onPublish, onEditMatter, onExport, 
       ) : (
         <div className="rd-loading">פותח את הספר…</div>
       )}
-      {panel && <LayoutPanel layout={layout} onChange={setLayout} onEditMatter={onEditMatter} onExport={onExport} onClose={() => setPanel(false)} />}
+      {panel && <LayoutPanel bookPath={book.path} layout={layout} onChange={setLayout} onEditMatter={onEditMatter} onExport={onExport} onError={onError} onClose={() => setPanel(false)} />}
     </div>
   )
 }
@@ -368,6 +382,8 @@ function Pages({ book, sections, layout, startId, onOpenChapter, panelOpen, onPa
 }
 
 interface PanelProps {
+  bookPath: string
+  onError: (msg: string) => void
   layout: BookLayout
   onChange: (patch: Partial<BookLayout>) => void
   onEditMatter: () => void
@@ -375,7 +391,7 @@ interface PanelProps {
   onClose: () => void
 }
 
-function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: PanelProps) {
+function LayoutPanel({ bookPath, layout, onChange, onEditMatter, onExport, onError, onClose }: PanelProps) {
   const prefs = usePrefs()
   const fonts = [...EDITOR_FONTS, ...prefs.customFonts.map((f) => f.family).filter((f) => !EDITOR_FONTS.includes(f))]
   const sw = (k: keyof BookLayout, label: string, title?: string, disabled = false) => (
@@ -427,6 +443,8 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
       </label>
       <div className="set-sub">עיצוב חלקי הספר</div>
       <ElementsSection layout={layout} onChange={onChange} />
+      <div className="set-sub">מעבר סצנה</div>
+      <SceneImageField bookPath={bookPath} layout={layout} onChange={onChange} onError={onError} />
       <div className="set-sub">עימוד</div>
       {sw('partPage', 'כל כותרת חלק בעמוד משלה, באמצע העמוד')}
       {sw('chapterNewPage', 'כל פרק מתחיל בעמוד חדש')}
@@ -455,6 +473,46 @@ function LayoutPanel({ layout, onChange, onEditMatter, onExport, onClose }: Pane
         </button>
       </div>
     </aside>
+  )
+}
+
+/**
+ * Feature 48: an image instead of the * * * sign between scenes, in reading mode, the PDF and the
+ * ePub. While writing, the break stays * * *.
+ */
+function SceneImageField({ bookPath, layout, onChange, onError }: { bookPath: string; layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void; onError: (msg: string) => void }) {
+  const pick = async () => {
+    const r = await api.pickSceneImage(bookPath)
+    if (!r.ok) return onError(r.error ?? 'לא הצלחתי להוסיף את התמונה')
+    // the tick makes the view read the file again when an image of the same name replaced it
+    if (r.value) onChange({ sceneImage: r.value, sceneImageTick: Date.now() })
+  }
+  return (
+    <>
+      <p className="lp-note">בכתיבה נשאר * * *. במצב קריאה, ב־PDF וב־ePub יופיע במקומו קישוט שבוחרים.</p>
+      <div className="rd-exports">
+        <button className="btn ghost" onClick={() => void pick()}>
+          {layout.sceneImage ? 'החלפת התמונה…' : 'בחירת תמונה…'}
+        </button>
+        {layout.sceneImage && (
+          <button className="btn ghost" onClick={() => onChange({ sceneImage: '' })}>
+            חזרה ל־* * *
+          </button>
+        )}
+      </div>
+      {layout.sceneImage && (
+        <label className="field">
+          גובה התמונה
+          <select value={String(layout.sceneImageSize)} onChange={(e) => onChange({ sceneImageSize: Number(e.target.value) })}>
+            {[1, 1.5, 2, 3, 4, 6].map((v) => (
+              <option key={v} value={String(v)}>
+                {v === 1 ? 'שורה אחת' : `${v} שורות`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </>
   )
 }
 
@@ -526,35 +584,51 @@ export function ElementStyleFields({ el, layout, onChange }: { el: ElementKey; l
         <button aria-pressed={st.bold} title="מודגש" onClick={() => set({ bold: !st.bold })}>
           <b>מודגש</b>
         </button>
+        <button aria-pressed={!!st.italic} title="נטוי" onClick={() => set({ italic: !st.italic })}>
+          <i>נטוי</i>
+        </button>
       </div>
     </>
   )
 }
 
 /** Every element of the book, one at a time */
-function ElementsSection({ layout, onChange }: { layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void }) {
-  const [el, setEl] = useState<ElementKey>('chapterTitle')
+export function ElementsSection({ layout, onChange, keys, initial }: { layout: BookLayout; onChange: (patch: Partial<BookLayout>) => void; keys?: ElementKey[]; initial?: ElementKey }) {
+  const [el, setEl] = useState<ElementKey>(initial ?? keys?.[0] ?? 'chapterTitle')
   const st = elStyle(layout, el)
   return (
     <>
       <label className="field">
         מה לעצב
         <select value={el} onChange={(e) => setEl(e.target.value as ElementKey)}>
-          {ELEMENT_KEYS.map((k) => (
-            <option key={k} value={k}>
-              {ELEMENTS[k].label}
-              {layout.styles[k] ? ' •' : ''}
-            </option>
+          {(keys
+            ? [{ label: 'סגנונות', keys }]
+            : [
+                { label: 'חלקי הספר', keys: ELEMENT_KEYS.filter((k) => !TEXT_KEYS.includes(k)) },
+                { label: 'בתוך הטקסט', keys: TEXT_KEYS }
+              ]
+          ).map((g) => (
+            <optgroup key={g.label} label={g.label}>
+              {g.keys.map((k) => (
+                <option key={k} value={k}>
+                  {ELEMENTS[k].label}
+                  {layout.styles[k] ? ' •' : ''}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
       </label>
       <ElementStyleFields el={el} layout={layout} onChange={onChange} />
-      <div className="title-preview" style={{ fontFamily: `'${st.font || layout.font}', serif`, fontWeight: st.bold ? 700 : 500, textAlign: st.align === 'auto' ? 'center' : st.align, fontSize: Math.min(28, st.size * 1.333) }}>
+      <div className="title-preview" style={{ fontFamily: `'${st.font || layout.font}', serif`, fontWeight: st.bold ? 700 : 500, fontStyle: st.italic ? 'italic' : 'normal', textAlign: st.align === 'auto' ? 'center' : st.align, fontSize: Math.min(28, st.size * 1.333) }}>
         {PREVIEW[el]}
       </div>
     </>
   )
 }
+
+/** Elements inside the chapters' text: headings and the paragraph styles of feature 50 */
+export const TEXT_KEYS: ElementKey[] = ['h2', 'h3', 'pLetter', 'pPoem', 'pQuote', 'pSign']
 
 const PREVIEW: Record<ElementKey, string> = {
   chapterTitle: 'פרק ראשון',
@@ -566,5 +640,11 @@ const PREVIEW: Record<ElementKey, string> = {
   matterText: 'לאמא, שתמיד האמינה',
   toc: 'פרק ראשון ........ 7',
   notes: '1. הערה בתחתית העמוד',
-  heads: 'שם הספר · 12'
+  heads: 'שם הספר · 12',
+  h2: 'כותרת בתוך הפרק',
+  h3: 'כותרת משנה',
+  pLetter: 'יקירתי, אני כותב לך מהנמל…',
+  pPoem: 'לילה, והים שותק',
+  pQuote: '״כל ההתחלות קשות״',
+  pSign: 'הכניסה לעובדים בלבד'
 }

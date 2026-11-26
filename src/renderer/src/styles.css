@@ -1237,3 +1237,11 @@ body { background: #dde3e0; overflow: hidden; }
 body.side-resizing { cursor: col-resize; user-select: none; }
 body.side-resizing .pane, body.side-resizing webview, body.side-resizing iframe { pointer-events: none; }
 .app.focusmode .side-rz { display: none; }
+
+/* Round 12: a chapter left out of the exported book (feature 53) */
+.bitem.noexp .name { opacity: 0.6; font-style: italic; }
+.noexp-tag { font-size: 10.5px; padding: 0 6px; border-radius: 8px; border: 1px dashed currentColor; color: var(--w-muted); white-space: nowrap; line-height: 1.5; }
+.bitem.active .noexp-tag { color: var(--w-on-accent); }
+/* the manuscript for publishers (feature 45) */
+.ms-dialog { width: min(560px, calc(100vw - 40px)); }
+.ms-row { display: grid; grid-template-columns: 2fr 1fr 1.4fr 1.2fr; gap: 10px; }

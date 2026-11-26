@@ -17,6 +17,8 @@ export interface Chapter {
   file: string
   status: ChapterStatus
   synopsis: string
+  /** Feature 53: stays in the binder and the master, but is left out of the reading view and every export */
+  noExport?: boolean
 }
 
 /** A part (חלק) groups consecutive chapters, e.g. "חלק ראשון: הנמל". */

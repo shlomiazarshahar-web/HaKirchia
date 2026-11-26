@@ -6,12 +6,14 @@
 import type { OutlineNode, PMMark, PMNode } from './types'
 import { isSceneBreak } from './scenes'
 import { isIndented, guessDir } from './docx'
-import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES, printedTitle, ELEMENTS, elStyle, type ElementKey, type BookInfo, type BookLayout, type MatterPage, type PublishSettings } from './publish'
+import { backPages, frontPages, MATTER_KINDS, matterLines, PAGE_SIZES, printedTitle, ELEMENTS, elStyle, isParaStyle, PARA_INDENT, PARA_STYLES, paraKey, type ElementKey, type BookInfo, type BookLayout, type MatterPage, type PublishSettings } from './publish'
 
 export interface BookChapterData {
   id: string
   title: string
   doc: PMNode
+  /** Feature 53: left out of the book */
+  noExport?: boolean
 }
 
 export interface BookData {
@@ -19,6 +21,37 @@ export interface BookData {
   chapters: BookChapterData[]
   outline: OutlineNode[]
   publish: PublishSettings
+  /** Feature 48: the scene break image's address (a data: URL, or a file name inside the ePub); none = the sign */
+  sceneImage?: string
+}
+
+/** A chapter with no text at all: a planned chapter, only a name and a synopsis so far (feature 66) */
+export function isEmptyChapter(doc: PMNode | undefined): boolean {
+  if (!doc) return false
+  const has = (n: PMNode): boolean => (typeof n.text === 'string' && n.text.trim() !== '') || n.type === 'footnote' || (n.content ?? []).some(has)
+  return !has(doc)
+}
+
+/** Left out of the book: marked "not in export" (feature 53), or still empty (feature 66) */
+export const leftOut = (c: { noExport?: boolean; doc?: PMNode }): boolean => !!c.noExport || isEmptyChapter(c.doc)
+
+/**
+ * The book's tree without the chapters marked "not in export" (feature 53) or still empty (feature
+ * 66). A part whose chapters are all left out is left out too (an empty part stays: it was made empty on purpose).
+ */
+export function exportOutline(outline: OutlineNode[], chapters: (Pick<BookChapterData, 'id' | 'noExport'> & { doc?: PMNode })[]): OutlineNode[] {
+  const out = new Set(chapters.filter(leftOut).map((c) => c.id))
+  if (!out.size) return outline
+  const res: OutlineNode[] = []
+  for (const n of outline) {
+    if (n.type === 'chapter') {
+      if (!out.has(n.id)) res.push(n)
+    } else {
+      const children = n.children.filter((id) => !out.has(id))
+      if (children.length || !n.children.length) res.push({ ...n, children })
+    }
+  }
+  return res
 }
 
 export type Section =
@@ -185,16 +218,17 @@ function alignStyle(node: PMNode): string {
 }
 
 /** The body of a chapter (without its title). Paragraph indents follow the editor's (and Word's) book rule. */
-export function chapterBodyHtml(doc: PMNode, notes: NoteCollector | null): string {
+export function chapterBodyHtml(doc: PMNode, notes: NoteCollector | null, sceneImage?: string): string {
   const out: string[] = []
   let prev: PMNode | undefined
   for (const node of doc.content ?? []) {
     const dir = node.attrs?.dir === 'ltr' ? ' dir="ltr"' : ''
     if (node.type === 'paragraph') {
       const text = plain(node)
-      if (isSceneBreak(text)) out.push(`<p class="scene"${dir}>${esc(text.trim())}</p>`)
-      else if (!(node.content ?? []).length) out.push('<p class="empty">&#160;</p>')
-      else out.push(`<p class="${isIndented(node, prev) && !isSceneBreak(prev ? plain(prev) : '') ? 'ind' : 'flush'}"${dir}${alignStyle(node)}>${inlineHtml(node.content, notes)}</p>`)
+      const ps = isParaStyle(node.attrs?.pstyle) ? ` ps ps-${node.attrs!.pstyle}` : ''
+      if (isSceneBreak(text)) out.push(sceneImage ? `<p class="scene scene-img"><img src="${esc(sceneImage)}" alt="${esc(text.trim())}"/></p>` : `<p class="scene"${dir}>${esc(text.trim())}</p>`)
+      else if (!(node.content ?? []).length) out.push(ps ? `<p class="empty${ps}">&#160;</p>` : '<p class="empty">&#160;</p>')
+      else out.push(`<p class="${isIndented(node, prev) && !isSceneBreak(prev ? plain(prev) : '') ? 'ind' : 'flush'}${ps}"${dir}${alignStyle(node)}>${inlineHtml(node.content, notes)}</p>`)
     } else if (node.type === 'heading') {
       const tag = Number(node.attrs?.level ?? 2) <= 2 ? 'h2' : 'h3'
       out.push(`<${tag}${dir}${alignStyle(node)}>${inlineHtml(node.content, notes)}</${tag}>`)
@@ -266,8 +300,8 @@ function linesHtml(text: string): string {
 
 export function tocEntries(data: BookData): TocEntry[] {
   const out: TocEntry[] = []
-  const title = (id: string) => data.chapters.find((c) => c.id === id)?.title
-  for (const n of data.outline) {
+  const title = (id: string) => data.chapters.find((c) => c.id === id && !leftOut(c))?.title
+  for (const n of exportOutline(data.outline, data.chapters)) {
     if (n.type === 'part') {
       out.push({ id: n.id, title: n.title, level: 0 })
       for (const id of n.children) {
@@ -296,17 +330,17 @@ export function bookSections(data: BookData, noteMode: 'end' | 'epub' = 'end', p
   const withMatter = publish.layout.matter
   const matter = (p: MatterPage): Section => ({ kind: 'matter', id: p.id, page: p, html: matterHtml(p, data.title, publish.info, toc, pages) })
   if (withMatter) out.push(...frontPages(publish.matter).map(matter))
-  const byId = new Map(data.chapters.map((c) => [c.id, c]))
+  const byId = new Map(data.chapters.filter((c) => !leftOut(c)).map((c) => [c.id, c]))
   const chapter = (id: string, partTitle?: string) => {
     const c = byId.get(id)
     if (!c) return
     const notes: NoteCollector = { prefix: `c${out.length}`, notes: [], mode, offset: noteCount }
-    const body = chapterBodyHtml(fitToLayout(c.doc, publish.layout), notes)
+    const body = chapterBodyHtml(fitToLayout(c.doc, publish.layout), notes, data.sceneImage)
     noteCount += notes.notes.length
     const html = `<h1 class="bk-ch-title"${dirOf(c.title)}>${esc(c.title)}</h1>\n${body}\n${notesHtml(notes)}`
     out.push({ kind: 'chapter', id: c.id, title: c.title, html, ...(partTitle ? { partTitle } : {}) })
   }
-  for (const n of data.outline) {
+  for (const n of exportOutline(data.outline, data.chapters)) {
     if (n.type === 'part') {
       out.push({ kind: 'part', id: n.id, title: n.title, html: `<h1 class="bk-part-title"${dirOf(n.title)}>${esc(n.title)}</h1>` })
       n.children.forEach((id) => chapter(id, n.title))
@@ -350,6 +384,7 @@ export function bookCss(layout: BookLayout, scope = '', relative = false): strin
     const r: string[] = [relative ? `font-size: ${(st.size / layout.fontSize).toFixed(3)}em` : `font-size: ${st.size}pt`]
     if (st.font) r.push(`font-family: '${st.font.replace(/'/g, '')}', ${font}`)
     if (weight || st.bold) r.push(`font-weight: ${st.bold ? 700 : 500}`)
+    if (st.italic) r.push('font-style: italic')
     if (ELEMENTS[key].aligns.length && st.align !== 'auto') r.push(`text-align: ${st.align}`)
     return sel
       .split(',')
@@ -365,7 +400,10 @@ export function bookCss(layout: BookLayout, scope = '', relative = false): strin
     el('matterTitle', '.bk-m-title'),
     el('matterText', '.bk-m-text, .bk-title .bk-title-extra', false),
     el('toc', '.bk-toc-list', false),
-    el('notes', '.bk-notes, .bk-fnotes', false)
+    el('notes', '.bk-notes, .bk-fnotes', false),
+    el('h2', '.bk-sec h2'),
+    el('h3', '.bk-sec h3'),
+    ...PARA_STYLES.map((p) => el(paraKey(p), `.bk-sec p.ps-${p}`, false))
   ].join('\n')
   return `
 ${s}.bk-sec { font-family: ${font}; font-size: ${layout.fontSize}pt; line-height: ${layout.lineHeight}; color: #1a1a1a; text-align: ${layout.justify ? 'justify' : 'start'}; hyphens: manual; orphans: 2; widows: 2; text-rendering: geometricPrecision; }
@@ -373,8 +411,11 @@ ${s}.bk-sec p { margin: 0; }
 ${s}.bk-sec p.ind { text-indent: 1.5em; }
 ${s}.bk-sec p.scene { text-align: center; text-indent: 0; margin: 0.8em 0; letter-spacing: 0.3em; break-after: avoid; }
 ${s}.bk-sec .tab { white-space: pre; }
-${s}.bk-sec h2 { font-size: 1.25em; font-weight: 600; margin: 1.2em 0 0.5em; text-align: start; break-after: avoid; }
-${s}.bk-sec h3 { font-size: 1.1em; font-weight: 600; margin: 1em 0 0.4em; text-align: start; break-after: avoid; }
+${s}.bk-sec h2 { margin: 1.2em 0 0.5em; text-align: start; break-after: avoid; line-height: 1.3; }
+${s}.bk-sec h3 { margin: 1em 0 0.4em; text-align: start; break-after: avoid; line-height: 1.3; }
+${s}.bk-sec p.scene-img { letter-spacing: 0; line-height: 1; }
+${s}.bk-sec p.scene-img img { height: ${layout.sceneImageSize * layout.lineHeight}em; max-width: 70%; object-fit: contain; vertical-align: middle; }
+${paraCss(s + '.bk-sec ')}
 ${s}.bk-sec sup.fn { font-size: 0.7em; line-height: 0; }
 ${s}.bk-sec sup.fn a { color: inherit; text-decoration: none; }
 ${s}.bk-ch-title { line-height: 1.25; text-align: center; margin: 3.2em 0 2em; break-after: avoid; }
@@ -417,6 +458,50 @@ ${s}.bk-sec .fn-cont { margin-top: 0 !important; }
 ${s}.bk-sec sup.fn[data-note] { color: inherit; }
 ${elements}
 `
+}
+
+/**
+ * The paragraph styles' spacing (feature 50): set in from both sides, a little space above and
+ * below a run of paragraphs of the same style, never a first-line indent. Their font, size and
+ * placement come from the book's element styles. Shared by the book and the editor.
+ */
+export function paraCss(prefix: string): string {
+  return PARA_STYLES.map((p) => {
+    const sel = `${prefix}p.ps-${p}`
+    const ind = PARA_INDENT[p]
+    return [
+      `${sel} { text-indent: 0 !important;${ind ? ` margin-inline: ${ind}em;` : ''} }`,
+      `${prefix}p:not(.ps-${p}) + p.ps-${p}, ${prefix}h1 + p.ps-${p}, ${prefix}h2 + p.ps-${p}, ${prefix}h3 + p.ps-${p} { margin-top: 0.8em; }`,
+      `${sel} + p:not(.ps-${p}) { margin-top: 0.8em; text-indent: 0; }`,
+      p === 'poem' ? `${sel} { text-align-last: auto; }` : ''
+    ].join('\n')
+  }).join('\n')
+}
+
+/**
+ * The paragraph styles and in-text headings as the editor shows them (feature 50): the same look
+ * as the book (font, placement, weight, size in proportion to the text), so changing a style in
+ * one place changes it everywhere. Headings keep the editor's own size unless one was chosen.
+ */
+export function editorStyleCss(layout: BookLayout): string {
+  const scope = '.prose .ProseMirror '
+  const rules: string[] = []
+  const add = (key: ElementKey, sel: string, alwaysSize: boolean) => {
+    const st = elStyle(layout, key)
+    const r: string[] = []
+    if (alwaysSize || !st.auto) r.push(`font-size: ${(st.size / layout.fontSize).toFixed(3)}em`)
+    if (st.font) r.push(`font-family: '${st.font.replace(/'/g, '')}', var(--editor-font)`)
+    r.push(`font-weight: ${st.bold ? 700 : 'normal'}`)
+    if (st.italic) r.push('font-style: italic')
+    if (st.align !== 'auto') r.push(`text-align: ${st.align}`)
+    rules.push(`${scope}${sel} { ${r.join('; ')}; }`)
+  }
+  // headings keep the editor's own look until the writer changes them
+  if (layout.styles.h2) add('h2', 'h2', false)
+  if (layout.styles.h3) add('h3', 'h3', false)
+  for (const p of PARA_STYLES) add(paraKey(p), `p.ps-${p}`, true)
+  rules.push(paraCss(scope))
+  return rules.join('\n')
 }
 
 // ---------------------------------------------------------------------------

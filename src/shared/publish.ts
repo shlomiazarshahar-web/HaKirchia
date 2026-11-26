@@ -77,10 +77,47 @@ export interface BookLayout {
   notesAt: 'page' | 'chapter'
   /** How each element looks (font, size, placement); what is missing follows the body text */
   styles: Partial<Record<ElementKey, Partial<ElementStyle>>>
+  /** Feature 48: an image shown instead of the scene break sign (* * *) in reading mode, the PDF and the ePub. A file in the book's "עיצוב" folder; '' = the sign */
+  sceneImage: string
+  /** The image's height, in lines of text */
+  sceneImageSize: number
+  /** Changes when the image file is replaced (same name), so views read it again */
+  sceneImageTick?: number
 }
 
+/** Feature 45: the manuscript for publishers (a plain Word file in the format publishers ask for) */
+export interface ManuscriptSettings {
+  font: string
+  fontSize: number
+  /** 2 = double spacing */
+  lineSpacing: number
+  /** A first page with the title, the author, the word count and how to reach the writer */
+  cover: boolean
+  /** Contact details for the cover page; each line is a line */
+  contact: string
+  /** What replaces a scene break */
+  sceneSign: string
+  /** The author's name and the book's title at the top of every page */
+  header: boolean
+}
+
+export const DEFAULT_MANUSCRIPT: ManuscriptSettings = { font: 'David', fontSize: 12, lineSpacing: 2, cover: true, contact: '', sceneSign: '#', header: true }
+export const MANUSCRIPT_FONTS = ['David', 'Times New Roman', 'Arial', 'Frank Ruhl Libre', 'Narkisim', 'Miriam']
+
 /** The parts of the book that have a look of their own */
-export type ElementKey = 'chapterTitle' | 'partTitle' | 'bookTitle' | 'subtitle' | 'author' | 'matterTitle' | 'matterText' | 'toc' | 'notes' | 'heads'
+export type ElementKey = 'chapterTitle' | 'partTitle' | 'bookTitle' | 'subtitle' | 'author' | 'matterTitle' | 'matterText' | 'toc' | 'notes' | 'heads' | ParaStyleKey | 'h2' | 'h3'
+
+/** Feature 50: paragraph styles for prose. Stored on the paragraph (attrs.pstyle) and as a Word paragraph style */
+export type ParaStyle = 'letter' | 'poem' | 'quote' | 'sign'
+export type ParaStyleKey = 'pLetter' | 'pPoem' | 'pQuote' | 'pSign'
+export const PARA_STYLES: ParaStyle[] = ['letter', 'poem', 'quote', 'sign']
+export const paraKey = (p: ParaStyle): ParaStyleKey => ('p' + p[0].toUpperCase() + p.slice(1)) as ParaStyleKey
+export const isParaStyle = (v: unknown): v is ParaStyle => typeof v === 'string' && (PARA_STYLES as string[]).includes(v)
+export const PARA_LABEL: Record<ParaStyle, string> = { letter: 'מכתב', poem: 'שיר', quote: 'ציטוט', sign: 'שלט / הודעה' }
+/** How far each style is set in from both sides, in em (Word: the same in twips) */
+export const PARA_INDENT: Record<ParaStyle, number> = { letter: 1.5, poem: 2.5, quote: 2, sign: 0 }
+/** Word style ids of the paragraph styles */
+export const PARA_WORD_ID: Record<ParaStyle, string> = { letter: 'Letter', poem: 'Poem', quote: 'Quote', sign: 'Sign' }
 export type ElementAlign = 'start' | 'center' | 'end' | 'auto'
 
 export interface ElementStyle {
@@ -90,6 +127,7 @@ export interface ElementStyle {
   size: number
   align: ElementAlign
   bold: boolean
+  italic?: boolean
 }
 
 export interface ElementInfo {
@@ -98,6 +136,7 @@ export interface ElementInfo {
   ratio: number
   align: ElementAlign
   bold: boolean
+  italic?: boolean
   /** The placements that make sense for it (none: it has no placement setting) */
   aligns: ElementAlign[]
 }
@@ -112,7 +151,13 @@ export const ELEMENTS: Record<ElementKey, ElementInfo> = {
   matterText: { label: 'טקסט עמודי הפתיחה והסיום', ratio: 1, align: 'auto', bold: false, aligns: ['auto', 'start', 'center', 'end'] },
   toc: { label: 'תוכן העניינים', ratio: 1, align: 'start', bold: false, aligns: [] },
   notes: { label: 'הערות שוליים', ratio: 0.8, align: 'start', bold: false, aligns: [] },
-  heads: { label: 'מספרי עמודים וכותרות רצות', ratio: 0.75, align: 'center', bold: false, aligns: [] }
+  heads: { label: 'מספרי עמודים וכותרות רצות', ratio: 0.75, align: 'center', bold: false, aligns: [] },
+  h2: { label: 'כותרות בתוך הפרק', ratio: 1.25, align: 'start', bold: true, aligns: ['start', 'center', 'end'] },
+  h3: { label: 'כותרות משנה בתוך הפרק', ratio: 1.1, align: 'start', bold: true, aligns: ['start', 'center', 'end'] },
+  pLetter: { label: 'סגנון: מכתב', ratio: 1, align: 'auto', bold: false, italic: false, aligns: ['auto', 'start', 'center', 'end'] },
+  pPoem: { label: 'סגנון: שיר', ratio: 1, align: 'start', bold: false, italic: false, aligns: ['start', 'center', 'end'] },
+  pQuote: { label: 'סגנון: ציטוט', ratio: 0.92, align: 'auto', bold: false, italic: false, aligns: ['auto', 'start', 'center', 'end'] },
+  pSign: { label: 'סגנון: שלט / הודעה', ratio: 1, align: 'center', bold: true, italic: false, aligns: ['start', 'center', 'end'] }
 }
 export const ELEMENT_KEYS = Object.keys(ELEMENTS) as ElementKey[]
 export const ALIGN_LABEL: Record<ElementAlign, string> = { auto: 'לפי העמוד', start: 'בצד ימין', center: 'במרכז', end: 'בצד שמאל' }
@@ -122,7 +167,7 @@ export function elStyle(layout: Pick<BookLayout, 'fontSize' | 'styles'>, key: El
   const info = ELEMENTS[key]
   const s = layout.styles?.[key] ?? {}
   const size = s.size && s.size > 0 ? s.size : Math.round(info.ratio * layout.fontSize * 2) / 2
-  return { font: s.font ?? '', size, align: s.align && (info.aligns.includes(s.align) || !info.aligns.length) ? s.align : info.align, bold: s.bold ?? info.bold, auto: !(s.size && s.size > 0) }
+  return { font: s.font ?? '', size, align: s.align && (info.aligns.includes(s.align) || !info.aligns.length) ? s.align : info.align, bold: s.bold ?? info.bold, italic: s.italic ?? info.italic ?? false, auto: !(s.size && s.size > 0) }
 }
 
 export const DEFAULT_LAYOUT: BookLayout = {
@@ -138,7 +183,9 @@ export const DEFAULT_LAYOUT: BookLayout = {
   runningHeads: true,
   matter: true,
   notesAt: 'page',
-  styles: {}
+  styles: {},
+  sceneImage: '',
+  sceneImageSize: 2
 }
 
 export interface BookInfo {
@@ -156,6 +203,7 @@ export interface PublishSettings {
   info: BookInfo
   matter: MatterPage[]
   layout: BookLayout
+  manuscript: ManuscriptSettings
 }
 
 export const DEFAULT_INFO: BookInfo = { author: '', subtitle: '' }
@@ -176,14 +224,25 @@ export function normalizePublish(p: Partial<PublishSettings> | undefined): Publi
     if (Number(v.size) > 0) o.size = clamp(Number(v.size), 6, 72)
     if (v.align && ['start', 'center', 'end', 'auto'].includes(v.align)) o.align = v.align
     if (typeof v.bold === 'boolean') o.bold = v.bold
+    if (typeof v.italic === 'boolean') o.italic = v.italic
     if (Object.keys(o).length) styles[k] = o
   }
   layout.styles = styles
   layout.lineHeight = clamp(Number(layout.lineHeight) || DEFAULT_LAYOUT.lineHeight, 1, 2.5)
+  layout.sceneImage = typeof layout.sceneImage === 'string' ? layout.sceneImage : ''
+  layout.sceneImageSize = clamp(Number(layout.sceneImageSize) || DEFAULT_LAYOUT.sceneImageSize, 1, 8)
+  const ms = { ...DEFAULT_MANUSCRIPT, ...(p?.manuscript ?? {}) }
+  ms.fontSize = clamp(Number(ms.fontSize) || DEFAULT_MANUSCRIPT.fontSize, 10, 16)
+  ms.lineSpacing = clamp(Number(ms.lineSpacing) || DEFAULT_MANUSCRIPT.lineSpacing, 1, 3)
+  if (typeof ms.font !== 'string' || !ms.font.trim()) ms.font = DEFAULT_MANUSCRIPT.font
+  if (typeof ms.contact !== 'string') ms.contact = ''
+  if (typeof ms.sceneSign !== 'string') ms.sceneSign = DEFAULT_MANUSCRIPT.sceneSign
+  ms.cover = ms.cover !== false
+  ms.header = ms.header !== false
   const matter = Array.isArray(p?.matter)
     ? p!.matter.filter((m) => m && typeof m.id === 'string' && m.kind in MATTER_KINDS).map((m) => ({ ...m, where: m.where === 'back' ? ('back' as const) : ('front' as const), heading: m.heading ?? '', text: m.text ?? '' }))
     : defaultMatter()
-  return { info: { ...DEFAULT_INFO, ...(p?.info ?? {}) }, matter, layout }
+  return { info: { ...DEFAULT_INFO, ...(p?.info ?? {}) }, matter, layout, manuscript: ms }
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))

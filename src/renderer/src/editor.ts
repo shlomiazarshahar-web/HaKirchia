@@ -10,6 +10,7 @@ import type { Node as PMDoc } from '@tiptap/pm/model'
 import { locateStop, type StopPoint, type TextPiece } from '@shared/stoppoint'
 import { doubleQuoteFor, GERSHAYIM, MAQAF, NIQQUD_CLASS, singleQuoteFor, stripNiqqud } from '@shared/hebrew'
 import { getPrefs } from './prefs'
+import { isParaStyle, type ParaStyle } from '@shared/publish'
 import { NameCompletion, WordGrab } from './wordtools'
 
 export type Align = 'right' | 'center' | 'left' | 'justify'
@@ -28,6 +29,10 @@ declare module '@tiptap/core' {
       insertFootnote: (text?: string) => ReturnType
       /** Changes the text of the footnote node at this position */
       setFootnoteText: (pos: number, text: string) => ReturnType
+    }
+    paraStyle: {
+      /** Feature 50: gives every selected paragraph a prose style (letter, poem, quote, sign), or back to body text with null */
+      setParaStyle: (style: ParaStyle | null) => ReturnType
     }
     hebrew: {
       /** Removes niqqud from the selected text (or from the whole chapter when nothing is selected) */
@@ -118,6 +123,66 @@ const ParagraphDirection = Extension.create({
         }
       })
     ]
+  }
+})
+
+/**
+ * Feature 50: paragraph styles for prose (מכתב, שיר, ציטוט, שלט). A paragraph attribute, saved to
+ * Word as a paragraph style of the same name; how each style looks is set once for the whole book.
+ * Enter keeps the style (a letter goes on); Enter on an empty styled line goes back to body text.
+ */
+const ParagraphStyle = Extension.create({
+  name: 'paraStyle',
+  addGlobalAttributes() {
+    return [
+      {
+        types: ['paragraph'],
+        attributes: {
+          pstyle: {
+            default: null,
+            parseHTML: (el) => {
+              const v = el.getAttribute('data-pstyle')
+              return isParaStyle(v) ? v : null
+            },
+            renderHTML: (attrs) => (isParaStyle(attrs.pstyle) ? { 'data-pstyle': attrs.pstyle, class: `ps ps-${attrs.pstyle}` } : {})
+          }
+        }
+      }
+    ]
+  },
+  addCommands() {
+    return {
+      setParaStyle:
+        (style) =>
+        ({ tr, state, dispatch }) => {
+          let found = false
+          for (const r of state.selection.ranges) {
+            state.doc.nodesBetween(r.$from.pos, r.$to.pos, (node, pos) => {
+              if (node.type.name === 'heading') {
+                // a heading becomes a styled paragraph
+                found = true
+                if (dispatch) tr.setNodeMarkup(pos, state.schema.nodes.paragraph, { dir: node.attrs.dir, textAlign: node.attrs.textAlign, pstyle: style })
+                return false
+              }
+              if (node.type.name !== 'paragraph') return true
+              found = true
+              if (dispatch) tr.setNodeMarkup(pos, undefined, { ...node.attrs, pstyle: style })
+              return false
+            })
+          }
+          return found
+        }
+    }
+  },
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        const { selection } = this.editor.state
+        const p = selection.$from.parent
+        if (!selection.empty || p.type.name !== 'paragraph' || p.content.size || !p.attrs.pstyle) return false
+        return this.editor.commands.setParaStyle(null)
+      }
+    }
   }
 })
 
@@ -407,6 +472,7 @@ export const editorExtensions = [
   FontFamily,
   FontSize,
   ParagraphDirection,
+  ParagraphStyle,
   Placeholder.configure({ placeholder: 'כאן מתחילים לכתוב…' }),
   // marks the paragraph being written ("has-focus"); focus mode can fade all the others
   Focus.configure({ className: 'has-focus', mode: 'shallowest' }),

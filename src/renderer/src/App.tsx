@@ -33,9 +33,11 @@ import type { StopPoint } from '@shared/stoppoint'
 import appIcon from './assets/icon.png'
 import { addNote, loadDrawer, loadNotes, moveSelectionToDrawer } from './drafts'
 import { CompareDialog, DrawerPanel, type CompareRequest } from './components/Drafts'
-import { ReadingView, ElementStyleFields } from './components/ReadingView'
+import { ReadingView, ElementStyleFields, ElementsSection, TEXT_KEYS } from './components/ReadingView'
+import { ManuscriptDialog } from './components/Manuscript'
+import { editorStyleCss } from '@shared/bookhtml'
 import { MatterDialog } from './components/MatterDialog'
-import { elStyle, type PublishSettings } from '@shared/publish'
+import { elStyle, type ElementKey, type PublishSettings } from '@shared/publish'
 import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
@@ -54,6 +56,8 @@ type Dialog =
   | { kind: 'settings' }
   | { kind: 'matter'; pageId?: string }
   | { kind: 'titleStyle' }
+  | { kind: 'paraStyles'; el: ElementKey }
+  | { kind: 'manuscript' }
   | { kind: 'delete'; chapter: Chapter }
   | { kind: 'deletePart'; part: PartNode }
   | { kind: 'deleteMaterial'; material: Material }
@@ -965,8 +969,13 @@ export default function App() {
   /** Front and back pages, author and page layout (features 31, 36, 16) */
   useEffect(() => {
     const open = () => setDialog({ kind: 'titleStyle' })
+    const styles = (e: Event) => setDialog({ kind: 'paraStyles', el: ((e as CustomEvent).detail as ElementKey) ?? 'pLetter' })
     window.addEventListener('hakirchia:title-style', open)
-    return () => window.removeEventListener('hakirchia:title-style', open)
+    window.addEventListener('hakirchia:para-styles', styles)
+    return () => {
+      window.removeEventListener('hakirchia:title-style', open)
+      window.removeEventListener('hakirchia:para-styles', styles)
+    }
   }, [])
   const publishSaving = useRef<Promise<unknown>>(Promise.resolve())
   const savePublish = async (p: PublishSettings) => {
@@ -991,6 +1000,41 @@ export default function App() {
       if (!r.ok) return show(`הייצוא ל־${label} נכשל: ${r.error ?? ''}`, true)
       if (!r.value) return
       show(`הספר יוצא ל־${label}. הקובץ נשמר בתיקייה "${r.value.split(/[\\/]/).slice(-2, -1)[0]}"`)
+      void api.showFile(r.value)
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  /** Feature 45: the manuscript for publishers, with the settings just chosen */
+  const exportManuscript = async (p: PublishSettings) => {
+    if (!book || exporting) return
+    setDialog(null)
+    await savePublish(p)
+    await flushAll()
+    setExporting('כתב יד')
+    try {
+      const r = await api.exportManuscript(book.path, book.title)
+      if (!r.ok) return show(`ייצוא כתב היד נכשל: ${r.error ?? ''}`, true)
+      if (!r.value) return
+      show(`כתב היד נשמר בתיקייה "${r.value.split(/[\\/]/).slice(-2, -1)[0]}"`)
+      void api.showFile(r.value)
+    } finally {
+      setExporting(null)
+    }
+  }
+
+  /** Feature 54: one chapter as a PDF with numbered lines, for a beta reader */
+  const exportBeta = async (ch: Chapter) => {
+    if (!book || exporting) return
+    setExportMenu(false)
+    await flushAll()
+    setExporting('לקורא בטא')
+    try {
+      const r = await api.exportBeta(book.path, ch.id, ch.title)
+      if (!r.ok) return show(`הייצוא לקורא בטא נכשל: ${r.error ?? ''}`, true)
+      if (!r.value) return
+      show(`"${ch.title}" יוצא לקורא בטא, עם מספרי שורות`)
       void api.showFile(r.value)
     } finally {
       setExporting(null)
@@ -1100,7 +1144,7 @@ export default function App() {
     show(`הפרק "${ch.title}" הועבר לסל המחזור`)
   }
 
-  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string }) => {
+  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }) => {
     if (!book) return
     // optimistic, so the status dot changes immediately
     setBook((b) => (b ? { ...b, chapters: b.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) } : b))
@@ -1155,6 +1199,8 @@ export default function App() {
   const inspected = inMaster ? (masterFocus ?? book!.chapters[0] ?? null) : writeMaster ? (masterFocus ?? null) : writeChapter
   // The review pane takes the focus when its buttons are pressed: it reviews the chapter last in focus
   const reviewChapter = inspected ?? (inWrite && focusedPane && focusedPane.content.kind !== 'master' ? (book!.chapters.find((c) => c.id === activeId) ?? null) : null)
+  // the chapter "this chapter" exports mean (feature 54)
+  const exportChapter = book ? (inspected ?? book.chapters.find((c) => c.id === activeId) ?? null) : null
   const overlay = api.platform === 'win32' || api.platform === 'linux'
   const empty = !!book && book.chapters.length === 0
   const totalWords = book ? book.chapters.reduce((sum, c) => sum + (bookWords[c.id] ?? 0), 0) : 0
@@ -1172,6 +1218,7 @@ export default function App() {
       onClick={() => (menu && setMenu(null), exportMenu && setExportMenu(false))}
     >
       <IconSprite />
+      {book && <style>{editorStyleCss(book.publish.layout)}</style>}
       <div className="titlebar">
         <img className="logo" src={appIcon} alt="" />
         <b>הַכְּרִיכִיָּה</b>
@@ -1278,6 +1325,17 @@ export default function App() {
                   <span>ePub</span>
                   <small>לקוראים אלקטרוניים</small>
                 </button>
+                <div className="msep" />
+                <button role="menuitem" onClick={() => (setExportMenu(false), setDialog({ kind: 'manuscript' }))}>
+                  <span>כתב יד להוצאה…</span>
+                  <small>Word בפורמט שהוצאות מבקשות: רווח כפול, מספרי עמודים</small>
+                </button>
+                {exportChapter && (
+                  <button role="menuitem" onClick={() => void exportBeta(exportChapter)}>
+                    <span>הפרק הזה לקורא בטא</span>
+                    <small>PDF נוח עם מספרי שורות: {exportChapter.title}</small>
+                  </button>
+                )}
                 <div className="msep" />
                 <button role="menuitem" onClick={() => (setExportMenu(false), setDialog({ kind: 'matter' }))}>
                   <span>עמודי פתיחה וסיום…</span>
@@ -1585,6 +1643,20 @@ export default function App() {
             הצגה בתיקייה
           </button>
           <div className="msep" />
+          <button
+            role="menuitemcheckbox"
+            aria-checked={!!menu.chapter.noExport}
+            title="הפרק נשאר בעץ ובמאסטר, אבל לא נכנס למצב קריאה ולשום ייצוא (PDF, Word, ePub, כתב יד)"
+            onClick={() => (void updateMeta(menu.chapter.id, { noExport: !menu.chapter.noExport }), setMenu(null))}
+          >
+            <Icon name="export" />
+            {menu.chapter.noExport ? 'להחזיר לספר המיוצא' : 'לא בייצוא'}
+          </button>
+          <button role="menuitem" disabled={!!exporting} title="PDF נוח לקריאה, עם מספר לכל שורה, כדי שהקורא יוכל להפנות למקום מדויק" onClick={() => (void exportBeta(menu.chapter), setMenu(null))}>
+            <Icon name="pdf" />
+            ייצוא לקורא בטא (PDF)
+          </button>
+          <div className="msep" />
           <button role="menuitem" title="חלק חדש שמתחיל בפרק הזה וכולל את הפרקים שאחריו" onClick={() => (partFromChapter(menu.chapter), setMenu(null))}>
             <Icon name="part-plus" />
             חלק חדש מהפרק הזה
@@ -1665,6 +1737,21 @@ export default function App() {
           </div>
         </div>
       )}
+      {dialog?.kind === 'paraStyles' && book && (
+        <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && setDialog(null)}>
+          <div className="dialog title-style" role="dialog" aria-label="סגנונות הפסקה" onKeyDown={(e) => e.key === 'Escape' && setDialog(null)}>
+            <h2>סגנונות הפסקה</h2>
+            <p>איך נראים מכתב, שיר, ציטוט, שלט וכותרות בתוך הפרק. חל על כל הספר: בעורך, במצב קריאה ובכל ייצוא.</p>
+            <ElementsSection keys={TEXT_KEYS} initial={dialog.el} layout={book.publish.layout} onChange={(patch) => void savePublish({ ...book.publish, layout: { ...book.publish.layout, ...patch } })} />
+            <div className="actions">
+              <button className="btn" onClick={() => setDialog(null)}>
+                סגירה
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {dialog?.kind === 'manuscript' && book && <ManuscriptDialog book={book} onCancel={() => setDialog(null)} onExport={(p) => void exportManuscript(p)} />}
       {dialog?.kind === 'matter' && book && (
         <MatterDialog
           book={book}
