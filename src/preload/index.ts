@@ -9,6 +9,8 @@ import type { NakdanToken, SynonymSense } from '../shared/wordtools'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
 import type { ChapterLabel } from '../shared/labels'
+import type { Idea, TableColumn } from '../shared/plan'
+import type { DropTarget } from '../shared/outline'
 import type { WritingLog } from '../shared/writinglog'
 import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
 import type { BackupChapter, BackupInfo, BackupSettings } from '../shared/backup'
@@ -196,12 +198,18 @@ const api = {
   /** Saves the binder tree (order, parts). Renames files when the chapter order changed. */
   saveOutline: (bookPath: string, outline: OutlineNode[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:outline', bookPath, outline),
   deleteChapter: (bookPath: string, id: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:delete', bookPath, id),
-  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }): Promise<OpResult<Book>> =>
+  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[]; custom?: Record<string, string> }): Promise<OpResult<Book>> =>
     ipcRenderer.invoke('chapter:meta', bookPath, id, meta),
   /** Feature 47: words written on each day */
   writingLog: (bookPath: string): Promise<OpResult<WritingLog>> => ipcRenderer.invoke('book:writingLog', bookPath),
   /** Feature 44: the book's color labels (a removed label leaves every chapter) */
   setLabels: (bookPath: string, labels: ChapterLabel[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:labels', bookPath, labels),
+  /** Round 14: idea pile, the table's own columns, the trial order (null ends the trial) */
+  setPlan: (bookPath: string, patch: { ideas?: Idea[]; tableColumns?: TableColumn[]; trialOutline?: OutlineNode[] | null }): Promise<OpResult<Book>> => ipcRenderer.invoke('book:plan', bookPath, patch),
+  /** Feature 61: the trial order becomes the book's order */
+  applyTrialOrder: (bookPath: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:applyTrial', bookPath),
+  /** Feature 59: an idea becomes a chapter, where it was dropped (or at the end) */
+  ideaToChapter: (bookPath: string, ideaId: string, target?: DropTarget): Promise<OpResult<{ book: Book; chapterId: string }>> => ipcRenderer.invoke('idea:toChapter', bookPath, ideaId, target),
   /** Words per chapter id, read from the files on disk (for the cork board). */
   wordCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:wordCounts', bookPath),
   loadChapter: (bookPath: string, id: string): Promise<OpResult<LoadedChapter>> => ipcRenderer.invoke('chapter:load', bookPath, id),

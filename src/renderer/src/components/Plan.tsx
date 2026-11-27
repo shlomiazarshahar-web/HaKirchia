@@ -9,12 +9,13 @@ import { useBg } from './bgctx'
 import { Lightbox, TextInput } from './Background'
 import { Icon } from './Icons'
 
-export type PlanMode = 'cards' | 'timeline' | 'inspiration'
+export type PlanMode = 'cards' | 'table' | 'timeline' | 'inspiration'
 
 /** Switches between the three ways to look at the plan of the book */
 export function PlanSwitch({ mode, onMode, onBeside }: { mode: PlanMode; onMode: (m: PlanMode) => void; onBeside?: () => void }) {
   const opts: [PlanMode, string, string, string][] = [
     ['cards', 'כרטיסים', 'grid', 'כרטיס לכל פרק, עם תקציר וסטטוס'],
+    ['table', 'טבלה', 'table', 'שורה לכל פרק: תקציר, סטטוס, מילים, זמן בסיפור, דמויות ועמודות משלכם'],
     ['timeline', 'ציר זמן', 'timeline', 'אירועי הסיפור לפי סדר הזמן, מקושרים לפרקים'],
     ['inspiration', 'השראה', 'image', 'תמונות לדמויות, למקומות ולפרקים']
   ]
@@ -26,7 +27,7 @@ export function PlanSwitch({ mode, onMode, onBeside }: { mode: PlanMode; onMode:
           {label}
         </button>
       ))}
-      {onBeside && mode !== 'inspiration' && (
+      {onBeside && mode !== 'inspiration' && mode !== 'table' && (
         <button className="seg-beside" title="התצוגה הזאת בחלון צר ליד הכתיבה (תכנון בצד)" onClick={onBeside}>
           <Icon name="cards" size={15} />
           ליד הכתיבה

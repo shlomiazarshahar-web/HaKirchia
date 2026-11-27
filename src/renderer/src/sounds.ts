@@ -1,11 +1,18 @@
-// Background sounds while writing (feature 56). Every sound is made on the spot by the computer's
-// sound engine (Web Audio): no recordings, no internet, nothing to download. Several can play
-// together, each with its own volume. The YouTube player (a link, e.g. a Lofi stream) lives in
+// Background sounds while writing (feature 56). Fire and brown noise are made on the spot by the
+// computer's sound engine (Web Audio); the others are recordings shipped with the app. No internet.
+// Several can play together, each with its own volume. The YouTube player (a link, e.g. a Lofi stream) lives in
 // components/Sounds.tsx; this file is the built-in sounds and the shared settings.
 
 import { useSyncExternalStore } from 'react'
 import type { SoundSettings } from '@shared/types'
 import { api } from './api'
+import rainUrl from './assets/sounds/rain-on-window.mp3?url'
+import thunderUrl from './assets/sounds/thunder.mp3?url'
+import cafeUrl from './assets/sounds/cafe.mp3?url'
+import typewriterUrl from './assets/sounds/typewriter.mp3?url'
+import wavesUrl from './assets/sounds/waves.mp3?url'
+import windUrl from './assets/sounds/wind.mp3?url'
+import howlUrl from './assets/sounds/howling-wind.mp3?url'
 
 export interface SoundDef {
   id: string
@@ -14,13 +21,13 @@ export interface SoundDef {
 }
 
 export const SOUNDS: SoundDef[] = [
-  { id: 'rain', name: 'גשם', hint: 'גשם יציב עם טיפות' },
-  { id: 'cafe', name: 'בית קפה', hint: 'המולה רחוקה וכוסות' },
+  { id: 'rain', name: 'גשם', hint: 'טיפות על החלון, ומדי פעם רעם רחוק' },
+  { id: 'cafe', name: 'בית קפה', hint: 'המולה של בית קפה אמיתי' },
   { id: 'typewriter', name: 'מכונת כתיבה', hint: 'הקשות, פעמון וגלגלת' },
   { id: 'fire', name: 'אח בוערת', hint: 'רחש עמוק ופצפוצים' },
-  { id: 'waves', name: 'גלים', hint: 'ים שנושם לאט' },
-  { id: 'wind', name: 'רוח', hint: 'רוח שעולה ויורדת' },
-  { id: 'brown', name: 'רעש חום', hint: 'רחש עמוק ואחיד שמסתיר רעשים' }
+  { id: 'waves', name: 'גלים', hint: 'גלים על החוף' },
+  { id: 'wind', name: 'רוח', hint: 'רוח במשבים, עם יללה' },
+  { id: 'brown', name: 'רעש חום', hint: 'רחש עמוק ואחיד לגמרי, בלי שום שינוי, שמסתיר רעשים' }
 ]
 
 export const DEFAULT_SOUNDS: SoundSettings = { on: {}, master: 0.7, youtube: '', recentYoutube: [] }
@@ -132,7 +139,7 @@ function audio(): { ctx: AudioContext; out: GainNode } {
 }
 
 /** A few seconds of noise that loops: white (hiss), pink (softer) or brown (deep) */
-function noise(c: AudioContext, kind: 'white' | 'pink' | 'brown'): AudioBuffer {
+function noise(c: BaseAudioContext, kind: 'white' | 'pink' | 'brown'): AudioBuffer {
   if (buffers[kind]) return buffers[kind]
   const len = c.sampleRate * 6
   const b = c.createBuffer(2, len, c.sampleRate)
@@ -168,7 +175,7 @@ function noise(c: AudioContext, kind: 'white' | 'pink' | 'brown'): AudioBuffer {
   return b
 }
 
-function loop(c: AudioContext, kind: 'white' | 'pink' | 'brown'): AudioBufferSourceNode {
+function loop(c: BaseAudioContext, kind: 'white' | 'pink' | 'brown'): AudioBufferSourceNode {
   const s = c.createBufferSource()
   s.buffer = noise(c, kind)
   s.loop = true
@@ -177,7 +184,7 @@ function loop(c: AudioContext, kind: 'white' | 'pink' | 'brown'): AudioBufferSou
   return s
 }
 
-function filter(c: AudioContext, type: BiquadFilterType, freq: number, q = 0.7): BiquadFilterNode {
+function filter(c: BaseAudioContext, type: BiquadFilterType, freq: number, q = 0.7): BiquadFilterNode {
   const f = c.createBiquadFilter()
   f.type = type
   f.frequency.value = freq
@@ -186,7 +193,7 @@ function filter(c: AudioContext, type: BiquadFilterType, freq: number, q = 0.7):
 }
 
 /** A slow wobble of a value around its base: an oscillator into the parameter */
-function lfo(c: AudioContext, param: AudioParam, rate: number, depth: number): OscillatorNode {
+function lfo(c: BaseAudioContext, param: AudioParam, rate: number, depth: number): OscillatorNode {
   const o = c.createOscillator()
   o.frequency.value = rate
   const g = c.createGain()
@@ -197,7 +204,7 @@ function lfo(c: AudioContext, param: AudioParam, rate: number, depth: number): O
 }
 
 /** A very short sound at time `at`: a burst of noise through a band, or a tone that dies away */
-function burst(c: AudioContext, out: AudioNode, at: number, o: { freq: number; q?: number; len: number; vol: number; type?: BiquadFilterType }) {
+function burst(c: BaseAudioContext, out: AudioNode, at: number, o: { freq: number; q?: number; len: number; vol: number; type?: BiquadFilterType }) {
   const s = c.createBufferSource()
   s.buffer = noise(c, 'white')
   const f = filter(c, o.type ?? 'bandpass', o.freq, o.q ?? 1)
@@ -208,7 +215,7 @@ function burst(c: AudioContext, out: AudioNode, at: number, o: { freq: number; q
   s.connect(f).connect(g).connect(out)
   s.start(at, Math.random() * 5, o.len + 0.05)
 }
-function tone(c: AudioContext, out: AudioNode, at: number, freq: number, len: number, vol: number, type: OscillatorType = 'sine') {
+function tone(c: BaseAudioContext, out: AudioNode, at: number, freq: number, len: number, vol: number, type: OscillatorType = 'sine') {
   const o = c.createOscillator()
   o.type = type
   o.frequency.value = freq
@@ -225,7 +232,13 @@ function tone(c: AudioContext, out: AudioNode, at: number, freq: number, len: nu
  * Calls `plan(time)` again and again; each call places the next event(s) at `time` and says how long
  * until the following one. Events are placed a little ahead, so timers that run late never skip.
  */
-function scheduler(c: AudioContext, plan: (at: number) => number): () => void {
+function scheduler(c: BaseAudioContext, plan: (at: number) => number): () => void {
+  // rendering ahead of time (an OfflineAudioContext, used to check the sounds): place everything now
+  if ('startRendering' in c) {
+    const end = (c as OfflineAudioContext).length / c.sampleRate
+    for (let t = 0.1; t < end; ) t += Math.max(0.01, plan(t))
+    return () => undefined
+  }
   let next = c.currentTime + 0.1
   let alive = true
   const tick = () => {
@@ -240,58 +253,118 @@ function scheduler(c: AudioContext, plan: (at: number) => number): () => void {
   }
 }
 
-type Builder = (c: AudioContext, out: GainNode) => () => void
+type Builder = (c: BaseAudioContext, out: GainNode) => () => void
+
+const rnd = (a: number, b: number) => a + Math.random() * (b - a)
+
+// ---------------------------------------------------------------------------
+// Recordings (round 14, after שלומי's test: the made-up rain, café, typewriter, waves and wind did
+// not sound real). Real recordings, from the free "sounds-for-focus" collection (MIT, the sounds of
+// Moodist), shipped inside the app: still no internet needed.
+// ---------------------------------------------------------------------------
+
+const RECORDINGS: Record<string, string> = {
+  rain: rainUrl,
+  thunder: thunderUrl,
+  cafe: cafeUrl,
+  typewriter: typewriterUrl,
+  waves: wavesUrl,
+  wind: windUrl,
+  howl: howlUrl
+}
+const decoded = new Map<string, Promise<AudioBuffer>>()
+function recording(c: BaseAudioContext, name: string): Promise<AudioBuffer> {
+  let p = decoded.get(name)
+  if (!p) {
+    p = fetch(RECORDINGS[name])
+      .then((r) => r.arrayBuffer())
+      .then((b) => c.decodeAudioData(b))
+    p.catch(() => decoded.delete(name))
+    decoded.set(name, p)
+  }
+  return p
+}
+
+/** Plays a recording over and over without a seam: each round starts a few seconds before the last one ends, and they cross-fade */
+function playLoop(c: BaseAudioContext, out: AudioNode, name: string, vol = 1): () => void {
+  let stopped = false
+  let stopSched = () => undefined as void
+  void recording(c, name).then((buf) => {
+    if (stopped) return
+    const xf = Math.min(3, buf.duration / 4)
+    let first = true
+    stopSched = scheduler(c, (at) => {
+      // the first round starts somewhere in the middle, so it is never the same opening
+      const off = first ? Math.random() * (buf.duration - 2 * xf) : 0
+      const len = buf.duration - off
+      const s = c.createBufferSource()
+      s.buffer = buf
+      const g = c.createGain()
+      g.gain.setValueAtTime(0, at)
+      g.gain.linearRampToValueAtTime(vol, at + (first ? 1 : xf))
+      g.gain.setValueAtTime(vol, at + len - xf)
+      g.gain.linearRampToValueAtTime(0, at + len)
+      s.connect(g).connect(out)
+      s.start(at, off)
+      s.stop(at + len + 0.05)
+      first = false
+      return len - xf
+    })
+  })
+  return () => {
+    stopped = true
+    stopSched()
+  }
+}
+
+/** Now and then a roll of thunder (a part of the thunder recording), the first one soon after the rain starts */
+function thunderNowAndThen(c: BaseAudioContext, out: AudioNode, vol: number): () => void {
+  let stopped = false
+  let stopSched = () => undefined as void
+  void recording(c, 'thunder').then((buf) => {
+    if (stopped) return
+    let first = true
+    stopSched = scheduler(c, (at) => {
+      if (first) {
+        first = false
+        return rnd(10, 25)
+      }
+      // the recording is quiet for its first half minute; the thunder is after that
+      const from = Math.min(buf.duration - 20, rnd(32, 45))
+      const len = Math.min(buf.duration - from, rnd(18, 28))
+      const s = c.createBufferSource()
+      s.buffer = buf
+      const g = c.createGain()
+      const v = vol * rnd(0.6, 1)
+      g.gain.setValueAtTime(0, at)
+      g.gain.linearRampToValueAtTime(v, at + 1.5)
+      g.gain.setValueAtTime(v, at + len - 4)
+      g.gain.linearRampToValueAtTime(0, at + len)
+      s.connect(g).connect(out)
+      s.start(at, from)
+      s.stop(at + len + 0.05)
+      return len + rnd(45, 120)
+    })
+  })
+  return () => {
+    stopped = true
+    stopSched()
+  }
+}
 
 const BUILDERS: Record<string, Builder> = {
   rain: (c, out) => {
-    const hiss = loop(c, 'pink')
-    const hp = filter(c, 'highpass', 500)
-    const lp = filter(c, 'lowpass', 7000)
-    const g = c.createGain()
-    g.gain.value = 0.55
-    hiss.connect(hp).connect(lp).connect(g).connect(out)
-    const deep = loop(c, 'brown')
-    const dg = c.createGain()
-    dg.gain.value = 0.25
-    deep.connect(filter(c, 'lowpass', 300)).connect(dg).connect(out)
-    const drops = scheduler(c, (at) => {
-      burst(c, out, at, { freq: 2500 + Math.random() * 4500, q: 2, len: 0.015 + Math.random() * 0.03, vol: 0.05 + Math.random() * 0.12 })
-      return 0.01 + Math.random() * 0.06
-    })
-    return () => (drops(), hiss.stop(), deep.stop())
+    const rain = playLoop(c, out, 'rain')
+    const rumble = thunderNowAndThen(c, out, 1.6)
+    return () => (rain(), rumble())
   },
-  waves: (c, out) => {
-    const s = loop(c, 'brown')
-    const lp = filter(c, 'lowpass', 700)
-    const g = c.createGain()
-    g.gain.value = 0.5
-    s.connect(lp).connect(g).connect(out)
-    // the sea breathes: a wave every ~9 seconds, brighter as it breaks
-    const a = lfo(c, g.gain, 0.11, 0.42)
-    const b = lfo(c, lp.frequency, 0.11, 450)
-    const foam = loop(c, 'pink')
-    const fg = c.createGain()
-    fg.gain.value = 0.08
-    foam.connect(filter(c, 'highpass', 1800)).connect(fg).connect(out)
-    const f = lfo(c, fg.gain, 0.11, 0.07)
-    return () => (s.stop(), foam.stop(), a.stop(), b.stop(), f.stop())
-  },
+  cafe: (c, out) => playLoop(c, out, 'cafe'),
+  typewriter: (c, out) => playLoop(c, out, 'typewriter'),
+  waves: (c, out) => playLoop(c, out, 'waves'),
   wind: (c, out) => {
-    const s = loop(c, 'pink')
-    const bp = filter(c, 'bandpass', 500, 1.2)
-    const g = c.createGain()
-    g.gain.value = 0.7
-    s.connect(bp).connect(g).connect(out)
-    const a = lfo(c, bp.frequency, 0.07, 280)
-    const b = lfo(c, g.gain, 0.045, 0.45)
-    const whistle = loop(c, 'white')
-    const wbp = filter(c, 'bandpass', 1400, 9)
-    const wg = c.createGain()
-    wg.gain.value = 0.12
-    whistle.connect(wbp).connect(wg).connect(out)
-    const d = lfo(c, wbp.frequency, 0.09, 500)
-    const e = lfo(c, wg.gain, 0.06, 0.1)
-    return () => (s.stop(), whistle.stop(), a.stop(), b.stop(), d.stop(), e.stop())
+    const wind = playLoop(c, out, 'wind')
+    const howl = playLoop(c, out, 'howl', 0.4)
+    return () => (wind(), howl())
   },
   fire: (c, out) => {
     const s = loop(c, 'brown')
@@ -308,74 +381,18 @@ const BUILDERS: Record<string, Builder> = {
     })
     return () => (crackle(), flicker.stop(), s.stop())
   },
-  cafe: (c, out) => {
-    // many voices far away: noise shaped like speech (the band of voices, wobbling at syllable speed)
-    const stops: (() => void)[] = []
-    for (const [freq, rate] of [
-      [420, 3.1],
-      [650, 4.3],
-      [900, 5.2],
-      [520, 2.4]
-    ]) {
-      const s = loop(c, 'pink')
-      const bp = filter(c, 'bandpass', freq, 1.6)
-      const g = c.createGain()
-      g.gain.value = 0.32
-      s.connect(bp).connect(g).connect(out)
-      const a = lfo(c, g.gain, rate, 0.18)
-      const b = lfo(c, bp.frequency, rate / 3.7, freq * 0.18)
-      stops.push(() => (s.stop(), a.stop(), b.stop()))
-    }
-    const room = loop(c, 'brown')
-    const rg = c.createGain()
-    rg.gain.value = 0.2
-    room.connect(filter(c, 'lowpass', 250)).connect(rg).connect(out)
-    const clinks = scheduler(c, (at) => {
-      const f = 2200 + Math.random() * 2400
-      tone(c, out, at, f, 0.5, 0.025)
-      tone(c, out, at, f * 2.76, 0.25, 0.012)
-      if (Math.random() < 0.4) tone(c, out, at + 0.09, f * 1.07, 0.4, 0.018)
-      return 2.5 + Math.random() * 7
-    })
-    return () => (clinks(), room.stop(), stops.forEach((x) => x()))
-  },
-  typewriter: (c, out) => {
-    let keys = 0
-    let word = 0
-    let lineAt = 45 + Math.floor(Math.random() * 25)
-    const typing = scheduler(c, (at) => {
-      keys++
-      word++
-      // a key: a sharp click and the thump of the type bar
-      burst(c, out, at, { freq: 2600 + Math.random() * 1200, q: 1.4, len: 0.018, vol: 0.35 + Math.random() * 0.2 })
-      tone(c, out, at + 0.004, 140 + Math.random() * 40, 0.04, 0.12, 'triangle')
-      if (keys >= lineAt) {
-        // the end of the line: the bell, then the carriage goes back
-        keys = 0
-        lineAt = 45 + Math.floor(Math.random() * 25)
-        tone(c, out, at + 0.15, 2093, 1.2, 0.06)
-        tone(c, out, at + 0.15, 4186, 0.6, 0.015)
-        for (let i = 0; i < 14; i++) burst(c, out, at + 0.6 + i * 0.022, { freq: 900 + i * 60, q: 1, len: 0.03, vol: 0.06 })
-        burst(c, out, at + 0.95, { freq: 300, q: 1, len: 0.08, vol: 0.4 })
-        return 1.6 + Math.random() * 1.5
-      }
-      if (word > 3 + Math.random() * 6) {
-        word = 0
-        // the space bar, a thought, or a pause
-        return Math.random() < 0.12 ? 1 + Math.random() * 2.5 : 0.22 + Math.random() * 0.25
-      }
-      return 0.09 + Math.random() * 0.12
-    })
-    return typing
-  },
   brown: (c, out) => {
+    // deliberately the same all the time: no waves, no gusts, nothing that draws attention
     const s = loop(c, 'brown')
     const g = c.createGain()
     g.gain.value = 0.7
-    s.connect(filter(c, 'lowpass', 900)).connect(g).connect(out)
+    s.connect(filter(c, 'lowpass', 500)).connect(g).connect(out)
     return () => s.stop()
   }
 }
+
+/** Loudness trim of each sound, so they all start at about the same volume (measured with ffmpeg volumedetect) */
+const TRIM: Record<string, number> = { rain: 0.45, cafe: 0.75, typewriter: 1.4, fire: 0.6, waves: 2.4, wind: 1.2, brown: 0.5 }
 
 function start(id: string) {
   if (voices.has(id) || !BUILDERS[id]) return
@@ -384,7 +401,10 @@ function start(id: string) {
   gain.gain.value = 0
   gain.gain.setTargetAtTime(volumeOf(id), c.currentTime, 0.3)
   gain.connect(out)
-  const end = BUILDERS[id](c, gain)
+  const trim = c.createGain()
+  trim.gain.value = TRIM[id] ?? 1
+  trim.connect(gain)
+  const end = BUILDERS[id](c, trim)
   voices.set(id, {
     gain,
     stop: () => {

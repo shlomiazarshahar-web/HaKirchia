@@ -3,9 +3,9 @@
 // Lofi Girl stream) plays in a small player inside the panel. Closing the panel leaves everything
 // playing; "השתקת הכול" stops it all.
 
-import { createElement, useEffect, useRef, useState } from 'react'
+import { createElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { anyPlaying, setMaster, setVolume, setYoutube, setYoutubeOn, SOUNDS, stopAll, toggleSound, useSounds, volumeOf } from '../sounds'
-import { youtubeEmbed } from '@shared/sounds'
+import { PLAYER_SCHEME, youtubeParts, youtubePlayer, youtubeWatch } from '@shared/sounds'
 import { Icon } from './Icons'
 
 /** The status bar's button */
@@ -24,6 +24,23 @@ interface WebviewEl extends HTMLElement {
   executeJavaScript: (code: string) => Promise<unknown>
 }
 
+/** Round 14: after the small player was refused by YouTube itself (not by one video), go straight to the normal page */
+const PLAIN_KEY = 'hakirchia.youtube.plain'
+const prefersPlain = () => {
+  try {
+    return localStorage.getItem(PLAIN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const rememberPlain = (on: boolean) => {
+  try {
+    localStorage.setItem(PLAIN_KEY, on ? '1' : '0')
+  } catch {
+    /* fine */
+  }
+}
+
 /**
  * The panel. It stays mounted while anything plays (the YouTube player must not be closed), and is
  * only moved out of sight when "closed".
@@ -32,11 +49,44 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
   const s = useSounds()
   const [link, setLink] = useState(s.settings.youtube)
   const [err, setErr] = useState<string | null>(null)
-  const [plain, setPlain] = useState(false)
+  const [plain, setPlain] = useState(prefersPlain)
+  const [note, setNote] = useState<string | null>(null)
   const ref = useRef<WebviewEl | null>(null)
-  const embed = s.youtubeOn ? youtubeEmbed(s.settings.youtube) : null
-  const src = embed && plain ? embed.replace('/embed/', '/watch?v=').replace('?autoplay=1', '&autoplay=1') : embed
+  const embed = s.youtubeOn ? youtubePlayer(s.settings.youtube) : null
+  const src = embed && plain ? youtubeWatch(s.settings.youtube) : embed
 
+  // The small player says on its console whether YouTube agreed to play; if not, the normal page
+  useEffect(() => {
+    const wv = ref.current
+    if (!wv || !src || plain) return
+    const onMsg = (e: Event) => {
+      const m = String((e as Event & { message?: string }).message ?? '')
+      if (!m.startsWith(`${PLAYER_SCHEME}:error:`)) return
+      const code = m.slice(`${PLAYER_SCHEME}:error:`.length)
+      if (code === 'offline') return setNote('אין חיבור ליוטיוב. צריך אינטרנט כדי לנגן.')
+      // 101/150: the owner of this video does not allow playing it in other sites
+      if (code === '101' || code === '150') setNote('בעלי הסרטון הזה לא מרשים לנגן אותו מחוץ ליוטיוב, אז הוא נפתח כדף יוטיוב רגיל.')
+      else {
+        setNote('הנגן הקטן לא הצליח, אז הסרטון נפתח כדף יוטיוב רגיל (ומעכשיו כך תמיד).')
+        rememberPlain(true)
+      }
+      setPlain(true)
+    }
+    wv.addEventListener('console-message', onMsg)
+    return () => wv.removeEventListener('console-message', onMsg)
+  }, [src, plain])
+
+  // Round 14: the panel opens right above the button that opened it (status bar or focus bar)
+  const [place, setPlace] = useState<CSSProperties | undefined>(undefined)
+  useLayoutEffect(() => {
+    if (!open) return
+    const btn = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+    if (!btn) return
+    const r = btn.getBoundingClientRect()
+    const w = Math.min(340, window.innerWidth - 24)
+    const left = Math.max(12, Math.min(r.right - w, window.innerWidth - w - 12))
+    setPlace({ left, bottom: Math.max(12, window.innerHeight - r.top + 8), width: w })
+  }, [open])
   useEffect(() => setLink(s.settings.youtube), [s.settings.youtube])
   useEffect(() => {
     if (!open) return
@@ -48,15 +98,16 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
   const play = (url = link) => {
     const u = url.trim()
     if (!u) return setErr('הדביקו קישור ליוטיוב')
-    if (!youtubeEmbed(u)) return setErr('זה לא נראה כמו קישור ליוטיוב (למשל youtube.com/watch?v=…)')
+    if (!youtubeParts(u)) return setErr('זה לא נראה כמו קישור ליוטיוב (למשל youtube.com/watch?v=…)')
     setErr(null)
-    setPlain(false)
+    setNote(null)
+    setPlain(prefersPlain())
     setYoutube(u, true)
   }
 
   if (!open && !embed) return null
   return (
-    <div className={`sounds-pop${open ? '' : ' away'}${focus ? ' infocus' : ''}`} role="dialog" aria-label="מוזיקה וצלילי רקע" aria-hidden={!open} onClick={(e) => e.stopPropagation()}>
+    <div className={`sounds-pop${open ? '' : ' away'}${focus && !place ? ' infocus' : ''}`} style={place} role="dialog" aria-label="מוזיקה וצלילי רקע" aria-hidden={!open} onClick={(e) => e.stopPropagation()}>
       <div className="snd-head">
         <h3>
           <Icon name="music" /> צלילים בזמן הכתיבה
@@ -125,14 +176,21 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
                 ref,
                 key: src,
                 src,
-                // YouTube's player wants to know which site embeds it
-                httpreferrer: 'https://www.youtube.com/',
                 partition: 'persist:music',
                 className: 'webview',
                 webpreferences: 'contextIsolation=yes,sandbox=yes'
               })}
             </div>
-            <button className="ib snd-plain" title="אם הסרטון לא מתנגן כאן (יש סרטונים שאסור להטמיע), פותחים אותו כדף יוטיוב רגיל בתוך החלון" onClick={() => setPlain(!plain)}>
+            {note && <div className="snd-note">{note}</div>}
+            <button
+              className="ib snd-plain"
+              title="אם הסרטון לא מתנגן כאן, פותחים אותו כדף יוטיוב רגיל בתוך החלון"
+              onClick={() => {
+                rememberPlain(!plain)
+                setNote(null)
+                setPlain(!plain)
+              }}
+            >
               {plain ? 'חזרה לנגן הקטן' : 'לא מתנגן? פתיחה כדף יוטיוב רגיל'}
             </button>
           </>

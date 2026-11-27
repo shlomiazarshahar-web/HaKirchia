@@ -31,6 +31,9 @@ import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn, Findi
 import { normalizeAccent } from '../shared/accent'
 import * as writingLog from './writinglog'
 import { allowedInMusicPlayer } from '../shared/sounds'
+import { registerPlayerScheme, setupMusicSession } from './music'
+
+registerPlayerScheme()
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -77,6 +80,8 @@ function createWindow(): void {
     prefs.nodeIntegration = false
     prefs.contextIsolation = true
     prefs.sandbox = true
+    // the music player starts playing without a click inside it (the click was "ניגון" in the panel)
+    if (allowedInMusicPlayer(params.src)) prefs.autoplayPolicy = 'no-user-gesture-required'
     if (!allowedInTranslatePane(params.src) && !allowedInMusicPlayer(params.src)) e.preventDefault()
   })
   win.webContents.on('did-attach-webview', (_e, wc) => {
@@ -577,6 +582,17 @@ function registerIpc(): void {
   ipcMain.handle('chapter:meta', (_e, b: string, id: string, meta) => wrap(() => project.updateChapterMeta(b, id, meta)))
   ipcMain.handle('book:writingLog', (_e, b: string) => wrap(() => writingLog.getLog(b)))
   ipcMain.handle('book:labels', (_e, b: string, labels) => wrap(() => project.setLabels(b, labels)))
+  ipcMain.handle('book:plan', (_e, b: string, patch) => wrap(() => project.setPlan(b, patch)))
+  ipcMain.handle('book:applyTrial', (_e, b: string) => wrapBook(() => project.applyTrialOrder(b)))
+  ipcMain.handle('idea:toChapter', async (_e, b: string, ideaId: string, target) => {
+    try {
+      const { book, chapterId, notice } = await project.ideaToChapter(b, ideaId, target)
+      rememberBook(book.path, book.title, book.chapters.length)
+      return { ok: true, value: { book, chapterId }, notice }
+    } catch (e) {
+      return { ok: false, error: errText(e) }
+    }
+  })
   ipcMain.handle('book:wordCounts', (_e, b: string) => wrap(() => project.wordCounts(b)))
   ipcMain.handle('chapter:load', (_e, b: string, id: string) => wrap(() => project.loadChapter(b, id)))
   ipcMain.handle('chapter:save', (_e, b: string, id: string, doc: PMNode) => wrap(() => project.saveChapter(b, id, doc)))
@@ -598,6 +614,7 @@ app.on('second-instance', () => {
 })
 
 app.whenReady().then(() => {
+  setupMusicSession()
   // Same id as the installer's shortcuts (appId in electron-builder.yml), so the taskbar groups
   // the running window with its pinned shortcut and shows our icon
   if (process.platform === 'win32') app.setAppUserModelId('com.hakirchia.app')

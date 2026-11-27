@@ -8,6 +8,7 @@ import type { PublishSettings } from './publish'
 import type { Background } from './background'
 import type { BackupSettings } from './backup'
 import type { ChapterLabel } from './labels'
+import type { Idea, TableColumn } from './plan'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -22,6 +23,8 @@ export interface Chapter {
   noExport?: boolean
   /** Feature 44: ids of the book's color labels on this chapter */
   labels?: string[]
+  /** Feature 60: values of the table's own columns, by column id */
+  custom?: Record<string, string>
 }
 
 /** A part (חלק) groups consecutive chapters, e.g. "חלק ראשון: הנמל". */
@@ -63,6 +66,12 @@ export interface Book extends Background {
   publish: PublishSettings
   /** Color labels the chapters can carry (feature 44), in the writer's order */
   labels: ChapterLabel[]
+  /** Feature 59: the idea pile, cards with no place in the book yet */
+  ideas: Idea[]
+  /** Feature 60: columns the writer added to the table */
+  tableColumns: TableColumn[]
+  /** Feature 61: a chapter order being tried out; the book itself keeps `outline` until it is applied */
+  trialOutline?: OutlineNode[]
 }
 
 /**

@@ -19,7 +19,7 @@ import { UpdateBanner } from './components/Update'
 import { Binder } from './components/Binder'
 import { type SaveState } from './components/ChapterEditor'
 import { MasterView } from './components/MasterView'
-import { CorkBoard } from './components/CorkBoard'
+import { PlanArea } from './components/PlanArea'
 import { SplitView } from './components/SplitView'
 import { FormatBar } from './components/FormatBar'
 import { Inspector } from './components/Inspector'
@@ -1211,7 +1211,7 @@ export default function App() {
     setBook(r.value)
   }
 
-  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }) => {
+  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[]; custom?: Record<string, string> }) => {
     if (!book) return
     // optimistic, so the status dot changes immediately
     setBook((b) => (b ? { ...b, chapters: b.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) } : b))
@@ -1476,11 +1476,15 @@ export default function App() {
         )}
         {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
         {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
-        {inBoard && planMode === 'cards' && (
-          <CorkBoard
-            modeSwitch={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />}
+        {inBoard && (planMode === 'cards' || planMode === 'table') && (
+          <PlanArea
             key={book!.path}
+            mode={planMode}
+            modeSwitch={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />}
             book={book!}
+            onBook={(b) => setBook((cur) => (cur && cur.path === b.path ? b : cur))}
+            show={show}
+            flushAll={flushAll}
             onOpen={openChapter}
             onMeta={updateMeta}
             onOutline={saveOutline}
@@ -1491,6 +1495,10 @@ export default function App() {
             renamingId={renamingId}
             onRename={renameChapter}
             onStartRename={setRenamingId}
+            onChapterFromIdea={(id) => {
+              setActiveId(id)
+              void api.setLastChapter(book!.path, id)
+            }}
           />
         )}
         {inRead && (
@@ -1648,7 +1656,9 @@ export default function App() {
           <span>
             {planMode === 'cards'
               ? 'תכנון · לחיצה כפולה על כרטיס פותחת את הפרק, לחיצה על השם משנה אותו'
-              : planMode === 'timeline'
+              : planMode === 'table'
+                ? 'טבלה · כותבים ישר בתאים. לחיצה על כותרת ממיינת, העיפרון פותח את הפרק'
+                : planMode === 'timeline'
                 ? 'ציר זמן · אירועי הסיפור לפי סדר הזמן. גרירת הנקודה משנה את המקום'
                 : 'לוח השראה · אפשר לגרור לכאן תמונות מהמחשב'}
           </span>
@@ -1660,7 +1670,7 @@ export default function App() {
         <span className="grow" />
         {selWords > 0 && <span className="wc sel">{selWords.toLocaleString('he-IL')} מילים מסומנות</span>}
         {writeChapter && <span className="wc">{words.toLocaleString('he-IL')} מילים בפרק</span>}
-        {inBoard && !empty && planMode === 'cards' && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
+        {inBoard && !empty && (planMode === 'cards' || planMode === 'table') && <span className="wc">{words.toLocaleString('he-IL')} מילים בספר</span>}
         {book && !inBoard && !empty && (
           <span className="wc" title="סטטיסטיקה בלבד">
             {totalWords.toLocaleString('he-IL')} מילים בספר
