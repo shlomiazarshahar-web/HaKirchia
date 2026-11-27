@@ -69,6 +69,13 @@ export function IconSprite() {
       <symbol id="i-pages" viewBox="0 0 24 24"><path d="M4 5h7v14H4zM13 5h7v14h-7zM6.5 9h2M15.5 9h2M6.5 12h2M15.5 12h2" /></symbol>
       <symbol id="i-next" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></symbol>
       <symbol id="i-prev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" /></symbol>
+      <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3.5 12.2V4.5a1 1 0 011-1h7.7l8.3 8.3a1 1 0 010 1.4l-7.1 7.1a1 1 0 01-1.4 0z" /><circle cx="8" cy="8" r="1.6" /></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20h16M6.5 20v-6M11 20V8M15.5 20v-9M20 20V5" /></symbol>
+      <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5z" /></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" /></symbol>
+      <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18c1.2 0 1.8-.8 1.8-1.7 0-1.2-1-1.6-1-2.6 0-1 .8-1.7 1.8-1.7H17a4 4 0 004-4c0-4.4-4-8-9-8z" /><circle cx="7.5" cy="11" r="1.2" /><circle cx="10" cy="7" r="1.2" /><circle cx="15" cy="7.5" r="1.2" /></symbol>
+      <symbol id="i-cards" viewBox="0 0 24 24"><rect x="4" y="3.5" width="16" height="7" rx="1.5" /><rect x="4" y="13.5" width="16" height="7" rx="1.5" /></symbol>
     </svg>
   )
 }

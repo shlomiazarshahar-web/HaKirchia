@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import type { PaneLayout } from '../shared/panes'
-import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SpellStatus, Theme } from '../shared/types'
+import type { AltDraft, Book, Bookmark, ChapterStatus, DrawerItem, PrivateNote, Version, CustomFont, FocusSettings, LoadedChapter, OpResult, OutlineNode, PMNode, RecentBook, Settings, SoundSettings, SpellStatus, Theme } from '../shared/types'
 import type { TypographySettings } from '../shared/hebrew'
 import type { StopPoint } from '../shared/stoppoint'
 import type { ChapterSource, SplitItem } from '../shared/translation'
@@ -8,6 +8,8 @@ import type { PublishSettings } from '../shared/publish'
 import type { NakdanToken, SynonymSense } from '../shared/wordtools'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
+import type { ChapterLabel } from '../shared/labels'
+import type { WritingLog } from '../shared/writinglog'
 import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
 import type { BackupChapter, BackupInfo, BackupSettings } from '../shared/backup'
 import type { GlossaryEntry, InspirationGroup, InspirationImage, Material, MaterialKind, TimelineEvent } from '../shared/background'
@@ -117,6 +119,10 @@ const api = {
   setTypography: (t: TypographySettings): Promise<void> => ipcRenderer.invoke('settings:typography', t),
   setFocusSettings: (f: FocusSettings): Promise<void> => ipcRenderer.invoke('settings:focus', f),
   setAskStopNote: (on: boolean): Promise<void> => ipcRenderer.invoke('settings:askStopNote', on),
+  /** Round 13: the app's accent color */
+  setAccent: (accent: string): Promise<void> => ipcRenderer.invoke('settings:accent', accent),
+  /** Feature 56: background sounds and the YouTube player */
+  setSounds: (s: SoundSettings): Promise<void> => ipcRenderer.invoke('settings:sounds', s),
   /** Full screen on/off (focused writing mode) */
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   /** Remembers where the writer stopped in this book, or forgets it (null) */
@@ -190,8 +196,12 @@ const api = {
   /** Saves the binder tree (order, parts). Renames files when the chapter order changed. */
   saveOutline: (bookPath: string, outline: OutlineNode[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:outline', bookPath, outline),
   deleteChapter: (bookPath: string, id: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:delete', bookPath, id),
-  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }): Promise<OpResult<Book>> =>
+  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }): Promise<OpResult<Book>> =>
     ipcRenderer.invoke('chapter:meta', bookPath, id, meta),
+  /** Feature 47: words written on each day */
+  writingLog: (bookPath: string): Promise<OpResult<WritingLog>> => ipcRenderer.invoke('book:writingLog', bookPath),
+  /** Feature 44: the book's color labels (a removed label leaves every chapter) */
+  setLabels: (bookPath: string, labels: ChapterLabel[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:labels', bookPath, labels),
   /** Words per chapter id, read from the files on disk (for the cork board). */
   wordCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:wordCounts', bookPath),
   loadChapter: (bookPath: string, id: string): Promise<OpResult<LoadedChapter>> => ipcRenderer.invoke('chapter:load', bookPath, id),

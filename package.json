@@ -1,7 +1,7 @@
 {
   "name": "hakirchia",
   "productName": "HaKirchia",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "הכריכייה: מעבד תמלילים לכתיבת ספרים",
   "main": "./out/main/index.js",
   "author": "shlomiazarshahar-web",

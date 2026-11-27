@@ -53,6 +53,8 @@ interface Props {
   onNeedTranslatePane: () => void
   /** The writing review (feature 19) when it is shown as a pane */
   renderReview: (onClose: () => void) => ReactNode
+  /** The plan beside the writing (feature 67) */
+  renderPlan: () => ReactNode
 }
 
 export function SplitView(props: Props) {
@@ -114,7 +116,7 @@ export function SplitView(props: Props) {
             }}
             head={
               <>
-                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : c.kind === 'glossary' ? 'glossary' : c.kind === 'review' ? 'review' : mat ? KIND_ICON[mat.kind] : 'file'} />
+                <Icon name={c.kind === 'master' ? 'master' : c.kind === 'alt' ? 'alt' : c.kind === 'pdf' ? 'pdf' : c.kind === 'web' ? 'globe' : c.kind === 'glossary' ? 'glossary' : c.kind === 'review' ? 'review' : c.kind === 'plan' ? 'grid' : mat ? KIND_ICON[mat.kind] : 'file'} />
                 <ContentPicker book={book} value={c} label={`מה מוצג בחלון ${i + 1}`} onChange={(v) => onLayout(setPaneContent(layout, i, v))} />
                 {c.kind === 'pdf' && pdfChapter && <small className="pstat">של {pdfChapter.title}</small>}
                 {shown[pane.key] !== undefined && (c.kind === 'chapter' || c.kind === 'master' || c.kind === 'alt') && (
@@ -168,6 +170,8 @@ export function SplitView(props: Props) {
           >
             {c.kind === 'review' ? (
               <div className="pane-review">{props.renderReview(() => onLayout(closePane(layout, i)))}</div>
+            ) : c.kind === 'plan' ? (
+              props.renderPlan()
             ) : c.kind === 'pdf' ? (
               <PdfPane book={book} chapter={pdfChapter} onBook={props.onBook} onError={props.onError} onNotice={props.onNotice} onNeedTranslatePane={props.onNeedTranslatePane} />
             ) : c.kind === 'web' ? (
@@ -261,7 +265,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       aria-label={label}
       title="בחירת מה להציג בחלון הזה"
       value={
-        value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' || value.kind === 'glossary' || value.kind === 'review'
+        value.kind === 'master' || value.kind === 'pdf' || value.kind === 'web' || value.kind === 'glossary' || value.kind === 'review' || value.kind === 'plan'
           ? value.kind
           : value.kind === 'alt'
             ? `a:${value.id}`
@@ -272,7 +276,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       onChange={(e) => {
         const v = e.target.value
         onChange(
-          v === 'master' || v === 'pdf' || v === 'web' || v === 'glossary' || v === 'review'
+          v === 'master' || v === 'pdf' || v === 'web' || v === 'glossary' || v === 'review' || v === 'plan'
             ? { kind: v }
             : v.startsWith('a:')
               ? { kind: 'alt', id: v.slice(2) }
@@ -283,6 +287,7 @@ function ContentPicker({ book, value, label, onChange }: { book: Book; value: Pa
       }}
     >
       <option value="master">{MASTER_LABEL}</option>
+      <option value="plan">תכנון: כרטיסים או ציר זמן</option>
       <option value="review">ביקורת כתיבה (Claude)</option>
       <optgroup label="תרגום">
         <option value="pdf">המקור (PDF) של הפרק</option>

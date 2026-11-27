@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { join } from 'path'
 import { existsSync } from 'fs'
-import type { AltDraft, Book, Bookmark, DrawerItem, FocusSettings, OpResult, OutlineNode, PMNode, PrivateNote, RecentBook, Theme } from '../shared/types'
+import type { AltDraft, Book, Bookmark, DrawerItem, FocusSettings, OpResult, OutlineNode, PMNode, PrivateNote, RecentBook, SoundSettings, Theme } from '../shared/types'
 import type { StopPoint } from '../shared/stoppoint'
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
@@ -28,6 +28,9 @@ import { sourceToPdf } from './sourcefile'
 import { normalizeBackup, type BackupSettings } from '../shared/backup'
 import type { RecoveryEntry } from '../shared/recovery'
 import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn, Finding } from '../shared/review'
+import { normalizeAccent } from '../shared/accent'
+import * as writingLog from './writinglog'
+import { allowedInMusicPlayer } from '../shared/sounds'
 
 let win: BrowserWindow | null = null
 let allowClose = false
@@ -68,13 +71,13 @@ function createWindow(): void {
       webviewTag: true
     }
   })
-  // The only web page allowed inside the app is Google Translate, without any access to the computer
+  // The only web pages allowed inside the app are Google Translate and YouTube (the music player, feature 56), without any access to the computer
   win.webContents.on('will-attach-webview', (e, prefs, params) => {
     delete prefs.preload
     prefs.nodeIntegration = false
     prefs.contextIsolation = true
     prefs.sandbox = true
-    if (!allowedInTranslatePane(params.src)) e.preventDefault()
+    if (!allowedInTranslatePane(params.src) && !allowedInMusicPlayer(params.src)) e.preventDefault()
   })
   win.webContents.on('did-attach-webview', (_e, wc) => {
     wc.setWindowOpenHandler(({ url }) => {
@@ -82,7 +85,7 @@ function createWindow(): void {
       return { action: 'deny' }
     })
     wc.on('will-navigate', (ev, url) => {
-      if (!allowedInTranslatePane(url)) {
+      if (!allowedInTranslatePane(url) && !allowedInMusicPlayer(url)) {
         ev.preventDefault()
         shell.openExternal(url)
       }
@@ -286,6 +289,12 @@ function registerIpc(): void {
   })
   ipcMain.handle('settings:askStopNote', (_e, on: boolean) => {
     updateSettings({ askStopNote: on })
+  })
+  ipcMain.handle('settings:accent', (_e, accent: string) => {
+    updateSettings({ accent: normalizeAccent(accent) })
+  })
+  ipcMain.handle('settings:sounds', (_e, sounds: SoundSettings) => {
+    updateSettings({ sounds })
   })
   // Writing review with Claude (feature 19)
   ipcMain.handle('ai:settings', (_e, patch: Partial<AiSettings>) => updateSettings({ ai: { ...getSettings().ai, ...patch } }).ai)
@@ -566,6 +575,8 @@ function registerIpc(): void {
   ipcMain.handle('book:outline', (_e, b: string, outline: OutlineNode[]) => wrapBook(() => project.saveOutline(b, outline)))
   ipcMain.handle('chapter:delete', (_e, b: string, id: string) => wrapBook(() => project.deleteChapter(b, id)))
   ipcMain.handle('chapter:meta', (_e, b: string, id: string, meta) => wrap(() => project.updateChapterMeta(b, id, meta)))
+  ipcMain.handle('book:writingLog', (_e, b: string) => wrap(() => writingLog.getLog(b)))
+  ipcMain.handle('book:labels', (_e, b: string, labels) => wrap(() => project.setLabels(b, labels)))
   ipcMain.handle('book:wordCounts', (_e, b: string) => wrap(() => project.wordCounts(b)))
   ipcMain.handle('chapter:load', (_e, b: string, id: string) => wrap(() => project.loadChapter(b, id)))
   ipcMain.handle('chapter:save', (_e, b: string, id: string, doc: PMNode) => wrap(() => project.saveChapter(b, id, doc)))
@@ -599,6 +610,9 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// feature 47: the writing days gathered in memory are written before the app closes
+app.on('before-quit', () => writingLog.flushSync())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

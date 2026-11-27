@@ -23,10 +23,12 @@ export type PaneContent =
   | { kind: 'glossary' }
   /** writing review with Claude (feature 19), as a pane since round 11 */
   | { kind: 'review' }
+  /** the plan beside the writing (feature 67): the chapter cards in a narrow column, or the story timeline */
+  | { kind: 'plan' }
 
 /** Kinds that are shown at most once on the screen */
-const SINGLE = new Set(['master', 'pdf', 'web', 'glossary', 'review'])
-const KINDS = ['chapter', 'master', 'alt', 'pdf', 'web', 'material', 'glossary', 'review']
+const SINGLE = new Set(['master', 'pdf', 'web', 'glossary', 'review', 'plan'])
+const KINDS = ['chapter', 'master', 'alt', 'pdf', 'web', 'material', 'glossary', 'review', 'plan']
 
 export interface Pane {
   /** Stable id, so moving a pane does not reload its editor */
@@ -146,7 +148,7 @@ function mapLeaf(n: PaneNode, key: string, fn: (leaf: PaneNode, parent: (PaneNod
 }
 
 /** Puts a new leaf next to `target` (after it), beside ('h') or below ('v') */
-function insertBeside(tree: PaneNode, target: string, key: string, dir: 'h' | 'v'): PaneNode {
+function insertBeside(tree: PaneNode, target: string, key: string, dir: 'h' | 'v', share = 0.5): PaneNode {
   const leaf: PaneNode = { t: 'leaf', key }
   // the target's own split already goes this way: the new pane joins it, taking an even share
   const parentOf = (n: PaneNode): (PaneNode & { t: 'split' }) | null => {
@@ -169,15 +171,18 @@ function insertBeside(tree: PaneNode, target: string, key: string, dir: 'h' | 'v
     const replace = (n: PaneNode): PaneNode => (n === parent ? { ...parent, kids, sizes } : n.t === 'split' ? { ...n, kids: n.kids.map(replace) } : n)
     return replace(tree)
   }
-  if (tree.t === 'leaf' && tree.key === target) return { t: 'split', dir, kids: [tree, leaf], sizes: [0.5, 0.5] }
-  return mapLeaf(tree, target, (l) => ({ t: 'split', dir, kids: [l, leaf], sizes: [0.5, 0.5] }))
+  if (tree.t === 'leaf' && tree.key === target) return { t: 'split', dir, kids: [tree, leaf], sizes: [1 - share, share] }
+  return mapLeaf(tree, target, (l) => ({ t: 'split', dir, kids: [l, leaf], sizes: [1 - share, share] }))
 }
 
-/** Splits pane `index` in two: the new pane (showing `content`) goes beside it or below it */
-export function splitPane(layout: PaneLayout, index: number, content: PaneContent, dir: 'h' | 'v'): PaneLayout {
+/**
+ * Splits pane `index` in two: the new pane (showing `content`) goes beside it or below it.
+ * `share` is the new pane's part of the two (the plan pane of feature 67 starts narrow).
+ */
+export function splitPane(layout: PaneLayout, index: number, content: PaneContent, dir: 'h' | 'v', share = 0.5): PaneLayout {
   if (layout.panes.length >= MAX_PANES || !layout.panes[index]) return layout
   const key = newPaneKey()
-  const tree = insertBeside(treeOf(layout), layout.panes[index].key, key, dir)
+  const tree = insertBeside(treeOf(layout), layout.panes[index].key, key, dir, Math.min(1 - MIN_SIZE, Math.max(MIN_SIZE, share)))
   return withTree(layout, tree, [...layout.panes, { key, content }])
 }
 

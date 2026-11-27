@@ -18,13 +18,16 @@ export function FocusBar({
   bookWords,
   theme,
   onTheme,
-  onExit
+  onExit,
+  onSounds
 }: {
   chapterWords: number | null
   bookWords: number
   theme: Theme
   onTheme: () => void
   onExit: () => void
+  /** Feature 56: music and background sounds */
+  onSounds?: () => void
 }) {
   const { focus } = usePrefs()
   const [shown, setShown] = useState(true)
@@ -65,6 +68,12 @@ export function FocusBar({
         <Icon name={theme === 'light' ? 'moon' : 'sun'} />
         {theme === 'light' ? 'כהה' : 'בהיר'}
       </button>
+      {onSounds && (
+        <button className="ib" title="מוזיקה וצלילי רקע" onClick={(e) => (e.stopPropagation(), onSounds())}>
+          <Icon name="music" />
+          צלילים
+        </button>
+      )}
       <span className="sep" />
       <button className="ib" title="יציאה ממצב ממוקד (Esc)" onClick={onExit}>
         <Icon name="close" />
