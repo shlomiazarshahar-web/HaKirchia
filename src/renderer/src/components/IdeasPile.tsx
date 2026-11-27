@@ -157,7 +157,7 @@ export function IdeasPile({ ideas, onSave, onToChapter, canPlace }: Props) {
 }
 
 /** A field of an idea while it is edited: Enter (in the name) or leaving the box saves, Esc cancels */
-function EditField({ value, onDone, multiline, className, placeholder, label, fresh }: { value: string; onDone: (v: string) => void; multiline?: boolean; className: string; placeholder: string; label: string; fresh?: boolean }) {
+export function EditField({ value, onDone, multiline, className, placeholder, label, fresh }: { value: string; onDone: (v: string) => void; multiline?: boolean; className: string; placeholder: string; label: string; fresh?: boolean }) {
   const [v, setV] = useState(value)
   const done = useRef(false)
   const ref = useRef<HTMLTextAreaElement & HTMLInputElement>(null)

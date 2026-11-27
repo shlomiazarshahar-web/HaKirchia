@@ -15,7 +15,7 @@ import { useWordCounts } from '../wordcounts'
 import { Icon } from './Icons'
 import { TextInput } from './Background'
 import { RenameField } from './Binder'
-import { IDEA_DRAG_TYPE } from './IdeasPile'
+import { EditField, IDEA_DRAG_TYPE } from './IdeasPile'
 
 type ColKey = 'synopsis' | 'status' | 'labels' | 'words' | 'when' | 'people' | `c:${string}`
 const BUILT_IN: [ColKey, string, string][] = [
@@ -23,7 +23,7 @@ const BUILT_IN: [ColKey, string, string][] = [
   ['status', 'סטטוס', ''],
   ['labels', 'תוויות', 'תוויות הצבע של הפרק'],
   ['words', 'מילים', 'מספר המילים בפרק (נתון בלבד)'],
-  ['when', 'זמן בסיפור', 'מתי הפרק קורה, לפי האירועים בציר הזמן שמקושרים אליו'],
+  ['when', 'מתי בעלילה', 'מתי הפרק קורה בסיפור עצמו (למשל "אביב 1947"), לפי האירועים בציר הזמן שקישרתם אליו. נכתב בציר הזמן, לא כאן'],
   ['people', 'דמויות', 'הדמויות מחומרי הרקע שמוזכרות בטקסט של הפרק']
 ]
 const HIDDEN_KEY = 'hakirchia.table.hidden'
@@ -62,6 +62,7 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
   const [sort, setSort] = useState<Sort>(null)
   const [menu, setMenu] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
+  const [editing, setEditing] = useState<{ id: string; key: ColKey } | null>(null)
   const [drag, setDrag] = useState<string | null>(null)
   const [over, setOver] = useState<Over | null>(null)
   const target = useRef<DropTarget | null>(null)
@@ -165,7 +166,7 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
   const cell = (ch: Chapter, key: ColKey) => {
     switch (key) {
       case 'synopsis':
-        return <TextInput multiline className="t-syn" value={ch.synopsis} placeholder="במה עוסק הפרק?" aria-label={`התקציר של ${ch.title}`} onDone={(synopsis) => onMeta(ch.id, { synopsis })} />
+        return editCell(ch, 'synopsis', ch.synopsis, 'במה עוסק הפרק?', `התקציר של ${ch.title}`, (synopsis) => onMeta(ch.id, { synopsis }))
       case 'status':
         return (
           <label className="t-status" style={{ color: `var(--s-${ch.status})` }}>
@@ -207,10 +208,20 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
       }
       default: {
         const id = key.slice(2)
-        return <TextInput multiline className="t-custom" value={ch.custom?.[id] ?? ''} aria-label={`${cols.find((c) => c.id === id)?.name ?? ''} · ${ch.title}`} onDone={(v) => onMeta(ch.id, { custom: { ...(ch.custom ?? {}), [id]: v } })} />
+        return editCell(ch, key, ch.custom?.[id] ?? '', '', `${cols.find((c) => c.id === id)?.name ?? ''} · ${ch.title}`, (v) => onMeta(ch.id, { custom: { ...(ch.custom ?? {}), [id]: v } }))
       }
     }
   }
+
+  /** A cell with text: shown as text (so the whole row can be dragged), a click edits it */
+  const editCell = (ch: Chapter, key: ColKey, value: string, placeholder: string, label: string, save: (v: string) => void) =>
+    editing?.id === ch.id && editing.key === key ? (
+      <EditField multiline className="t-edit" value={value} placeholder={placeholder} label={label} onDone={(v) => (setEditing(null), v !== value && save(v))} />
+    ) : (
+      <button className={`t-text${value.trim() ? '' : ' empty'}`} dir="auto" title="לחיצה לעריכה" aria-label={label} onClick={() => setEditing({ id: ch.id, key })}>
+        {value.trim() || placeholder || ' '}
+      </button>
+    )
 
   const row = (ch: Chapter) => {
     const n = number.get(ch.id)!
@@ -222,6 +233,14 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
       <tr
         key={ch.id}
         className={cls.join(' ')}
+        draggable={!sort && renaming !== ch.id && editing?.id !== ch.id}
+        title={sort ? undefined : 'גרירת השורה משנה את המקום של הפרק'}
+        onDragStart={(e) => {
+          setDrag(ch.id)
+          e.dataTransfer.effectAllowed = 'move'
+          e.dataTransfer.setData('text/plain', ch.id)
+        }}
+        onDragEnd={() => (setDrag(null), mark(null, null))}
         onDragOver={(e) => overRow(e, ch.id)}
         onDrop={drop}
         onContextMenu={(e) => {
@@ -233,19 +252,7 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
         <td className="col-n">
           <div className="t-n">
           {!sort && (
-            <span
-              className="grip"
-              draggable
-              title="גרירה משנה את המקום של הפרק"
-              onDragStart={(e) => {
-                setDrag(ch.id)
-                e.dataTransfer.effectAllowed = 'move'
-                e.dataTransfer.setData('text/plain', ch.id)
-                const tr = (e.currentTarget as HTMLElement).closest('tr')
-                if (tr) e.dataTransfer.setDragImage(tr, 20, 16)
-              }}
-              onDragEnd={() => (setDrag(null), mark(null, null))}
-            >
+            <span className="grip" aria-hidden="true">
               <Icon name="grip" size={14} />
             </span>
           )}
@@ -373,8 +380,8 @@ export function PlanTable({ book, modeSwitch, barExtra, trialFrom, onOpen, onMet
           {sort
             ? 'ממוין רק לתצוגה. לחיצה נוספת על הכותרת מחזירה לסדר הספר'
             : trialFrom
-              ? 'סדר ניסיוני: גרירת שורה (בידית) לא משנה את הספר עד שלוחצים "להחיל על הספר"'
-              : 'לחיצה על כותרת ממיינת. גרירת שורה בידית משנה את סדר הפרקים בספר'}
+              ? 'סדר ניסיוני: גרירת שורה לא משנה את הספר עד שלוחצים "להחיל על הספר"'
+              : 'לחיצה על כותרת ממיינת. גרירת שורה משנה את סדר הפרקים בספר'}
         </span>
       </div>
       {!book.chapters.length ? (

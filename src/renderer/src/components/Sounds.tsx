@@ -3,7 +3,7 @@
 // Lofi Girl stream) plays in a small player inside the panel. Closing the panel leaves everything
 // playing; "השתקת הכול" stops it all.
 
-import { createElement, useEffect, useRef, useState } from 'react'
+import { createElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { anyPlaying, setMaster, setVolume, setYoutube, setYoutubeOn, SOUNDS, stopAll, toggleSound, useSounds, volumeOf } from '../sounds'
 import { PLAYER_SCHEME, youtubeParts, youtubePlayer, youtubeWatch } from '@shared/sounds'
 import { Icon } from './Icons'
@@ -76,6 +76,17 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
     return () => wv.removeEventListener('console-message', onMsg)
   }, [src, plain])
 
+  // Round 14: the panel opens right above the button that opened it (status bar or focus bar)
+  const [place, setPlace] = useState<CSSProperties | undefined>(undefined)
+  useLayoutEffect(() => {
+    if (!open) return
+    const btn = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null
+    if (!btn) return
+    const r = btn.getBoundingClientRect()
+    const w = Math.min(340, window.innerWidth - 24)
+    const left = Math.max(12, Math.min(r.right - w, window.innerWidth - w - 12))
+    setPlace({ left, bottom: Math.max(12, window.innerHeight - r.top + 8), width: w })
+  }, [open])
   useEffect(() => setLink(s.settings.youtube), [s.settings.youtube])
   useEffect(() => {
     if (!open) return
@@ -96,7 +107,7 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
 
   if (!open && !embed) return null
   return (
-    <div className={`sounds-pop${open ? '' : ' away'}${focus ? ' infocus' : ''}`} role="dialog" aria-label="מוזיקה וצלילי רקע" aria-hidden={!open} onClick={(e) => e.stopPropagation()}>
+    <div className={`sounds-pop${open ? '' : ' away'}${focus && !place ? ' infocus' : ''}`} style={place} role="dialog" aria-label="מוזיקה וצלילי רקע" aria-hidden={!open} onClick={(e) => e.stopPropagation()}>
       <div className="snd-head">
         <h3>
           <Icon name="music" /> צלילים בזמן הכתיבה
