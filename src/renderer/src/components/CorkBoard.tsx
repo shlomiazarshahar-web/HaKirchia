@@ -10,7 +10,8 @@ import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type R
 import type { Book, Chapter, ChapterStatus, OutlineNode, PartNode } from '@shared/types'
 import { STATUS_LABELS } from '@shared/types'
 import { moveNode, updatePart, type DropTarget } from '@shared/outline'
-import { api, onDiskChange } from '../api'
+import { useWordCounts } from '../wordcounts'
+import { IDEA_DRAG_TYPE } from './IdeasPile'
 import { Icon } from './Icons'
 import { RenameField } from './Binder'
 import { useImageUrl } from '../background'
@@ -32,6 +33,12 @@ interface Props {
   onStartRename: (id: string | null) => void
   /** Round 7: switches between cards, timeline and inspiration */
   modeSwitch?: ReactNode
+  /** Feature 61: the board shows a trial order; the chapter's number in the book itself, by id */
+  trialFrom?: Map<string, number>
+  /** Feature 59: an idea from the pile was dropped on the board */
+  onIdeaDrop?: (ideaId: string, target: DropTarget) => void
+  /** Shown in the bar after the filters (the trial order's buttons) */
+  barExtra?: ReactNode
 }
 
 /** All chapters, one status, or one color label (feature 44: "l:<id>") */
@@ -52,9 +59,8 @@ function groups(outline: OutlineNode[]): Group[] {
 
 type Over = { id: string; mark: 'before' | 'after' | 'into' }
 
-export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMenu, onPartMenu, onWords, renamingId, onRename, onStartRename, modeSwitch }: Props) {
+export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMenu, onPartMenu, onWords, renamingId, onRename, onStartRename, modeSwitch, trialFrom, onIdeaDrop, barExtra }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
-  const [words, setWords] = useState<Record<string, number>>({})
   const [drag, setDrag] = useState<string | null>(null)
   const [over, setOver] = useState<Over | null>(null)
   const target = useRef<DropTarget | null>(null)
@@ -66,23 +72,8 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
   const cover = new Map<string, string>()
   for (const im of book.images ?? []) if (im.chapterId && !cover.has(im.chapterId)) cover.set(im.chapterId, im.file)
   const number = new Map(book.chapters.map((c, i) => [c.id, i + 1]))
-  const fileKey = book.chapters.map((c) => c.id + c.file).join('|')
 
-  // Word counts come from the files, so they are right even for chapters changed in Word
-  useEffect(() => {
-    let alive = true
-    const load = () =>
-      api.wordCounts(book.path).then((r) => {
-        if (alive && r.ok && r.value) setWords(r.value)
-      })
-    void load()
-    const offs = book.chapters.map((c) => onDiskChange(book.path, c.id, load))
-    return () => {
-      alive = false
-      offs.forEach((off) => off())
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book.path, fileKey])
+  const words = useWordCounts(book)
 
   const total = book.chapters.reduce((a, c) => a + (words[c.id] ?? 0), 0)
   useEffect(() => onWords(total), [total, onWords])
@@ -92,10 +83,22 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
     setOver(null)
     target.current = null
   }
+  // an idea dragged from the pile ends outside the board: forget the drop mark
+  useEffect(() => {
+    if (!onIdeaDrop) return
+    const end = () => (setOver(null), (target.current = null))
+    window.addEventListener('dragend', end)
+    return () => window.removeEventListener('dragend', end)
+  }, [onIdeaDrop])
+  /** Feature 59: an idea card from the pile is being dragged over the board */
+  const isIdea = (e: DragEvent) => !!onIdeaDrop && e.dataTransfer.types.includes(IDEA_DRAG_TYPE)
   const drop = (e: DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (drag && target.current) {
+    if (isIdea(e)) {
+      const id = e.dataTransfer.getData(IDEA_DRAG_TYPE)
+      if (id && target.current) onIdeaDrop!(id, target.current)
+    } else if (drag && target.current) {
       const next = moveNode(book.outline, { type: 'chapter', id: drag }, target.current)
       if (JSON.stringify(next) !== JSON.stringify(book.outline)) onOutline(next)
     }
@@ -108,7 +111,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
 
   /** Over a card: its right half (reading side) drops before it, its left half after it. */
   const overCard = (e: DragEvent<HTMLElement>, id: string) => {
-    if (!drag) return
+    if (!drag && !isIdea(e)) return
     e.preventDefault()
     e.stopPropagation()
     if (drag === id) return mark(null, null)
@@ -119,7 +122,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
     mark({ id, mark: kind }, { kind, ref: { type: 'chapter', id } })
   }
   const overPart = (e: DragEvent<HTMLElement>, part: PartNode, at: 'start' | 'end') => {
-    if (!drag) return
+    if (!drag && !isIdea(e)) return
     e.preventDefault()
     e.stopPropagation()
     mark({ id: part.id, mark: 'into' }, { kind: 'into', partId: part.id, at })
@@ -171,7 +174,10 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
       >
         {cover.get(ch.id) && <CardCover bookPath={book.path} file={cover.get(ch.id)!} />}
         <div className="num">
-          <span>פרק {number.get(ch.id)}</span>
+          <span>
+            פרק {number.get(ch.id)}
+            {trialFrom && trialFrom.get(ch.id) !== number.get(ch.id) && <span className="was" title="המקום שלו בספר עצמו"> · עכשיו {trialFrom.get(ch.id)}</span>}
+          </span>
           <span className="wc">{n === undefined ? '' : `${n.toLocaleString('he-IL')} מילים`}</span>
         </div>
         {renamingId === ch.id ? (
@@ -256,7 +262,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
     )
   }
 
-  const addCard = (partId?: string, label = 'פרק חדש') => (
+  const addCard = (partId?: string, label = 'פרק חדש') => trialFrom ? null : (
     <button key={`add-${partId ?? 'book'}`} className="card add" onClick={() => onAdd(partId)}>
       <Icon name="plus" size={22} />
       <span>{label}</span>
@@ -268,7 +274,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
   const shown = book.chapters.filter((c) => visible(c.id)).length
 
   return (
-    <section className="board" aria-label="לוח שעם" onClick={() => statusMenu && setStatusMenu(null)}>
+    <section className={`board${trialFrom ? ' trial' : ''}`} aria-label="לוח שעם" onClick={() => statusMenu && setStatusMenu(null)}>
       <div className="bbar">
         {modeSwitch ?? <h2>{book.title} · לוח שעם</h2>}
         <div className="fchips" role="group" aria-label="סינון לפי סטטוס">
@@ -289,8 +295,11 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
             </button>
           ))}
         </div>
+        {barExtra}
         <span className="grow" />
-        <span className="bhint">גרירת כרטיס משנה את סדר הפרקים בכל הספר, גם בעץ ובשמות הקבצים</span>
+        <span className="bhint">
+          {trialFrom ? 'סדר ניסיוני: הגרירה כאן לא משנה את הספר עד שלוחצים "להחיל על הספר"' : 'גרירת כרטיס משנה את סדר הפרקים בכל הספר, גם בעץ ובשמות הקבצים'}
+        </span>
       </div>
 
       {book.chapters.length === 0 && filter === 'all' && <div className="cards">{addCard()}</div>}
@@ -359,10 +368,14 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
                   onDragOver={(e) => overPart(e, p, 'end')}
                   onDrop={drop}
                 >
-                  <button className="addin" onClick={() => onAdd(p.id)}>
-                    <Icon name="plus" size={22} />
-                    <span>{p.children.length ? 'פרק חדש בחלק' : 'החלק ריק. אפשר לגרור לכאן פרק, או להוסיף פרק חדש'}</span>
-                  </button>
+                  {trialFrom ? (
+                    <span className="addin">{p.children.length ? 'גרירה לכאן: סוף החלק' : 'החלק ריק. אפשר לגרור לכאן פרק'}</span>
+                  ) : (
+                    <button className="addin" onClick={() => onAdd(p.id)}>
+                      <Icon name="plus" size={22} />
+                      <span>{p.children.length ? 'פרק חדש בחלק' : 'החלק ריק. אפשר לגרור לכאן פרק, או להוסיף פרק חדש'}</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -374,16 +387,20 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
           <div
             className={`card add slot${over?.id === '__end' ? ' over-into' : ''}`}
             onDragOver={(e) => {
-              if (!drag) return
+              if (!drag && !isIdea(e)) return
               e.preventDefault()
               mark({ id: '__end', mark: 'into' }, { kind: 'end' })
             }}
             onDrop={drop}
           >
-            <button className="addin" onClick={() => onAdd()}>
-              <Icon name="plus" size={22} />
-              <span>פרק חדש מחוץ לחלקים</span>
-            </button>
+            {trialFrom ? (
+              <span className="addin">גרירה לכאן: סוף הספר, מחוץ לחלקים</span>
+            ) : (
+              <button className="addin" onClick={() => onAdd()}>
+                <Icon name="plus" size={22} />
+                <span>פרק חדש מחוץ לחלקים</span>
+              </button>
+            )}
           </div>
         </div>
       )}

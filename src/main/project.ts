@@ -13,11 +13,12 @@ import * as drafts from './drafts'
 import * as writingLog from './writinglog'
 import * as bg from './background'
 import { normalizeBackground, type GlossaryEntry, type InspirationGroup, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
-import { flatten, normalizeOutline } from '../shared/outline'
+import { flatten, moveNode, normalizeOutline, type DropTarget } from '../shared/outline'
 import { chapterParagraphCount, chapterParagraphTexts, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
 import { normalizePublish, type PublishSettings } from '../shared/publish'
 import { normalizeLabels, type ChapterLabel } from '../shared/labels'
+import { cleanCustom, normalizeColumns, normalizeIdeas, normalizePlan, type Idea, type TableColumn } from '../shared/plan'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
@@ -45,6 +46,10 @@ interface Manifest extends bg.BackgroundManifest {
   publish?: PublishSettings
   /** Color labels for chapters (feature 44) */
   labels?: ChapterLabel[]
+  /** Round 14: idea pile, the table's own columns, a trial chapter order */
+  ideas?: Idea[]
+  tableColumns?: TableColumn[]
+  trialOutline?: OutlineNode[]
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -113,6 +118,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   sources: Object.fromEntries(Object.entries(m.sources ?? {}).filter(([id]) => m.chapters.some((c) => c.id === id))),
   publish: normalizePublish(m.publish),
   labels: normalizeLabels(m.labels),
+  ...normalizePlan(m, m.chapters),
   ...normalizeBackground(m, m.chapters.map((c) => c.id)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
@@ -286,7 +292,7 @@ export function deleteChapter(bookPath: string, id: string) {
   })
 }
 
-export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }) {
+export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[]; custom?: Record<string, string> }) {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
     const ch = m.chapters.find((c) => c.id === id)
@@ -301,8 +307,78 @@ export function updateChapterMeta(bookPath: string, id: string, meta: { status?:
       if (ids.length) ch.labels = ids
       else delete ch.labels
     }
+    if (meta.custom && typeof meta.custom === 'object') {
+      const c = cleanCustom({ ...(ch.custom ?? {}), ...meta.custom }, normalizeColumns(m.tableColumns))
+      if (c) ch.custom = c
+      else delete ch.custom
+    }
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
+  })
+}
+
+/**
+ * Round 14: saves the idea pile, the table's own columns, or the trial order (null ends the trial).
+ * A column that was removed takes its values off every chapter.
+ */
+export function setPlan(bookPath: string, patch: { ideas?: Idea[]; tableColumns?: TableColumn[]; trialOutline?: OutlineNode[] | null }): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (patch.ideas) {
+      const list = normalizeIdeas(patch.ideas)
+      if (list.length) m.ideas = list
+      else delete m.ideas
+    }
+    if (patch.tableColumns) {
+      const cols = normalizeColumns(patch.tableColumns)
+      if (cols.length) m.tableColumns = cols
+      else delete m.tableColumns
+      for (const ch of m.chapters) {
+        const c = cleanCustom(ch.custom, cols)
+        if (c) ch.custom = c
+        else delete ch.custom
+      }
+    }
+    if (patch.trialOutline === null) delete m.trialOutline
+    else if (patch.trialOutline) m.trialOutline = normalizePlan({ trialOutline: patch.trialOutline }, m.chapters).trialOutline
+    await writeManifest(bookPath, m)
+    return toBook(bookPath, m)
+  })
+}
+
+/** Feature 61: the trial order becomes the book's order (files get new numbers), and the trial ends. */
+export function applyTrialOrder(bookPath: string) {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    if (m.trialOutline) m.outline = m.trialOutline
+    delete m.trialOutline
+    fixup(m)
+    await writeManifest(bookPath, m)
+    const notice = await syncFileNames(bookPath, m)
+    return { book: toBook(bookPath, m), notice }
+  })
+}
+
+/**
+ * Feature 59: an idea from the pile becomes a chapter: its title is the chapter's name, its text the
+ * synopsis. Put where it was dropped (before or after a chapter, into a part), else at the end.
+ */
+export function ideaToChapter(bookPath: string, ideaId: string, target?: DropTarget) {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const idea = normalizeIdeas(m.ideas).find((x) => x.id === ideaId)
+    if (!idea) throw new Error('הרעיון לא נמצא בערימה')
+    const { chapter } = await addChapterUnlocked(bookPath, m, idea.title.trim() || idea.text.trim().split(/\s+/).slice(0, 6).join(' ') || 'פרק חדש')
+    chapter.synopsis = idea.text
+    m.ideas = normalizeIdeas(m.ideas).filter((x) => x.id !== ideaId)
+    if (!m.ideas.length) delete m.ideas
+    if (target) {
+      m.outline = moveNode(m.outline ?? [], { type: 'chapter', id: chapter.id }, target)
+      fixup(m)
+    }
+    await writeManifest(bookPath, m)
+    const notice = await syncFileNames(bookPath, m)
+    return { book: toBook(bookPath, m), chapterId: chapter.id, notice }
   })
 }
 
