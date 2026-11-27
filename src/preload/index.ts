@@ -125,6 +125,8 @@ const api = {
   setAccent: (accent: string): Promise<void> => ipcRenderer.invoke('settings:accent', accent),
   /** Feature 56: background sounds and the YouTube player */
   setSounds: (s: SoundSettings): Promise<void> => ipcRenderer.invoke('settings:sounds', s),
+  /** The small YouTube player page's address, for way 1 or 2 (main/music.ts); null if that way is not available */
+  musicPlayer: (way: number): Promise<string | null> => ipcRenderer.invoke('music:player', way),
   /** Full screen on/off (focused writing mode) */
   setFullScreen: (on: boolean): Promise<void> => ipcRenderer.invoke('window:fullscreen', on),
   /** Remembers where the writer stopped in this book, or forgets it (null) */

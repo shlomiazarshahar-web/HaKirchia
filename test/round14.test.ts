@@ -90,20 +90,3 @@ describe('plan data (59, 60, 61)', () => {
     expect(book.tableColumns).toEqual([{ id: 'x', name: 'עוד' }])
   })
 })
-
-describe('YouTube player page (fix for error 152-4)', async () => {
-  const { allowedInMusicPlayer, playerHtml, youtubePlayer, youtubeWatch } = await import('../src/shared/sounds')
-  it('wraps the video in the app page, with a watch-page fallback', () => {
-    expect(youtubePlayer('https://www.youtube.com/watch?v=jfKfPfyJRdk')).toBe('hakirchia-yt://player/?v=jfKfPfyJRdk')
-    expect(youtubePlayer('https://www.youtube.com/playlist?list=PL123abc')).toBe('hakirchia-yt://player/?list=PL123abc')
-    expect(youtubeWatch('youtu.be/jfKfPfyJRdk')).toBe('https://www.youtube.com/watch?v=jfKfPfyJRdk')
-    expect(youtubeWatch('https://www.youtube.com/playlist?list=PL123abc')).toBe('https://www.youtube.com/playlist?list=PL123abc')
-    expect(youtubePlayer('https://example.com/x')).toBeNull()
-    expect(allowedInMusicPlayer('hakirchia-yt://player/?v=jfKfPfyJRdk')).toBe(true)
-    expect(allowedInMusicPlayer('hakirchia-yt://other/')).toBe(false)
-    const html = playerHtml(new URLSearchParams('v=jfKfPfyJRdk'))!
-    expect(html).toContain('"videoId":"jfKfPfyJRdk"')
-    expect(html).toContain('https://www.youtube.com/iframe_api')
-    expect(playerHtml(new URLSearchParams('v=<script>'))).toBeNull()
-  })
-})

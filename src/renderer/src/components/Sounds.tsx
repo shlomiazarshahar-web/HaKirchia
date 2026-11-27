@@ -5,7 +5,8 @@
 
 import { createElement, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { anyPlaying, setMaster, setVolume, setYoutube, setYoutubeOn, SOUNDS, stopAll, toggleSound, useSounds, volumeOf } from '../sounds'
-import { PLAYER_SCHEME, youtubeParts, youtubePlayer, youtubeWatch } from '@shared/sounds'
+import { PLAYER_SCHEME, PLAYER_WAYS, youtubeParts, youtubePlayer, youtubeWatch } from '@shared/sounds'
+import { api } from '../api'
 import { Icon } from './Icons'
 
 /** The status bar's button */
@@ -24,21 +25,34 @@ interface WebviewEl extends HTMLElement {
   executeJavaScript: (code: string) => Promise<unknown>
 }
 
-/** Round 14: after the small player was refused by YouTube itself (not by one video), go straight to the normal page */
-const PLAIN_KEY = 'hakirchia.youtube.plain'
-const prefersPlain = () => {
+/**
+ * The small player's page is served from a real web address, in one of two ways (main/music.ts).
+ * The way that last played is remembered and tried first next time.
+ */
+const WAY_KEY = 'hakirchia.youtube.way'
+const rememberedWay = (): number => {
   try {
-    return localStorage.getItem(PLAIN_KEY) === '1'
+    // the old "always open the normal YouTube page" choice (round 14) is no longer kept
+    localStorage.removeItem('hakirchia.youtube.plain')
+    const w = Number(localStorage.getItem(WAY_KEY))
+    return w >= 1 && w <= PLAYER_WAYS ? w : 1
   } catch {
-    return false
+    return 1
   }
 }
-const rememberPlain = (on: boolean) => {
+const rememberWay = (way: number) => {
   try {
-    localStorage.setItem(PLAIN_KEY, on ? '1' : '0')
+    localStorage.setItem(WAY_KEY, String(way))
   } catch {
     /* fine */
   }
+}
+
+/** What to tell the writer when YouTube refused to play in every way */
+function refusedNote(code: string): string {
+  if (code === '100') return 'הסרטון לא נמצא ביוטיוב (אולי נמחק או שהוא פרטי).'
+  if (code === '101' || code === '150') return 'בעלי הסרטון הזה לא מרשים לנגן אותו מחוץ ליוטיוב. אפשר לנסות סרטון אחר, או לפתוח אותו כדף יוטיוב רגיל.'
+  return `יוטיוב לא הסכים לנגן בנגן הקטן (קוד ${code}). אפשר לפתוח את הסרטון כדף יוטיוב רגיל.`
 }
 
 /**
@@ -49,32 +63,55 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
   const s = useSounds()
   const [link, setLink] = useState(s.settings.youtube)
   const [err, setErr] = useState<string | null>(null)
-  const [plain, setPlain] = useState(prefersPlain)
+  const [plain, setPlain] = useState(false)
   const [note, setNote] = useState<string | null>(null)
+  // which way to try: the remembered one first, then the others
+  const [first] = useState(rememberedWay)
+  const [tried, setTried] = useState(0)
+  const [base, setBase] = useState<{ way: number; url: string } | null>(null)
+  const way = ((first - 1 + tried) % PLAYER_WAYS) + 1
   const ref = useRef<WebviewEl | null>(null)
-  const embed = s.youtubeOn ? youtubePlayer(s.settings.youtube) : null
-  const src = embed && plain ? youtubeWatch(s.settings.youtube) : embed
+  const embed = s.youtubeOn && base?.way === way ? youtubePlayer(s.settings.youtube, base.url) : null
+  const src = s.youtubeOn && plain ? youtubeWatch(s.settings.youtube) : embed
 
-  // The small player says on its console whether YouTube agreed to play; if not, the normal page
+  // Where the small player's page is, for the way being tried
+  useEffect(() => {
+    if (!s.youtubeOn || plain || tried >= PLAYER_WAYS || base?.way === way) return
+    let live = true
+    void api.musicPlayer(way).then((url) => {
+      if (!live) return
+      if (url) return setBase({ way, url })
+      if (tried + 1 >= PLAYER_WAYS) setNote('הנגן הקטן לא הצליח לעלות. אפשר לפתוח את הסרטון כדף יוטיוב רגיל.')
+      setTried(tried + 1)
+    })
+    return () => {
+      live = false
+    }
+  }, [s.youtubeOn, plain, tried, way, base])
+
+  // The small player says on its console whether YouTube agreed to play; if not, the next way
   useEffect(() => {
     const wv = ref.current
     if (!wv || !src || plain) return
     const onMsg = (e: Event) => {
       const m = String((e as Event & { message?: string }).message ?? '')
-      if (!m.startsWith(`${PLAYER_SCHEME}:error:`)) return
-      const code = m.slice(`${PLAYER_SCHEME}:error:`.length)
-      if (code === 'offline') return setNote('אין חיבור ליוטיוב. צריך אינטרנט כדי לנגן.')
-      // 101/150: the owner of this video does not allow playing it in other sites
-      if (code === '101' || code === '150') setNote('בעלי הסרטון הזה לא מרשים לנגן אותו מחוץ ליוטיוב, אז הוא נפתח כדף יוטיוב רגיל.')
-      else {
-        setNote('הנגן הקטן לא הצליח, אז הסרטון נפתח כדף יוטיוב רגיל (ומעכשיו כך תמיד).')
-        rememberPlain(true)
+      if (!m.startsWith(`${PLAYER_SCHEME}:`)) return
+      const what = m.slice(PLAYER_SCHEME.length + 1)
+      if (what === 'playing') {
+        rememberWay(way)
+        return setNote(null)
       }
-      setPlain(true)
+      if (!what.startsWith('error:')) return
+      const code = what.slice('error:'.length)
+      if (code === 'offline') return setNote('אין חיבור ליוטיוב. צריך אינטרנט כדי לנגן.')
+      // 100: no such video, 2: a bad link. Another way would not help.
+      if (code === '100' || code === '2') return setNote(refusedNote(code))
+      if (tried + 1 < PLAYER_WAYS) setTried(tried + 1)
+      else setNote(refusedNote(code))
     }
     wv.addEventListener('console-message', onMsg)
     return () => wv.removeEventListener('console-message', onMsg)
-  }, [src, plain])
+  }, [src, plain, way, tried])
 
   // Round 14: the panel opens right above the button that opened it (status bar or focus bar)
   const [place, setPlace] = useState<CSSProperties | undefined>(undefined)
@@ -101,11 +138,12 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
     if (!youtubeParts(u)) return setErr('זה לא נראה כמו קישור ליוטיוב (למשל youtube.com/watch?v=…)')
     setErr(null)
     setNote(null)
-    setPlain(prefersPlain())
+    setPlain(false)
+    setTried(0)
     setYoutube(u, true)
   }
 
-  if (!open && !embed) return null
+  if (!open && !s.youtubeOn) return null
   return (
     <div className={`sounds-pop${open ? '' : ' away'}${focus && !place ? ' infocus' : ''}`} style={place} role="dialog" aria-label="מוזיקה וצלילי רקע" aria-hidden={!open} onClick={(e) => e.stopPropagation()}>
       <div className="snd-head">
@@ -169,6 +207,14 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
             ))}
           </div>
         )}
+        {s.youtubeOn && !src && note && (
+          <>
+            <div className="snd-note">{note}</div>
+            <button className="ib snd-plain" onClick={() => (setNote(null), setPlain(true))}>
+              פתיחה כדף יוטיוב רגיל
+            </button>
+          </>
+        )}
         {src && (
           <>
             <div className="snd-player">
@@ -186,8 +232,8 @@ export function SoundsPanel({ open, onClose, focus }: { open: boolean; onClose: 
               className="ib snd-plain"
               title="אם הסרטון לא מתנגן כאן, פותחים אותו כדף יוטיוב רגיל בתוך החלון"
               onClick={() => {
-                rememberPlain(!plain)
                 setNote(null)
+                setTried(0)
                 setPlain(!plain)
               }}
             >
