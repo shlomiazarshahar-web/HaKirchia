@@ -7,6 +7,7 @@ import type { ChapterSource } from './translation'
 import type { PublishSettings } from './publish'
 import type { Background } from './background'
 import type { BackupSettings } from './backup'
+import type { ChapterLabel } from './labels'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -19,6 +20,8 @@ export interface Chapter {
   synopsis: string
   /** Feature 53: stays in the binder and the master, but is left out of the reading view and every export */
   noExport?: boolean
+  /** Feature 44: ids of the book's color labels on this chapter */
+  labels?: string[]
 }
 
 /** A part (חלק) groups consecutive chapters, e.g. "חלק ראשון: הנמל". */
@@ -58,6 +61,8 @@ export interface Book extends Background {
   sources: Record<string, ChapterSource>
   /** Front and back pages, author, and page layout for reading and export (features 31, 36, 16) */
   publish: PublishSettings
+  /** Color labels the chapters can carry (feature 44), in the writer's order */
+  labels: ChapterLabel[]
 }
 
 /**
@@ -145,6 +150,21 @@ export interface Settings {
   testUpdates?: boolean
   /** Daily dated copies of each open book (feature 49) */
   backup?: Partial<BackupSettings>
+  /** The app's accent color (round 13): a preset id ('green' is the default) or a color like #1a2b3c */
+  accent?: string
+  /** Feature 56: background sounds and the YouTube player, as last left */
+  sounds?: SoundSettings
+}
+
+/** Feature 56: music and background sounds while writing */
+export interface SoundSettings {
+  /** Volume of each built-in sound that is on (0–1), by its id */
+  on: Record<string, number>
+  /** Volume of all of them together (0–1) */
+  master: number
+  /** The YouTube link last played, and links played before (newest first) */
+  youtube: string
+  recentYoutube: string[]
 }
 
 export interface FocusSettings {

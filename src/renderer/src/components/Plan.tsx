@@ -12,7 +12,7 @@ import { Icon } from './Icons'
 export type PlanMode = 'cards' | 'timeline' | 'inspiration'
 
 /** Switches between the three ways to look at the plan of the book */
-export function PlanSwitch({ mode, onMode }: { mode: PlanMode; onMode: (m: PlanMode) => void }) {
+export function PlanSwitch({ mode, onMode, onBeside }: { mode: PlanMode; onMode: (m: PlanMode) => void; onBeside?: () => void }) {
   const opts: [PlanMode, string, string, string][] = [
     ['cards', 'כרטיסים', 'grid', 'כרטיס לכל פרק, עם תקציר וסטטוס'],
     ['timeline', 'ציר זמן', 'timeline', 'אירועי הסיפור לפי סדר הזמן, מקושרים לפרקים'],
@@ -26,6 +26,12 @@ export function PlanSwitch({ mode, onMode }: { mode: PlanMode; onMode: (m: PlanM
           {label}
         </button>
       ))}
+      {onBeside && mode !== 'inspiration' && (
+        <button className="seg-beside" title="התצוגה הזאת בחלון צר ליד הכתיבה (תכנון בצד)" onClick={onBeside}>
+          <Icon name="cards" size={15} />
+          ליד הכתיבה
+        </button>
+      )}
     </div>
   )
 }

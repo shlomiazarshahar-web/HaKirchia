@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react'
 import { DEFAULT_FOCUS, type CustomFont, type FocusSettings, type Settings } from '@shared/types'
 import { DEFAULT_TYPOGRAPHY, type TypographySettings } from '@shared/hebrew'
 import { api } from './api'
+import { DEFAULT_ACCENT, normalizeAccent } from '@shared/accent'
 
 interface Prefs {
   customFonts: CustomFont[]
@@ -14,9 +15,11 @@ interface Prefs {
   askStopNote: boolean
   /** Right now: keep the line being written in the middle of the screen (focus mode is on and wants it) */
   typewriterNow: boolean
+  /** The app's accent color (round 13) */
+  accent: string
 }
 
-let prefs: Prefs = { customFonts: [], typography: DEFAULT_TYPOGRAPHY, focus: DEFAULT_FOCUS, askStopNote: true, typewriterNow: false }
+let prefs: Prefs = { customFonts: [], typography: DEFAULT_TYPOGRAPHY, focus: DEFAULT_FOCUS, askStopNote: true, typewriterNow: false, accent: DEFAULT_ACCENT }
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
 
@@ -54,7 +57,8 @@ export function initPrefs(s: Settings): void {
     customFonts: s.customFonts ?? [],
     typography: { ...DEFAULT_TYPOGRAPHY, ...s.typography },
     focus: { ...DEFAULT_FOCUS, ...s.focus },
-    askStopNote: s.askStopNote ?? true
+    askStopNote: s.askStopNote ?? true,
+    accent: normalizeAccent(s.accent)
   }
   emit()
   void registerFonts(prefs.customFonts)
@@ -76,6 +80,12 @@ export function setFocusSettings(patch: Partial<FocusSettings>): void {
   prefs = { ...prefs, focus: { ...prefs.focus, ...patch } }
   emit()
   void api.setFocusSettings(prefs.focus)
+}
+
+export function setAccent(accent: string): void {
+  prefs = { ...prefs, accent: normalizeAccent(accent) }
+  emit()
+  void api.setAccent(prefs.accent)
 }
 
 export function setAskStopNote(on: boolean): void {

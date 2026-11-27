@@ -30,7 +30,7 @@ import {
 import { api } from '../api'
 import { saveKey, setAi, useAi, useAiJob, useAiKey } from '../ai'
 import { bookTexts } from '../background'
-import { applyJump, editorChapter, textBlocks, type JumpTarget } from '../nav'
+import { applyJump, editorChapter, reviewParas, textBlocks, type JumpTarget } from '../nav'
 import { pdfParagraphs } from '../translate'
 import { chapterRange } from '@shared/translation'
 import { Icon } from './Icons'
@@ -51,13 +51,15 @@ function when(ts: number): string {
 }
 
 /** Selected words in the editor, with the chapter they are in */
-function selectionOf(editor: Editor | null): { text: string; chapterId?: string } | null {
+function selectionOf(editor: Editor | null): { text: string; notes: string[]; chapterId?: string } | null {
   if (!editor || editor.isDestroyed) return null
   const { from, to } = editor.state.selection
   if (to - from < 2) return null
-  const text = editor.state.doc.textBetween(from, to, '\n').trim()
+  // footnotes inside the selection come as [^1] marks plus their text (round 13 fix)
+  const { paras, notes } = reviewParas(editor.state.doc, from, to)
+  const text = paras.join('\n').trim()
   if (text.length < 2) return null
-  return { text, chapterId: editorChapter(editor)?.chapterId }
+  return { text, notes, chapterId: editorChapter(editor)?.chapterId }
 }
 
 /** Rough price before sending: Hebrew is about 2.5 characters a token; the answer is guessed */
@@ -191,7 +193,7 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
 // A new review
 // ---------------------------------------------------------------------------
 
-type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'withSource' | 'withHistory'>
+type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'excerptNotes' | 'withSource' | 'withHistory'>
 
 /** Builds the request: the texts are read now (open editors win over the files) */
 export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: ReviewKind[], withBackground: boolean, earlier: Review[] = []): Promise<ReviewRequest | string> {
@@ -200,9 +202,9 @@ export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: Revi
   const history = meta.withHistory && earlier.length ? historyText(earlier, meta, titleOf) || undefined : undefined
   if (target.mode === 'exercise') {
     const ed = target.editor
-    const paras = ed && !ed.isDestroyed ? textBlocks(ed.state.doc).map((b) => b.text) : []
+    const { paras, notes } = ed && !ed.isDestroyed ? reviewParas(ed.state.doc) : { paras: [], notes: [] }
     if (!paras.join('').trim()) return 'התרגיל עדיין ריק'
-    return { scope: 'exercise', texts: [{ title: target.exercise.title, paras }], kinds: k, question: meta.question, exercisePrompt: target.exercise.prompt, history }
+    return { scope: 'exercise', texts: [{ title: target.exercise.title, paras, ...(notes.length ? { notes } : {}) }], kinds: k, question: meta.question, exercisePrompt: target.exercise.prompt, history }
   }
   const { book } = target
   let texts: ReviewText[] = []
@@ -210,11 +212,19 @@ export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: Revi
   if (meta.scope === 'selection') {
     if (!meta.excerpt) return 'לא סומן טקסט'
     contextTitle = book.chapters.find((c) => c.id === meta.targetId)?.title
-    texts = [{ title: contextTitle ?? 'קטע', paras: meta.excerpt.split('\n') }]
+    texts = [{ title: contextTitle ?? 'קטע', paras: meta.excerpt.split('\n'), ...(meta.excerptNotes?.length ? { notes: meta.excerptNotes } : {}) }]
   } else {
     const all = await bookTexts(book, true)
     const pick = meta.scope === 'book' ? book.chapters : book.chapters.filter((c) => c.id === meta.targetId)
-    texts = pick.map((c) => ({ id: c.id, title: c.title, paras: all.chapters.find((x) => x.id === c.id)?.paras ?? [] })).filter((t) => t.paras.join('').trim())
+    texts = pick
+      .map((c): ReviewText => {
+        const doc = all.docs.get(c.id)
+        if (!doc) return { id: c.id, title: c.title, paras: [] }
+        // footnotes as [^1] marks plus their text after the chapter (round 13 fix)
+        const { paras, notes } = reviewParas(doc)
+        return { id: c.id, title: c.title, paras, ...(notes.length ? { notes } : {}) }
+      })
+      .filter((t) => t.paras.join('').trim())
     if (!texts.length) return meta.scope === 'book' ? 'אין עדיין טקסט בספר' : 'הפרק עדיין ריק'
     // translated chapters: the original's paragraphs from the linked PDF, to compare with
     if (meta.withSource)
@@ -320,7 +330,7 @@ function NewReview({
     else if (scope === 'selection') {
       const chapterId = sel?.chapterId ?? current?.id
       const t = target.book.chapters.find((c) => c.id === chapterId)?.title ?? ''
-      meta = { scope, targetId: chapterId, title: `קטע מ"${t}"`, kinds: picked, question: question.trim() || undefined, excerpt: sel?.text }
+      meta = { scope, targetId: chapterId, title: `קטע מ"${t}"`, kinds: picked, question: question.trim() || undefined, excerpt: sel?.text, ...(sel?.notes.length ? { excerptNotes: sel.notes } : {}) }
     } else {
       if (!current) return setError('קודם בוחרים פרק')
       meta = { scope, targetId: current.id, title: current.title, kinds: picked, question: question.trim() || undefined }

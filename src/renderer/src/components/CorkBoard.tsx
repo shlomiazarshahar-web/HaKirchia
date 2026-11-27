@@ -14,6 +14,8 @@ import { api, onDiskChange } from '../api'
 import { Icon } from './Icons'
 import { RenameField } from './Binder'
 import { useImageUrl } from '../background'
+import { LabelChips } from './Labels'
+import { LABEL_COLOR_NAMES } from '@shared/labels'
 
 interface Props {
   book: Book
@@ -32,7 +34,8 @@ interface Props {
   modeSwitch?: ReactNode
 }
 
-type Filter = 'all' | ChapterStatus
+/** All chapters, one status, or one color label (feature 44: "l:<id>") */
+type Filter = 'all' | ChapterStatus | `l:${string}`
 const STATUSES = Object.keys(STATUS_LABELS) as ChapterStatus[]
 
 /** Consecutive chapters outside parts form one unnamed group; each part is a group with a title. */
@@ -122,7 +125,12 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
     mark({ id: part.id, mark: 'into' }, { kind: 'into', partId: part.id, at })
   }
 
-  const visible = (id: string) => filter === 'all' || byId.get(id)?.status === filter
+  const visible = (id: string) => filter === 'all' || (filter.startsWith('l:') ? !!byId.get(id)?.labels?.includes(filter.slice(2)) : byId.get(id)?.status === filter)
+  const labels = book.labels ?? []
+  // a label filter whose label was removed falls back to everything
+  useEffect(() => {
+    if (filter.startsWith('l:') && !labels.some((l) => `l:${l.id}` === filter)) setFilter('all')
+  }, [filter, labels])
   const counts = Object.fromEntries(STATUSES.map((s) => [s, book.chapters.filter((c) => c.status === s).length])) as Record<ChapterStatus, number>
 
   const card = (ch: Chapter) => {
@@ -184,6 +192,14 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
             </button>
           </h4>
         )}
+        <LabelChips
+          book={book}
+          chapter={ch}
+          onClick={(e) => {
+            e.stopPropagation()
+            onContextMenu(ch, e.clientX, e.clientY)
+          }}
+        />
         {editing === ch.id ? (
           <SynopsisEditor
             value={ch.synopsis}
@@ -265,13 +281,24 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
               {STATUS_LABELS[s]} <span className="cnt">{counts[s]}</span>
             </button>
           ))}
+          {labels.length > 0 && <span className="fsep" aria-hidden="true" />}
+          {labels.map((l) => (
+            <button key={l.id} className="fchip" aria-pressed={filter === `l:${l.id}`} title="רק הפרקים עם התווית הזאת" onClick={() => setFilter(filter === `l:${l.id}` ? 'all' : `l:${l.id}`)}>
+              <i className={`ldot big lc-${l.color}`} />
+              {l.name || LABEL_COLOR_NAMES[l.color]} <span className="cnt">{book.chapters.filter((c) => c.labels?.includes(l.id)).length}</span>
+            </button>
+          ))}
         </div>
         <span className="grow" />
         <span className="bhint">גרירת כרטיס משנה את סדר הפרקים בכל הספר, גם בעץ ובשמות הקבצים</span>
       </div>
 
       {book.chapters.length === 0 && filter === 'all' && <div className="cards">{addCard()}</div>}
-      {book.chapters.length > 0 && shown === 0 && <div className="bempty-board">אין פרקים בסטטוס "{STATUS_LABELS[filter as ChapterStatus]}".</div>}
+      {book.chapters.length > 0 && shown === 0 && (
+        <div className="bempty-board">
+          {filter.startsWith('l:') ? `אין פרקים עם התווית "${labels.find((l) => `l:${l.id}` === filter)?.name ?? ''}".` : `אין פרקים בסטטוס "${STATUS_LABELS[filter as ChapterStatus]}".`}
+        </div>
+      )}
 
       {gs.map((g, gi) => {
         const ids = g.ids.filter(visible)
@@ -365,7 +392,7 @@ export function CorkBoard({ book, onOpen, onMeta, onOutline, onAdd, onContextMen
 }
 
 /** Inline synopsis editing: saves on leaving the box or Ctrl+Enter, Esc cancels. */
-function SynopsisEditor({ value, onDone }: { value: string; onDone: (v: string | null) => void }) {
+export function SynopsisEditor({ value, onDone }: { value: string; onDone: (v: string | null) => void }) {
   const [v, setV] = useState(value)
   const ref = useRef<HTMLTextAreaElement>(null)
   const done = useRef(false)

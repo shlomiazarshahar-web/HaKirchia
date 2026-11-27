@@ -131,6 +131,8 @@ export interface Review {
   question?: string
   /** For a selection: the selected words (so a follow-up question knows what was reviewed) */
   excerpt?: string
+  /** For a selection: the text of footnotes inside it; the excerpt marks where they are with [^1] (round 13) */
+  excerptNotes?: string[]
   /** The original (PDF) of translated chapters was sent along */
   withSource?: boolean
   /** Earlier reviews (with their decisions) were sent along, so this one builds on them */
@@ -209,6 +211,8 @@ export interface ReviewText {
   paras: string[]
   /** The original's paragraphs (a translated chapter with its PDF), to compare with */
   source?: string[]
+  /** Footnotes, in order: the paragraphs mark them [^1], [^2]… (round 13: they used to show as a strange sign) */
+  notes?: string[]
 }
 
 export interface ReviewRequest {
@@ -262,7 +266,8 @@ const esc = (s: string) => s.replace(/</g, '‹').replace(/>/g, '›')
 export function textBlock(texts: ReviewText[]): string {
   return texts
     .map((t, i) => {
-      const src = t.source?.length ? `<מקור>\n${t.source.join('\n')}\n</מקור>\n<תרגום>\n${t.paras.join('\n')}\n</תרגום>` : t.paras.join('\n')
+      const notes = t.notes?.length ? `\n<הערות_שוליים>\n${t.notes.map((n, k) => `[^${k + 1}] ${n || '(הערה ריקה)'}`).join('\n')}\n</הערות_שוליים>` : ''
+      const src = (t.source?.length ? `<מקור>\n${t.source.join('\n')}\n</מקור>\n<תרגום>\n${t.paras.join('\n')}\n</תרגום>` : t.paras.join('\n')) + notes
       return texts.length > 1 ? `<פרק מספר="${i + 1}" כותרת="${esc(t.title)}">\n${src}\n</פרק>` : `<טקסט כותרת="${esc(t.title)}">\n${src}\n</טקסט>`
     })
     .join('\n\n')
@@ -275,6 +280,7 @@ export function systemPrompt(instructions: string): string {
 ---
 אתה עובד בתוך "הכריכייה", מעבד תמלילים לכתיבת ספרים. הכותב מבקש ביקורת על טקסט שלו.
 כל ציטוט בשדה quote חייב להיות העתקה מדויקת של מילים רצופות מהטקסט, כולל ניקוד ופיסוק אם יש, כדי שהתוכנה תמצא אותו ותקפוץ אליו. אל תצטט מחומרי הרקע או מהמקור: כשיש <מקור> ו<תרגום>, הציטוט הוא תמיד מהתרגום, והמקור נכתב בתוך ההערה.
+הערות שוליים: סימן כמו [^1] בתוך הטקסט הוא המקום של מספר הערת השוליים, וטקסט ההערה מופיע אחרי הפרק בתוך <הערות_שוליים>. הסימן עצמו הוא לא חלק מהטקסט ולא שגיאה: אל תעיר עליו ואל תכלול אותו בציטוט. את תוכן ההערות אפשר ורצוי לבדוק כמו את שאר הטקסט; כשמעירים על הערת שוליים, מצטטים את המילים שלפני הסימן שלה וכותבים בהערה על איזו הערה מדובר.
 ההערות על "מה עובד" נכתבות כהערות מסוג "מה עובד". סדר את ההערות כמו בביקורת: קודם "מה עובד", אחר כך מה שצריך עבודה לפי החשיבות, והגהה בסוף.`
 }
 
@@ -422,6 +428,8 @@ export function foldText(s: string): { text: string; map: number[] } {
   let space = false
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]
+    // a footnote's number in the editor's text (an object placeholder) is skipped, so quotes run over it
+    if (ch === '\uFFFC') continue
     if (NIQQUD.test(ch)) {
       NIQQUD.lastIndex = 0
       continue
@@ -450,7 +458,8 @@ export interface QuoteHit {
 
 /** Where a quote is: paragraph and character range. Tries the whole quote, then its longest part. */
 export function findQuote(paras: string[], quote: string): QuoteHit | null {
-  const q = foldText(quote.replace(/^["״“”'׳\s.…]+|["״“”'׳\s.…]+$/g, '')).text
+  // footnote marks ([^1]) the review was shown are not in the editor's text (round 13)
+  const q = foldText(quote.replace(/\s*\[\^\d+\]/g, '').replace(/^["״“”'׳\s.…]+|["״“”'׳\s.…]+$/g, '')).text
   if (q.length < 2) return null
   const folded = paras.map(foldText)
   const look = (needle: string): QuoteHit | null => {

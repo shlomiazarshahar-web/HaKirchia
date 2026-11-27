@@ -10,12 +10,14 @@ import { shell } from 'electron'
 import type { StopPoint } from '../shared/stoppoint'
 import type { AltDraft, Book, Bookmark, Chapter, ChapterStatus, DrawerItem, LoadedChapter, OutlineNode, PMNode, PrivateNote, Version } from '../shared/types'
 import * as drafts from './drafts'
+import * as writingLog from './writinglog'
 import * as bg from './background'
 import { normalizeBackground, type GlossaryEntry, type InspirationGroup, type InspirationImage, type Material, type MaterialKind, type TimelineEvent } from '../shared/background'
 import { flatten, normalizeOutline } from '../shared/outline'
 import { chapterParagraphCount, chapterParagraphTexts, SOURCES_DIR, type ChapterSource, type SplitItem } from '../shared/translation'
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
 import { normalizePublish, type PublishSettings } from '../shared/publish'
+import { normalizeLabels, type ChapterLabel } from '../shared/labels'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
 import { MANIFEST, CHAPTERS_DIR } from '../shared/constants'
@@ -41,6 +43,8 @@ interface Manifest extends bg.BackgroundManifest {
   sources?: Record<string, ChapterSource>
   /** Front and back pages and page layout (features 31, 36, 16) */
   publish?: PublishSettings
+  /** Color labels for chapters (feature 44) */
+  labels?: ChapterLabel[]
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -108,6 +112,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   alts: (m.alts ?? []).filter((a) => m.chapters.some((c) => c.id === a.chapterId)),
   sources: Object.fromEntries(Object.entries(m.sources ?? {}).filter(([id]) => m.chapters.some((c) => c.id === id))),
   publish: normalizePublish(m.publish),
+  labels: normalizeLabels(m.labels),
   ...normalizeBackground(m, m.chapters.map((c) => c.id)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
@@ -281,7 +286,7 @@ export function deleteChapter(bookPath: string, id: string) {
   })
 }
 
-export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }) {
+export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }) {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
     const ch = m.chapters.find((c) => c.id === id)
@@ -290,6 +295,30 @@ export function updateChapterMeta(bookPath: string, id: string, meta: { status?:
     if (typeof meta.synopsis === 'string') ch.synopsis = meta.synopsis
     if (meta.noExport === true) ch.noExport = true
     else if (meta.noExport === false) delete ch.noExport
+    if (Array.isArray(meta.labels)) {
+      const known = new Set(normalizeLabels(m.labels).map((l) => l.id))
+      const ids = [...new Set(meta.labels.filter((x) => typeof x === 'string' && known.has(x)))]
+      if (ids.length) ch.labels = ids
+      else delete ch.labels
+    }
+    await writeManifest(bookPath, m)
+    return toBook(bookPath, m)
+  })
+}
+
+/** Saves the book's color labels (feature 44); a label that was removed is taken off every chapter. */
+export function setLabels(bookPath: string, labels: ChapterLabel[]): Promise<Book> {
+  return serial(bookPath, async () => {
+    const m = await readManifest(bookPath)
+    const list = normalizeLabels(labels)
+    const ids = new Set(list.map((l) => l.id))
+    if (list.length) m.labels = list
+    else delete m.labels
+    for (const ch of m.chapters) {
+      if (!ch.labels) continue
+      ch.labels = ch.labels.filter((x) => ids.has(x))
+      if (!ch.labels.length) delete ch.labels
+    }
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
   })
@@ -650,8 +679,10 @@ export function saveChapter(bookPath: string, id: string, doc: PMNode): Promise<
     const ch = m.chapters.find((c) => c.id === id)
     if (!ch) throw new Error('הפרק לא נמצא')
     const file = chapterPath(bookPath, ch)
+    let oldWords = 0
     if (existsSync(file)) {
       const old = new Uint8Array(await fs.readFile(file))
+      oldWords = await wordsOf(bookPath, ch.id, old)
       // a version of the text as it was, every so often (feature 14); never stops the save
       await drafts.autoSnapshotBeforeSave(bookPath, ch.id, old).catch(() => undefined)
       if (!(await isOurFile(old))) {
@@ -668,11 +699,33 @@ export function saveChapter(bookPath: string, id: string, doc: PMNode): Promise<
     try {
       await fs.rename(tmp, file)
       remember(bookPath, ch.id, bytes)
+      // feature 47: how many words this save added or removed, for the writing days
+      const words = countWords(docText(doc))
+      wordCache.set(`${bookPath}|${ch.id}`, { fp: fingerprint(bytes), words })
+      writingLog.record(bookPath, words - oldWords)
     } catch (e) {
       await fs.rm(tmp, { force: true })
       throw new Error('השמירה נכשלה. אם הקובץ פתוח ב-Word, יש לסגור אותו ולנסות שוב.')
     }
   })
+}
+
+/**
+ * Words in a chapter file as it is on disk. The count of the app's own last save is remembered, so the
+ * file is read again only when it changed outside the app (Word, a restored version, another computer).
+ */
+const wordCache = new Map<string, { fp: string; words: number }>()
+async function wordsOf(bookPath: string, id: string, bytes: Uint8Array): Promise<number> {
+  const fp = fingerprint(bytes)
+  const hit = wordCache.get(`${bookPath}|${id}`)
+  if (hit && hit.fp === fp) return hit.words
+  try {
+    const words = countWords(docText((await docxToDoc(bytes)).doc))
+    wordCache.set(`${bookPath}|${id}`, { fp, words })
+    return words
+  } catch {
+    return 0
+  }
 }
 
 export function chapterFilePath(book: Book, id: string): string | null {

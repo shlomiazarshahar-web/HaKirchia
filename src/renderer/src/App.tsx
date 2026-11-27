@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Book, Bookmark, Chapter, ChapterStatus, OpResult, OutlineNode, PartNode, RecentBook, Theme } from '@shared/types'
+import { STATUS_LABELS } from '@shared/types'
+import { toggleLabelId, type ChapterLabel } from '@shared/labels'
+import { accentVars } from '@shared/accent'
+import { LabelsDialog, LabelsSubmenu } from './components/Labels'
 import { newPartTitle, partOf, parts, moveNode, startPartAt, ungroupPart, withOutline } from '@shared/outline'
 import { CHAPTERS_DIR } from '@shared/constants'
 import { addPane, closePane, MAX_PANES, nextContent, normalizeLayout, setPaneContent, splitPane, translationLayout, type PaneContent, type PaneLayout } from '@shared/panes'
@@ -41,6 +45,10 @@ import { elStyle, type ElementKey, type PublishSettings } from '@shared/publish'
 import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
+import { PlanPane, rememberPlanPaneMode } from './components/PlanPane'
+import { TodayWords, useWritingLog, WritingDaysDialog } from './components/WritingDays'
+import { SoundsButton, SoundsPanel } from './components/Sounds'
+import { initSounds } from './sounds'
 import { setGlossaryTerms, setTermClick } from './background'
 import { ReviewPanel } from './components/Review'
 import { Workshop } from './components/Workshop'
@@ -63,6 +71,8 @@ type Dialog =
   | { kind: 'deleteMaterial'; material: Material }
   | { kind: 'import'; into: boolean }
   | { kind: 'backups' }
+  | { kind: 'labels' }
+  | { kind: 'writingDays' }
   | null
 type Menu = { chapter: Chapter; x: number; y: number } | { part: PartNode; x: number; y: number } | { material: Material; x: number; y: number } | null
 type View = 'write' | 'master' | 'board' | 'read'
@@ -136,6 +146,16 @@ export default function App() {
   const [exerciseId, setExerciseId] = useState<string | null>(null)
   const [focusNote, setFocusNote] = useState<string | null>(null)
   const bookmarks = useBookmarks()
+  /** Feature 47: words written today, for the status bar (refreshed as the save state settles) */
+  const [logTick, setLogTick] = useState(0)
+  /** Feature 56: the sounds panel */
+  const [soundsOpen, setSoundsOpen] = useState(false)
+  const writingLog = useWritingLog(book?.path ?? null, logTick)
+  useEffect(() => {
+    if (saveState !== 'saved') return
+    const t = setTimeout(() => setLogTick((n) => n + 1), 1500)
+    return () => clearTimeout(t)
+  }, [saveState])
   const editorsVersion = useEditorsVersion()
   const prefs = usePrefs()
   const paraCounts = useParagraphCounts(book?.path)
@@ -157,6 +177,7 @@ export default function App() {
 
   useEffect(() => {
     api.getSettings().then((s) => {
+      initSounds(s.sounds)
       setTheme(s.theme)
       initPrefs(s)
       initAi(s)
@@ -523,7 +544,9 @@ export default function App() {
     let i = l.panes.findIndex((p) => p.key === focusKey)
     if (i < 0) i = 0
     if (l.panes.length > 1 && (fromMaster || l.panes[i].content.kind !== 'chapter')) {
-      const other = l.panes.findIndex((p, j) => j !== i && p.content.kind === 'chapter')
+      // the pane of the chapter being written first (round 13: a chapter opened from the plan pane takes its place)
+      const writing = l.panes.findIndex((p, j) => j !== i && p.content.kind === 'chapter' && p.content.id === activeId)
+      const other = writing >= 0 ? writing : l.panes.findIndex((p, j) => j !== i && p.content.kind === 'chapter')
       if (other >= 0) i = other
       else if (l.panes.length < MAX_PANES) {
         l = addPane(l, { kind: 'chapter', id }, i)
@@ -649,6 +672,7 @@ export default function App() {
     out.push({ kind: 'view', id: 'glossary', label: 'מילון מונחים ושמות', extra: 'חומרי רקע', run: () => void openBeside({ kind: 'glossary' }) })
     out.push({ kind: 'view', id: 'master', label: MASTER_LABEL, extra: 'כל הפרקים ברצף', run: () => void switchView('master') })
     out.push({ kind: 'view', id: 'board', label: 'תכנון', extra: 'כרטיסים, ציר זמן והשראה', run: () => void switchView('board') })
+    out.push({ kind: 'view', id: 'planpane', label: 'תכנון בצד', extra: 'הכרטיסים או ציר הזמן בחלון ליד הכתיבה', run: () => void openBeside({ kind: 'plan' }) })
     return out
   }
 
@@ -715,6 +739,32 @@ export default function App() {
     setReviewOpen(false)
     setDrawerOpen((o) => !o)
   }
+  /** Feature 67: the plan as a pane beside the writing, or closed again */
+  const togglePlanPane = () => {
+    if (!book) return
+    if (focusMode) exitFocus()
+    const at = split ? split.panes.findIndex((p) => p.content.kind === 'plan') : -1
+    if (split && at >= 0 && view === 'write') return updateSplit(closePane(split, at))
+    void openBeside({ kind: 'plan' })
+  }
+  /** From the plan pane: a chapter already on screen gets the focus; otherwise it opens in the pane being written in */
+  const openFromPlan = (id: string) => {
+    const shown = split?.panes.find((p) => p.content.kind === 'chapter' && p.content.id === id)
+    if (!shown) return void openChapter(id)
+    focusPane(shown.key)
+    editorsFor(book!.path, id)[0]?.commands.focus()
+  }
+  /** From the planning tab: the same view as a pane beside the writing */
+  const planBeside = () => {
+    rememberPlanPaneMode(planMode === 'timeline' ? 'timeline' : 'cards')
+    void openBeside({ kind: 'plan' })
+  }
+  /** From the plan pane: the planning tab, in the same view */
+  const openInPlan = (mode: PlanMode) => {
+    setPlanMode(mode)
+    void switchView('board')
+  }
+
   const toggleReview = () => {
     if (!book) return
     if (focusMode) exitFocus()
@@ -837,7 +887,7 @@ export default function App() {
   // ---------------------------------------------------------------------------
 
   /** Shows something next to the pane in focus (a background page, the glossary), or brings it forward when already shown */
-  const openBeside = async (content: { kind: 'material'; id: string } | { kind: 'glossary' } | { kind: 'review' }) => {
+  const openBeside = async (content: { kind: 'material'; id: string } | { kind: 'glossary' } | { kind: 'review' } | { kind: 'plan' }) => {
     if (!book || !split) return
     if (view !== 'write') {
       await flushAll()
@@ -859,6 +909,11 @@ export default function App() {
       // a background page is already open: it makes way for this one
       at = aside
       l = setPaneContent(split, at, content)
+    } else if (content.kind === 'plan' && split.panes.length < MAX_PANES) {
+      // feature 67: the plan goes right beside the pane being written in, narrow, and the keyboard stays in the text
+      l = splitPane(split, i, content, 'h', 0.3)
+      updateSplit(l)
+      return
     } else if (split.panes.length < MAX_PANES) {
       // next to the translation panes it goes under Google Translate (or the PDF); else beside the pane in focus
       const host = ['web', 'pdf'].map((k) => split.panes.findIndex((p) => p.content.kind === k)).find((j) => j >= 0) ?? -1
@@ -1144,7 +1199,19 @@ export default function App() {
     show(`הפרק "${ch.title}" הועבר לסל המחזור`)
   }
 
-  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }) => {
+  /** Feature 44: puts a color label on a chapter, or takes it off */
+  const toggleLabel = (ch: Chapter, labelId: string) => {
+    const cur = book?.chapters.find((c) => c.id === ch.id)
+    return updateMeta(ch.id, { labels: toggleLabelId(cur?.labels, labelId) })
+  }
+  const saveLabels = async (labels: ChapterLabel[]) => {
+    if (!book) return
+    const r = await api.setLabels(book.path, labels)
+    if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי לשמור את התוויות', true)
+    setBook(r.value)
+  }
+
+  const updateMeta = async (id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean; labels?: string[] }) => {
     if (!book) return
     // optimistic, so the status dot changes immediately
     setBook((b) => (b ? { ...b, chapters: b.chapters.map((c) => (c.id === id ? { ...c, ...meta } : c)) } : b))
@@ -1214,7 +1281,7 @@ export default function App() {
       className={`app${focusOn ? ' focusmode' : ''}${focusOn && prefs.focus.typewriter ? ' typewriter' : ''}${focusOn && prefs.focus.dim ? ' dim' : ''}`}
       data-mode={theme}
       data-overlay={overlay ? '1' : '0'}
-      style={titleVars(book)}
+      style={{ ...titleVars(book), ...accentVars(prefs.accent, theme) } as CSSProperties}
       onClick={() => (menu && setMenu(null), exportMenu && setExportMenu(false))}
     >
       <IconSprite />
@@ -1294,6 +1361,10 @@ export default function App() {
             >
               <Icon name="translate" />
               <span className="lbl">התחלת תרגום</span>
+            </button>
+            <button className="ib" title="תכנון בחלון ליד הכתיבה: הכרטיסים בטור צר או ציר הזמן, הפרק שכותבים מודגש" aria-pressed={inWrite && !!split?.panes.some((p) => p.content.kind === 'plan')} onClick={togglePlanPane}>
+              <Icon name="cards" />
+              <span className="lbl">תכנון בצד</span>
             </button>
             <button className="ib" title="ביקורת כתיבה עם Claude: על קטע מסומן, על הפרק או על כל הספר" aria-pressed={reviewOpen || (inWrite && !!split?.panes.some((p) => p.content.kind === 'review'))} onClick={toggleReview}>
               <Icon name="review" />
@@ -1403,11 +1474,11 @@ export default function App() {
             onArchive={(p, a) => void api.archiveBook(p, a).then(() => (refreshLibrary(), show(a ? 'הספר הועבר לארכיון שבתחתית הספרייה' : 'הספר חזר למדף')))}
           />
         )}
-        {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
-        {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} />} onOpenChapter={openChapter} />}
+        {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
+        {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
         {inBoard && planMode === 'cards' && (
           <CorkBoard
-            modeSwitch={<PlanSwitch mode={planMode} onMode={setPlanMode} />}
+            modeSwitch={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />}
             key={book!.path}
             book={book!}
             onOpen={openChapter}
@@ -1500,6 +1571,9 @@ export default function App() {
                 onBook={setBook}
                 onNotice={(m) => show(m)}
                 onNeedTranslatePane={needTranslatePane}
+                renderPlan={() => (
+                  <PlanPane activeId={activeId} onOpenChapter={openFromPlan} onOutline={saveOutline} onMeta={updateMeta} onContextMenu={(chapter, x, y) => setMenu({ chapter, x, y })} onOpenInPlan={openInPlan} />
+                )}
                 renderReview={(onClose) => (
                   <ReviewPanel key={book.path} target={{ mode: 'book', book, chapter: reviewChapter, editor, goTo: (id, t) => void goTo(id, t) }} onClose={onClose} show={show} />
                 )}
@@ -1558,6 +1632,8 @@ export default function App() {
           </span>
         )}
         {book && !empty && <BackupStatus bookPath={book.path} tick={backupTick} onOpen={() => setDialog({ kind: 'backups' })} />}
+        {book && !empty && <TodayWords log={writingLog} onOpen={() => setDialog({ kind: 'writingDays' })} />}
+        <SoundsButton open={soundsOpen} onClick={() => setSoundsOpen((o) => !o)} />
         {(inMaster || writeMaster) && !empty ? (
           masterFocus ? (
             <span>
@@ -1614,7 +1690,8 @@ export default function App() {
         </span>
       </div>
 
-      {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} />}
+      {focusOn && <FocusBar chapterWords={writeChapter ? words : null} bookWords={totalWords} theme={theme} onTheme={toggleTheme} onExit={exitFocus} onSounds={() => setSoundsOpen((o) => !o)} />}
+      <SoundsPanel open={soundsOpen} focus={focusOn} onClose={() => setSoundsOpen(false)} />
       {niqqudOpen && editor && !editor.isDestroyed && <NiqqudAtCursor editor={editor} onClose={() => setNiqqudOpen(false)} />}
       <SynonymsHost />
       {compare && <CompareDialog req={compare} onClose={() => setCompare(null)} />}
@@ -1642,6 +1719,31 @@ export default function App() {
             <Icon name="folder" />
             הצגה בתיקייה
           </button>
+          <div className="msep" />
+          {/* feature 57: right-click > status > the list of statuses */}
+          <div className={`msub${menu.x < 420 ? ' to-right' : ''}`}>
+            <button role="menuitem" aria-haspopup="menu" title="שינוי הסטטוס של הפרק">
+              <i className={`dot st-${menu.chapter.status}`} />
+              סטטוס: {STATUS_LABELS[menu.chapter.status]}
+              <span className="grow" />
+              <Icon name="chev" size={12} />
+            </button>
+            <div className="submenu" role="menu" aria-label="סטטוס">
+              {(Object.keys(STATUS_LABELS) as ChapterStatus[]).map((s) => (
+                <button key={s} role="menuitemradio" aria-checked={s === menu.chapter.status} onClick={() => (s !== menu.chapter.status && void updateMeta(menu.chapter.id, { status: s }), setMenu(null))}>
+                  <i className={`dot st-${s}`} />
+                  {STATUS_LABELS[s]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <LabelsSubmenu
+            book={book}
+            chapter={menu.chapter}
+            toRight={menu.x < 420}
+            onToggle={(labelId) => void toggleLabel(menu.chapter, labelId)}
+            onManage={() => (setMenu(null), setDialog({ kind: 'labels' }))}
+          />
           <div className="msep" />
           <button
             role="menuitemcheckbox"
@@ -1751,6 +1853,8 @@ export default function App() {
           </div>
         </div>
       )}
+      {dialog?.kind === 'writingDays' && book && <WritingDaysDialog bookPath={book.path} bookTitle={book.title} onClose={() => (setDialog(null), setLogTick((t) => t + 1))} />}
+      {dialog?.kind === 'labels' && book && <LabelsDialog book={book} onSave={saveLabels} onClose={() => setDialog(null)} />}
       {dialog?.kind === 'manuscript' && book && <ManuscriptDialog book={book} onCancel={() => setDialog(null)} onExport={(p) => void exportManuscript(p)} />}
       {dialog?.kind === 'matter' && book && (
         <MatterDialog

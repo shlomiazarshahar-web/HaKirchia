@@ -5,7 +5,8 @@ import type { SpellStatus } from '@shared/types'
 import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, pressesFor, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
 import { api } from '../api'
 import { EDITOR_FONTS } from '../fonts'
-import { setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
+import { setAccent, setAskStopNote, setCustomFonts, setTypography, usePrefs } from '../prefs'
+import { ACCENTS, DEFAULT_ACCENT, accentSwatch } from '@shared/accent'
 import { AiSettingsDialog } from './Review'
 import { useAiKey } from '../ai'
 import { AutoNiqqud } from './WordTools'
@@ -271,6 +272,8 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
       <div className="dialog settings" role="dialog" aria-label="הגדרות כתיבה" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
         <h2>הגדרות כתיבה</h2>
 
+        <AccentSection />
+
         <section>
           <h3>טיפוגרפיה עברית בזמן הקלדה</h3>
           <div className="set-sub">מירכאות</div>
@@ -392,5 +395,36 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** Round 13: the app's accent color. The default is the deep green; any other bookcloth color, or one of your own. */
+function AccentSection() {
+  const { accent } = usePrefs()
+  const custom = !ACCENTS.some((a) => a.id === accent)
+  return (
+    <section>
+      <h3>צבע הדגשה של האפליקציה</h3>
+      <p className="lp-note">הצבע של הלשונית הפעילה, הכפתורים והפרק שכותבים עכשיו. במצב כהה הוא נעשה בהיר יותר מעצמו.</p>
+      <div className="accents" role="radiogroup" aria-label="צבע הדגשה">
+        {ACCENTS.map((a) => (
+          <button key={a.id} type="button" role="radio" aria-checked={accent === a.id} className="accent-sw" title={a.id === DEFAULT_ACCENT ? `${a.name} (ברירת המחדל)` : a.name} onClick={() => setAccent(a.id)}>
+            <span style={{ background: a.light }} />
+            <small>{a.name}</small>
+          </button>
+        ))}
+        <label className="accent-sw" title="צבע משלך" aria-checked={custom} role="radio">
+          <span className="accent-custom" style={custom ? { background: accentSwatch(accent) } : undefined}>
+            <input type="color" aria-label="בחירת צבע משלך" value={custom ? accent : '#7a3b2e'} onChange={(e) => setAccent(e.target.value)} />
+          </span>
+          <small>משלי…</small>
+        </label>
+      </div>
+      {accent !== DEFAULT_ACCENT && (
+        <button type="button" className="ib" style={{ alignSelf: 'flex-start' }} onClick={() => setAccent(DEFAULT_ACCENT)}>
+          חזרה לירוק הכהה
+        </button>
+      )}
+    </section>
   )
 }

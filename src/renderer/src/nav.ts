@@ -90,6 +90,34 @@ export function textBlocks(doc: PMDoc): Block[] {
   return out
 }
 
+/**
+ * Text for Claude's writing review (round 13 fix): each footnote's number becomes a mark like [^1]
+ * in its paragraph, and the notes' own text is returned in order, to be sent after the chapter.
+ * (In textBlocks a footnote is a placeholder character, which the review used to see as a strange sign.)
+ * With from/to, only that part of the document (a selection).
+ */
+export function reviewParas(doc: PMDoc, from = 0, to = doc.content.size): { paras: string[]; notes: string[] } {
+  const paras: string[] = []
+  const notes: string[] = []
+  doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) return true
+    let s = ''
+    node.forEach((child, off) => {
+      const a = pos + 1 + off
+      const b = a + child.nodeSize
+      if (b <= from || a >= to) return
+      if (child.isText) s += (child.text ?? '').slice(Math.max(0, from - a), Math.min(child.nodeSize, to - a))
+      else if (child.type.name === 'footnote') {
+        notes.push(String(child.attrs.text ?? '').trim())
+        s += `[^${notes.length}]`
+      } else if (child.type.name === 'hardBreak') s += '\n'
+    })
+    paras.push(s)
+    return false
+  })
+  return { paras, notes }
+}
+
 /** The editor's document model, for chapters that are not open on screen (find and replace) */
 let schema: ReturnType<typeof getSchema> | null = null
 export function docFromJSON(json: PMNode): PMDoc {

@@ -9,6 +9,7 @@ import { MASTER_LABEL } from '../labels'
 import { translationProgress } from '@shared/translation'
 import { useParagraphCounts } from '../translate'
 import { MATTER_KINDS, type MatterPage } from '@shared/publish'
+import { LabelDots } from './Labels'
 
 interface Props {
   book: Book
@@ -167,6 +168,7 @@ export function Binder(props: Props) {
         ) : (
           <span className="name">{ch.title}</span>
         )}
+        <LabelDots book={book} chapter={ch} />
         {(() => {
           const tr = trOf(ch.id)
           return tr ? (

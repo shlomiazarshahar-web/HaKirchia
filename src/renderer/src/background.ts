@@ -20,6 +20,8 @@ export interface BookTexts {
   chapters: ChapterText[]
   /** Paragraphs with their positions, to jump to a match */
   blocks: Map<string, Block[]>
+  /** Each chapter's document (for the review, which needs the footnotes' text) */
+  docs: Map<string, PMDoc>
 }
 
 let diskCache: { bookPath: string; at: number; docs: Promise<Record<string, PMDoc>> } | null = null
@@ -51,14 +53,16 @@ export async function bookTexts(book: Book, fresh = false): Promise<BookTexts> {
   }
   const chapters: ChapterText[] = []
   const blocks = new Map<string, Block[]>()
+  const docs = new Map<string, PMDoc>()
   for (const c of book.chapters) {
     const doc = editorsFor(book.path, c.id)[0]?.state.doc ?? disk[c.id]
     if (!doc) continue
+    docs.set(c.id, doc)
     const bs = textBlocks(doc)
     blocks.set(c.id, bs)
     chapters.push({ id: c.id, paras: bs.map((b) => b.text) })
   }
-  return { chapters, blocks }
+  return { chapters, blocks, docs }
 }
 
 /** Where to jump for a match found by occurrences() */
