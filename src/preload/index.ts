@@ -127,9 +127,17 @@ const api = {
   exportData: (bookPath: string): Promise<OpResult<{ book: Book; docs: Record<string, PMNode> }>> => ipcRenderer.invoke('book:exportData', bookPath),
   /** Asks where to save, then exports the whole book. value is the saved file, or null when cancelled. */
   exportBook: (bookPath: string, title: string, format: 'pdf' | 'docx' | 'epub'): Promise<OpResult<string | null>> => ipcRenderer.invoke('export:run', bookPath, title, format),
+  /** Feature 45: the manuscript for publishers (asks where to save). value is the file, or null when cancelled */
+  exportManuscript: (bookPath: string, title: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('export:manuscript', bookPath, title),
+  /** Feature 54: one chapter as a PDF with numbered lines, for a beta reader */
+  exportBeta: (bookPath: string, chapterId: string, title: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('export:beta', bookPath, chapterId, title),
+  /** Feature 48: picks an image for scene breaks and copies it into the book; value is its file name (null when cancelled) */
+  pickSceneImage: (bookPath: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('publish:sceneImage', bookPath),
+  /** The scene break image as a data: address, or null when the file is gone */
+  readSceneImage: (bookPath: string, file: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('publish:readSceneImage', bookPath, file),
   openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
   /** The print window (PDF export): its job, printing it, and handing back the final file */
-  printJob: (): Promise<{ html: string; css: string; oddPages: boolean; hasToc: boolean; partPage: boolean; kinds: string[]; ids: string[]; notesAtPage: { colW: number; colH: number; gap: number } | null } | null> => ipcRenderer.invoke('print:job'),
+  printJob: (): Promise<{ html: string; css: string; oddPages: boolean; hasToc: boolean; partPage: boolean; kinds: string[]; ids: string[]; notesAtPage: { colW: number; colH: number; gap: number } | null; lineNumbers?: boolean } | null> => ipcRenderer.invoke('print:job'),
   printRender: (): Promise<Uint8Array> => ipcRenderer.invoke('print:render'),
   printFinish: (bytes: Uint8Array | null, error?: string): Promise<void> => ipcRenderer.invoke('print:finish', bytes, error),
   /** Saves the book's "come back here" bookmarks (the whole list) */
@@ -182,7 +190,7 @@ const api = {
   /** Saves the binder tree (order, parts). Renames files when the chapter order changed. */
   saveOutline: (bookPath: string, outline: OutlineNode[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:outline', bookPath, outline),
   deleteChapter: (bookPath: string, id: string): Promise<OpResult<Book>> => ipcRenderer.invoke('chapter:delete', bookPath, id),
-  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string }): Promise<OpResult<Book>> =>
+  updateChapterMeta: (bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }): Promise<OpResult<Book>> =>
     ipcRenderer.invoke('chapter:meta', bookPath, id, meta),
   /** Words per chapter id, read from the files on disk (for the cork board). */
   wordCounts: (bookPath: string): Promise<OpResult<Record<string, number>>> => ipcRenderer.invoke('book:wordCounts', bookPath),

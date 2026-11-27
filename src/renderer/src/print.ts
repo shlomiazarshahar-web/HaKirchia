@@ -8,6 +8,7 @@ import type { Section } from '@shared/bookhtml'
 import { api } from './api'
 import { registerFonts } from './prefs'
 import { fixPageStarts, PAGE_SLACK, placeFootnotes } from './footnotes'
+import { numberLines } from './linenumbers'
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -78,6 +79,10 @@ export async function runPrint(): Promise<void> {
       })
     }
     root.querySelectorAll('.pmk').forEach((el) => el.remove())
+    if (job.lineNumbers) {
+      await frame()
+      numberLines(root)
+    }
     await frame()
     await api.printFinish(await api.printRender())
   } catch (e) {

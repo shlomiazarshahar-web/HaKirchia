@@ -281,13 +281,15 @@ export function deleteChapter(bookPath: string, id: string) {
   })
 }
 
-export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string }) {
+export function updateChapterMeta(bookPath: string, id: string, meta: { status?: ChapterStatus; synopsis?: string; noExport?: boolean }) {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
     const ch = m.chapters.find((c) => c.id === id)
     if (!ch) throw new Error('הפרק לא נמצא')
     if (meta.status) ch.status = meta.status
     if (typeof meta.synopsis === 'string') ch.synopsis = meta.synopsis
+    if (meta.noExport === true) ch.noExport = true
+    else if (meta.noExport === false) delete ch.noExport
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
   })

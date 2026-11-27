@@ -355,6 +355,49 @@ function registerIpc(): void {
       return out
     })
   )
+  // The manuscript for publishers (feature 45)
+  ipcMain.handle('export:manuscript', (_e, b: string, title: string) =>
+    wrap(async () => {
+      const dir = join(b, 'ייצוא')
+      await fsp.mkdir(dir, { recursive: true })
+      const res = await dialog.showSaveDialog(win!, {
+        title: 'שמירת כתב יד להוצאה',
+        defaultPath: join(dir, `${project.safeName(title)} - כתב יד.docx`),
+        filters: [exporter.EXPORT_FILTERS.docx]
+      })
+      if (res.canceled || !res.filePath) return null
+      await exporter.exportManuscript(b, res.filePath)
+      return res.filePath
+    })
+  )
+  // One chapter as a PDF for a beta reader (feature 54)
+  ipcMain.handle('export:beta', (_e, b: string, chapterId: string, title: string) =>
+    wrap(async () => {
+      const dir = join(b, 'ייצוא')
+      await fsp.mkdir(dir, { recursive: true })
+      const res = await dialog.showSaveDialog(win!, {
+        title: 'שמירת הפרק לקורא בטא',
+        defaultPath: join(dir, `${project.safeName(title)} - לקורא בטא.pdf`),
+        filters: [exporter.EXPORT_FILTERS.pdf]
+      })
+      if (res.canceled || !res.filePath) return null
+      await exporter.exportBetaPdf(b, chapterId, res.filePath, PRELOAD(), loadAppPage)
+      return res.filePath
+    })
+  )
+  // The scene break image (feature 48): chosen, copied into the book, and saved in its layout
+  ipcMain.handle('publish:sceneImage', (_e, b: string) =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, {
+        title: 'תמונה למעבר סצנה',
+        properties: ['openFile'],
+        filters: [{ name: 'תמונה', extensions: exporter.SCENE_IMAGE_EXTS }]
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      return exporter.copySceneImage(b, res.filePaths[0])
+    })
+  )
+  ipcMain.handle('publish:readSceneImage', (_e, b: string, file: string) => wrap(async () => (await exporter.readSceneImage(b, { sceneImage: file }))?.dataUrl ?? null))
   ipcMain.handle('shell:openPath', (_e, path: string) => shell.openPath(path))
   ipcMain.handle('book:bookmarks', (_e, bookPath: string, list: Bookmark[]) => wrap(() => project.setBookmarks(bookPath, list)))
   ipcMain.handle('book:notes', (_e, bookPath: string, list: PrivateNote[]) => wrap(() => project.setNotes(bookPath, list)))

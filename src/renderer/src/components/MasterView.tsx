@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/react'
 import type { Book, Chapter, PMNode } from '@shared/types'
 import { api } from '../api'
+import { isEmptyChapter } from '@shared/bookhtml'
 import { ChapterBody, type SaveState } from './ChapterEditor'
 import { Icon } from './Icons'
 
@@ -154,6 +155,9 @@ function MasterChapter({ bookPath, chapter, onEditor, onRelease, onFocus, onOpen
       alive = false
     }
   }, [bookPath, chapter.id])
+
+  // a planned chapter with no text yet is not shown here (feature 66); it is opened from the binder
+  if (loaded && isEmptyChapter(loaded.doc)) return null
 
   return (
     <section className="m-ch" id={`m-${chapter.id}`} onFocus={onFocus}>

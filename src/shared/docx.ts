@@ -10,6 +10,8 @@ import JSZip from 'jszip'
 import { DOMParser } from '@xmldom/xmldom'
 import type { PMMark, PMNode } from './types'
 import { splitByDirection } from './hebrew'
+import { isSceneBreak } from './scenes'
+import { isParaStyle, PARA_INDENT, PARA_STYLES, PARA_WORD_ID, type ParaStyle } from './publish'
 
 export const DEFAULT_FONT = 'Frank Ruhl Libre'
 export const DEFAULT_SIZE_PT = 14
@@ -129,6 +131,8 @@ function footnoteRun(notes: Notes | null, text: string): string {
 
 function paragraphXml(node: PMNode, styleId: string | null, notes: Notes | null = null, opts: { pageBreak?: boolean; before?: number } = {}): string {
   const dir: Dir = node.attrs?.dir === 'ltr' ? 'ltr' : 'rtl'
+  // a paragraph style (feature 50) is a Word paragraph style of its own
+  if (node.type === 'paragraph' && isParaStyle(node.attrs?.pstyle)) styleId = PARA_WORD_ID[node.attrs!.pstyle as ParaStyle]
   const align = (node.attrs?.textAlign as Align) ?? null
   const pPr: string[] = []
   if (styleId) pPr.push(`<w:pStyle w:val="${styleId}"/>`)
@@ -156,11 +160,11 @@ const hasText = (n: PMNode) => (n.content?.length ?? 0) > 0
  * a centered line like "* * *" starts flush, and centered paragraphs are never indented.
  */
 export function isIndented(node: PMNode, prev: PMNode | undefined): boolean {
-  if (node.type !== 'paragraph' || isCentered(node)) return false
-  return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev)
+  if (node.type !== 'paragraph' || isCentered(node) || isParaStyle(node.attrs?.pstyle)) return false
+  return !!prev && prev.type === 'paragraph' && hasText(prev) && !isCentered(prev) && !isParaStyle(prev.attrs?.pstyle)
 }
 
-function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false, titleStyle = 'Heading1'): string {
+function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false, titleStyle = 'Heading1', sceneSign?: string): string {
   const out: string[] = []
   out.push(
     paragraphXml(
@@ -170,9 +174,18 @@ function bodyXml(doc: PMNode, title: string, notes: Notes, pageBreak = false, ti
       { pageBreak }
     )
   )
+  out.push(chapterParasXml(doc, notes, sceneSign))
+  return out.join('')
+}
+
+/** The chapter's paragraphs. `sceneSign`: scene breaks are written as this sign, centered (the manuscript, feature 45) */
+function chapterParasXml(doc: PMNode, notes: Notes, sceneSign?: string): string {
+  const out: string[] = []
   let prev: PMNode | undefined
   for (const node of doc.content ?? []) {
-    if (node.type === 'paragraph') out.push(paragraphXml(node, isIndented(node, prev) ? null : FIRST_PARAGRAPH_STYLE, notes))
+    if (node.type === 'paragraph' && sceneSign !== undefined && isSceneBreak(docText(node))) {
+      out.push(paragraphXml({ type: 'paragraph', attrs: { dir: 'rtl', textAlign: 'center' }, content: [{ type: 'text', text: sceneSign || '#' }] }, FIRST_PARAGRAPH_STYLE))
+    } else if (node.type === 'paragraph') out.push(paragraphXml(node, isIndented(node, prev) ? null : FIRST_PARAGRAPH_STYLE, notes))
     else if (node.type === 'heading') {
       const level = Number(node.attrs?.level ?? 2)
       out.push(paragraphXml(node, level <= 2 ? 'Heading2' : 'Heading3', notes))
@@ -221,13 +234,51 @@ const DOC_RELS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 const SETTINGS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:settings xmlns:w="${W_NS}"><w:defaultTabStop w:val="720"/><w:characterSpacingControl w:val="doNotCompress"/>__FOOTNOTE_PR__<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat><w:themeFontLang w:val="he-IL" w:bidi="he-IL"/></w:settings>`
 
-function stylesXml(font = DEFAULT_FONT, sizePt = DEFAULT_SIZE_PT, extra = ''): string {
+/** How a paragraph style looks in Word (feature 50): the book's element style for it */
+export interface ParaLook {
+  font: string
+  size: number
+  align: string
+  bold: boolean
+  italic?: boolean
+}
+
+/** Default looks, from the shared element defaults, for a body text of this size */
+const DEFAULT_LOOKS: Record<ParaStyle, Omit<ParaLook, 'size'> & { ratio: number }> = {
+  letter: { font: '', ratio: 1, align: 'auto', bold: false, italic: false },
+  poem: { font: '', ratio: 1, align: 'start', bold: false, italic: false },
+  quote: { font: '', ratio: 0.92, align: 'auto', bold: false, italic: false },
+  sign: { font: '', ratio: 1, align: 'center', bold: true, italic: false }
+}
+const PARA_NAMES: Record<ParaStyle, string> = { letter: 'Letter', poem: 'Poem', quote: 'Quote', sign: 'Sign' }
+
+/** The Word paragraph styles of feature 50: set in from both sides, space around a run of them, no first-line indent */
+function paraStylesXml(sizePt: number, looks?: Partial<Record<ParaStyle, ParaLook>>): string {
+  return PARA_STYLES.map((p) => {
+    const d = DEFAULT_LOOKS[p]
+    const l: ParaLook = looks?.[p] ?? { ...d, size: Math.round(d.ratio * sizePt * 2) / 2 }
+    const ind = Math.round(PARA_INDENT[p] * sizePt * 20)
+    const jc = l.align === 'center' ? 'center' : l.align === 'end' ? 'end' : l.align === 'start' ? 'start' : ''
+    const f = l.font ? esc(l.font) : ''
+    const sz = Math.round(l.size * 2)
+    const custom = p === 'quote' ? '' : ' w:customStyle="1"'
+    return `<w:style w:type="paragraph"${custom} w:styleId="${PARA_WORD_ID[p]}"><w:name w:val="${PARA_NAMES[p]}"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="200" w:after="200"/><w:ind w:left="${ind}" w:right="${ind}" w:firstLine="0"/><w:contextualSpacing/>${jc ? `<w:jc w:val="${jc}"/>` : ''}</w:pPr><w:rPr>${f ? `<w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:cs="${f}"/>` : ''}${l.bold ? '<w:b/><w:bCs/>' : ''}${l.italic ? '<w:i/><w:iCs/>' : ''}<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:style>`
+  }).join('')
+}
+
+/** Line spacing and space after body paragraphs (Word units: 240 = single line, twips) */
+interface Spacing {
+  line: number
+  after: number
+}
+
+function stylesXml(font = DEFAULT_FONT, sizePt = DEFAULT_SIZE_PT, extra = '', para = paraStylesXml(sizePt), spacing: Spacing = { line: 360, after: 160 }, indent = FIRST_LINE_INDENT_TWIPS): string {
   const f = esc(font)
   const sz = Math.round(sizePt * 2)
   const heading = (id: string, name: string, size: number, before: number, after: number, outline: number) =>
     `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="${FIRST_PARAGRAPH_STYLE}"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="${before}" w:after="${after}"/><w:ind w:firstLine="0"/><w:outlineLvl w:val="${outline}"/></w:pPr><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:style>`
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${FIRST_LINE_INDENT_TWIPS}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>${extra}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
+<w:styles xmlns:w="${W_NS}"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${f}" w:hAnsi="${f}" w:eastAsia="${f}" w:cs="${f}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:bidi/><w:spacing w:after="${spacing.after}" w:line="${spacing.line}" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr><w:bidi/><w:ind w:firstLine="${indent}"/></w:pPr></w:style><w:style w:type="paragraph" w:styleId="${FIRST_PARAGRAPH_STYLE}"><w:name w:val="First Paragraph"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:ind w:firstLine="0"/></w:pPr></w:style>${heading('Heading1', 'heading 1', 40, 240, 480, 0)}${heading('Heading2', 'heading 2', 32, 360, 160, 1)}${heading('Heading3', 'heading 3', 30, 280, 120, 2)}<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style><w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>${para}${extra}<w:style w:type="character" w:default="1" w:styleId="DefaultParagraphFont"><w:name w:val="Default Paragraph Font"/><w:uiPriority w:val="1"/><w:semiHidden/><w:unhideWhenUsed/></w:style></w:styles>`
 }
 
 function coreXml(title: string): string {
@@ -280,6 +331,8 @@ export interface DocxBookOptions {
   fontSize: number
   /** How titles look (the layout's element styles) */
   styles?: Partial<Record<'chapterTitle' | 'partTitle' | 'bookTitle' | 'matterTitle', { font: string; size: number; bold: boolean; align: string }>>
+  /** How the paragraph styles look (feature 50) */
+  paraStyles?: Partial<Record<ParaStyle, ParaLook>>
 }
 
 /** A style that changes another one's font, size, weight and placement */
@@ -373,12 +426,115 @@ export async function bookToDocx(items: DocxBookItem[], title: string, opts: Doc
   zip.file('_rels/.rels', ROOT_RELS)
   zip.file('word/document.xml', documentXml)
   zip.file('word/_rels/document.xml.rels', hasNotes ? DOC_RELS.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`) : DOC_RELS)
-  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES + extra))
+  zip.file('word/styles.xml', stylesXml(opts.font, opts.fontSize, BOOK_STYLES + extra, paraStylesXml(opts.fontSize, opts.paraStyles)))
   // updateFields: Word asks to update the table of contents (page numbers) when the file opens
   zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', (hasToc ? '<w:updateFields w:val="true"/>' : '') + (hasNotes ? FOOTNOTE_PR : '')))
   if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))
   zip.file('docProps/core.xml', coreXml(title))
   // Not marked as made by the app: this file is for others (and is not a chapter file)
+  zip.file('docProps/app.xml', APP_XML.replace(APP_MARKER, `${APP_MARKER} export`))
+  return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
+}
+
+// ---------------------------------------------------------------------------
+// The manuscript for publishers (feature 45)
+// ---------------------------------------------------------------------------
+
+export type ManuscriptItem = { kind: 'part'; title: string } | { kind: 'chapter'; title: string; doc: PMNode }
+
+export interface ManuscriptOptions {
+  title: string
+  author: string
+  font: string
+  fontSize: number
+  /** 2 = double spacing */
+  lineSpacing: number
+  cover: boolean
+  /** Contact lines for the cover page */
+  contact: string[]
+  sceneSign: string
+  /** Author and title at the top of every page */
+  header: boolean
+}
+
+/** About how many words, the way a manuscript's cover says it */
+export function roughWords(n: number): number {
+  if (n >= 10000) return Math.round(n / 1000) * 1000
+  if (n >= 1000) return Math.round(n / 100) * 100
+  return Math.round(n / 10) * 10
+}
+
+const HEADER_CT = '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>'
+const HEADER_RELS = '<Relationship Id="rId10" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId11" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>'
+const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+/** A small paragraph for the header or footer */
+function hfPara(inner: string, jc: string, sizePt: number): string {
+  const sz = Math.round(sizePt * 2)
+  return `<w:p><w:pPr><w:bidi/><w:spacing w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="${jc}"/><w:rPr><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/></w:rPr></w:pPr>${inner}</w:p>`
+}
+
+/**
+ * A plain Word file in the format publishers ask for: A4, standard margins, a common font, double
+ * spacing, each chapter on a new page a third of the way down, page numbers at the bottom, and
+ * the author and title at the top of each page. Scene breaks become a centered sign (usually #).
+ * Footnotes stay real footnotes; paragraph styles stay styles.
+ */
+export async function manuscriptToDocx(items: ManuscriptItem[], o: ManuscriptOptions): Promise<Uint8Array> {
+  const zip = new JSZip()
+  const notes: Notes = []
+  const line = Math.round(240 * o.lineSpacing)
+  const words = items.reduce((n, it) => n + (it.kind === 'chapter' ? countWords(docText(it.doc)) : 0), 0)
+  const chapterLook = { font: '', size: Math.round(o.fontSize * 1.4 * 2) / 2, bold: false, align: 'center' }
+  const titleLook = { font: '', size: o.fontSize * 2, bold: false, align: 'center' }
+  const extra = BOOK_STYLES + overrideStyle('MsChapter', 'Manuscript Chapter', 'Heading1', chapterLook, 0) + overrideStyle('MsPart', 'Manuscript Part', 'Heading1', { ...chapterLook, size: Math.round(o.fontSize * 1.7 * 2) / 2 }, 0) + overrideStyle('MsTitle', 'Manuscript Title', 'BookTitle', titleLook)
+  const body: string[] = []
+  if (o.cover) {
+    const lines = o.contact.map((l) => l.trim()).filter(Boolean)
+    body.push(spacer(false, 0))
+    lines.forEach((l) => body.push(textPara(l, 'MatterText')))
+    body.push(spacer(false, lines.length ? 3600 - lines.length * line : 3600))
+    body.push(textPara(o.title, 'MsTitle'))
+    if (o.author.trim()) body.push(textPara(`מאת ${o.author.trim()}`, 'MatterText', { center: true, before: 480 }))
+    if (words) body.push(textPara(`כ־${roughWords(words).toLocaleString('en-US')} מילים`, 'MatterText', { center: true, before: 960 }))
+  }
+  items.forEach((it, i) => {
+    const pageBreak = o.cover || i > 0
+    body.push(spacer(pageBreak, it.kind === 'part' ? 4800 : 2400))
+    if (it.kind === 'part') body.push(textPara(it.title, 'MsPart', { center: true }))
+    else {
+      body.push(paragraphXml({ type: 'heading', attrs: { dir: guessDir(it.title) === 'ltr' ? 'ltr' : 'rtl' }, content: it.title ? [{ type: 'text', text: it.title }] : [] }, 'MsChapter'))
+      body.push(chapterParasXml(it.doc, notes, o.sceneSign))
+    }
+  })
+  const hasNotes = notes.length > 0
+  const m = 1440
+  const refs = `${o.header ? '<w:headerReference w:type="default" r:id="rId10"/>' : ''}<w:footerReference w:type="default" r:id="rId11"/>`
+  const sect = `<w:sectPr>${refs}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${m}" w:right="${m}" w:bottom="${m}" w:left="${m}" w:header="708" w:footer="708" w:gutter="0"/>${o.cover ? '<w:pgNumType w:start="0"/><w:titlePg/>' : ''}<w:bidi/></w:sectPr>`
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body.join('')}${sect}</w:body></w:document>`
+  const headText = [o.author.trim(), o.title.trim()].filter(Boolean).join(' / ')
+  const header = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="${W_NS}">${hfPara(headText ? textRuns(headText, undefined, guessDir(headText) !== 'ltr') : '', 'start', Math.max(9, o.fontSize - 2))}</w:hdr>`
+  const pageField = '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'
+  const footer = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="${W_NS}">${hfPara(pageField, 'center', Math.max(9, o.fontSize - 1))}</w:ftr>`
+  let ct = CONTENT_TYPES.replace('</Types>', `${HEADER_CT}</Types>`)
+  let rels = DOC_RELS.replace('</Relationships>', `${HEADER_RELS}</Relationships>`)
+  if (hasNotes) {
+    ct = ct.replace('</Types>', `${FOOTNOTES_CT}</Types>`)
+    rels = rels.replace('</Relationships>', `${FOOTNOTES_REL}</Relationships>`)
+  }
+  zip.file('[Content_Types].xml', ct)
+  zip.file('_rels/.rels', ROOT_RELS)
+  zip.file('word/document.xml', documentXml)
+  zip.file('word/_rels/document.xml.rels', rels)
+  zip.file('word/styles.xml', stylesXml(o.font, o.fontSize, extra, paraStylesXml(o.fontSize), { line, after: 0 }, 720))
+  zip.file('word/settings.xml', SETTINGS.replace('__FOOTNOTE_PR__', hasNotes ? FOOTNOTE_PR : ''))
+  if (hasNotes) zip.file('word/footnotes.xml', footnotesXml(notes))
+  zip.file('word/header1.xml', header)
+  zip.file('word/footer1.xml', footer)
+  zip.file('docProps/core.xml', coreXml(o.title))
   zip.file('docProps/app.xml', APP_XML.replace(APP_MARKER, `${APP_MARKER} export`))
   return zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
 }
@@ -459,6 +615,16 @@ function headingLevel(id: string | undefined, ctx: ReturnType<typeof parseStyles
   if (name === 'title') return 0
   const m = /^heading\s*(\d)$/.exec(name) ?? /^heading(\d)$/.exec(id.toLowerCase())
   return m ? Number(m[1]) : null
+}
+
+/** A paragraph style of feature 50, by its id or by its name (also Word's own "Quote" and "Intense Quote") */
+function paraStyleOf(id: string | undefined, ctx: ReturnType<typeof parseStyles>): ParaStyle | null {
+  if (!id) return null
+  for (const p of PARA_STYLES) if (PARA_WORD_ID[p] === id) return p
+  const name = ctx.styles.get(id)?.name ?? ''
+  if (name === 'quote' || name === 'intense quote') return 'quote'
+  for (const p of PARA_STYLES) if (name === PARA_NAMES[p].toLowerCase()) return p
+  return null
 }
 
 interface RunFmt {
@@ -559,6 +725,7 @@ export async function docxBlocks(data: Uint8Array | ArrayBuffer, opts: { splitPa
     const pPr = child(p, 'pPr')
     const styleId = wAttr(child(pPr, 'pStyle'), 'val') ?? undefined
     const level = headingLevel(styleId, ctx)
+    const pstyle = level === null ? paraStyleOf(styleId, ctx) : null
     const inline: PMNode[] = []
     /** where page breaks were, as positions in `inline` (only with splitPages) */
     const pageBreakAt: number[] = []
@@ -617,6 +784,7 @@ export async function docxBlocks(data: Uint8Array | ArrayBuffer, opts: { splitPa
     else if (jc === 'right') textAlign = dir === 'rtl' ? 'left' : 'right'
 
     const attrs: Record<string, unknown> = { dir, textAlign }
+    if (pstyle) attrs.pstyle = pstyle
     const make = (content: PMNode[], extra?: Record<string, unknown>): PMNode => {
       const a = { ...attrs, ...extra }
       // a hard line break left at the edge of a piece (around a page break) means nothing

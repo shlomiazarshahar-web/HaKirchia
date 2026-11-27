@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useEditorState, type Editor } from '@tiptap/react'
 import { DEFAULT_FONT, DEFAULT_SIZE_PT } from '@shared/docx'
+import { isParaStyle, PARA_LABEL, PARA_STYLES, paraKey } from '@shared/publish'
 import { EDITOR_FONTS, FONT_SIZES } from '../fonts'
 import { Icon } from './Icons'
 import type { Align } from '../editor'
@@ -19,7 +20,7 @@ export function FormatBar({ editor, onBookmark, onNote, onDrawer }: { editor: Ed
       const align: Align = (attrs.textAlign as Align) ?? (dir === 'rtl' ? 'right' : 'left')
       const ts = e.getAttributes('textStyle')
       return {
-        style: e.isActive('heading', { level: 2 }) ? 'h2' : e.isActive('heading', { level: 3 }) ? 'h3' : 'p',
+        style: e.isActive('heading', { level: 2 }) ? 'h2' : e.isActive('heading', { level: 3 }) ? 'h3' : isParaStyle(attrs.pstyle) ? attrs.pstyle : 'p',
         bold: e.isActive('bold'),
         italic: e.isActive('italic'),
         underline: e.isActive('underline'),
@@ -63,15 +64,30 @@ export function FormatBar({ editor, onBookmark, onNote, onDrawer }: { editor: Ed
       <select
         aria-label="סגנון פסקה"
         value={s?.style ?? 'p'}
+        title="סגנון הפסקה. איך כל סגנון נראה נקבע פעם אחת לכל הספר (בסוף הרשימה)"
         onChange={(e) => {
           const v = e.target.value
-          if (v === 'p') chain().setParagraph().run()
+          if (v === '__edit') {
+            // the look of each style, for the whole book (feature 50)
+            const key = s?.style === 'h2' || s?.style === 'h3' ? s.style : isParaStyle(s?.style) ? paraKey(s.style) : 'pLetter'
+            window.dispatchEvent(new CustomEvent('hakirchia:para-styles', { detail: key }))
+          } else if (v === 'p') chain().setParagraph().setParaStyle(null).run()
+          else if (isParaStyle(v)) chain().setParagraph().setParaStyle(v).run()
           else chain().setHeading({ level: v === 'h2' ? 2 : 3 }).run()
         }}
       >
         <option value="p">גוף טקסט</option>
         <option value="h2">כותרת</option>
         <option value="h3">כותרת משנה</option>
+        <optgroup label="סגנונות לפרוזה">
+          {PARA_STYLES.map((p) => (
+            <option key={p} value={p}>
+              {PARA_LABEL[p]}
+            </option>
+          ))}
+        </optgroup>
+        <option disabled>──────────</option>
+        <option value="__edit">עיצוב הסגנונות…</option>
       </select>
       <select
         ref={fontRef}
