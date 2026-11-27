@@ -94,7 +94,8 @@ function book(): BookData {
 describe('"not in export" (feature 53) and empty chapters (feature 66)', () => {
   it('knows an empty chapter', () => {
     expect(isEmptyChapter(doc(p(''), p(' ')))).toBe(true)
-    expect(isEmptyChapter(doc(p('* * *')))).toBe(false)
+    expect(isEmptyChapter(doc(p('* * *'), p(''), p('***')))).toBe(true)
+    expect(isEmptyChapter(doc(p('* * *'), p('מילה')))).toBe(false)
     expect(isEmptyChapter(doc({ type: 'paragraph', content: [{ type: 'footnote', attrs: { text: 'x' } }] }))).toBe(false)
   })
   it('leaves the chapter out, and a part whose chapters are all left out', () => {

@@ -25,11 +25,12 @@ export interface BookData {
   sceneImage?: string
 }
 
-/** A chapter with no text at all: a planned chapter, only a name and a synopsis so far (feature 66) */
+/** A chapter with no text at all (scene breaks do not count): a planned chapter, only a name and a synopsis so far (feature 66) */
 export function isEmptyChapter(doc: PMNode | undefined): boolean {
   if (!doc) return false
+  // scene breaks (* * *) laid out in advance are not text
   const has = (n: PMNode): boolean => (typeof n.text === 'string' && n.text.trim() !== '') || n.type === 'footnote' || (n.content ?? []).some(has)
-  return !has(doc)
+  return !(doc.content ?? []).some((b) => has(b) && !(b.type === 'paragraph' && isSceneBreak(plain(b))))
 }
 
 /** Left out of the book: marked "not in export" (feature 53), or still empty (feature 66) */
