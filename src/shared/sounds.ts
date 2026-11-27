@@ -1,13 +1,22 @@
 // Feature 56, the YouTube player: which links it accepts, and which pages may open in it.
 // Pure logic, used by the window and checked again in the main process.
 //
-// Round 14: YouTube refuses its embedded player when it is the page itself rather than a frame
-// inside a page (error 152-4). So the small player is now a tiny page of the app's own
-// (PLAYER_SCHEME, served by the main process) that holds YouTube's player in a frame. If that still
-// fails, the panel falls back to YouTube's normal watch page.
+// The small player is a tiny page of the app's own that holds YouTube's player in a frame. YouTube
+// now refuses to play (error 152-4 / 153) unless that page has a real web address it can name as
+// "the site that embeds me": an app-only address (file://, a custom scheme) is not enough.
+// So the page is served from a real web origin, in one of two ways (main/music.ts):
+//   way 1: a tiny local web server on this computer (http://127.0.0.1:<port>/player)
+//   way 2: an https address answered inside the player's own session (PLAYER_HTTPS_BASE)
+// The panel tries way 1, then way 2, and remembers the way that played.
 
-/** The scheme of the app's own player page (main/music.ts serves it) */
+/** Prefix of the player page's console reports (ready / playing / error:<code>) */
 export const PLAYER_SCHEME = 'hakirchia-yt'
+/** Way 2's address: the app answers it itself, inside the music session (nothing is downloaded from it) */
+export const PLAYER_HTTPS_HOST = 'shlomiazarshahar-web.github.io'
+export const PLAYER_HTTPS_PATH = '/hakirchia-player/'
+export const PLAYER_HTTPS_BASE = `https://${PLAYER_HTTPS_HOST}${PLAYER_HTTPS_PATH}`
+/** How many ways there are to show the small player */
+export const PLAYER_WAYS = 2
 
 const ID = /^[\w-]{6,}$/
 const LIST = /^[\w-]+$/
@@ -45,14 +54,14 @@ export function youtubeEmbed(link: string): string | null {
   return `https://www.youtube.com/embed/${p.id}?autoplay=1${p.list ? `&list=${p.list}` : `&loop=1&playlist=${p.id}`}`
 }
 
-/** The app's own small player page for a link (YouTube's player inside a frame) */
-export function youtubePlayer(link: string): string | null {
+/** The app's own small player page for a link (YouTube's player inside a frame), at a page address (way 1 or 2) */
+export function youtubePlayer(link: string, base: string): string | null {
   const p = youtubeParts(link)
   if (!p) return null
   const q = new URLSearchParams()
   if (p.id) q.set('v', p.id)
   if (p.list) q.set('list', p.list)
-  return `${PLAYER_SCHEME}://player/?${q}`
+  return `${base}?${q}`
 }
 
 /** YouTube's normal page for the link (the fallback when the small player is refused) */
@@ -83,8 +92,12 @@ var cfg = ${cfg};
 function report(what) { console.log('${PLAYER_SCHEME}:' + what); }
 function onYouTubeIframeAPIReady() {
   cfg.width = '100%'; cfg.height = '100%';
+  // the site that embeds the player: this page's own (real) web address
+  cfg.playerVars.origin = location.origin;
+  cfg.playerVars.widget_referrer = location.href;
   cfg.events = {
     onReady: function (e) { report('ready'); try { e.target.playVideo(); } catch (x) {} },
+    onStateChange: function (e) { if (e.data === 1) report('playing'); },
     onError: function (e) { report('error:' + e.data); }
   };
   new YT.Player('p', cfg);
@@ -98,8 +111,11 @@ function onYouTubeIframeAPIReady() {
 export function allowedInMusicPlayer(url: string): boolean {
   try {
     const u = new URL(url)
-    if (u.protocol === `${PLAYER_SCHEME}:`) return u.hostname === 'player'
+    // way 1: the local player server (main/music.ts listens on this computer only)
+    if (u.protocol === 'http:') return u.hostname === '127.0.0.1' && /^\/player\/?$/.test(u.pathname)
     if (u.protocol !== 'https:') return false
+    // way 2
+    if (u.hostname === PLAYER_HTTPS_HOST) return u.pathname === PLAYER_HTTPS_PATH
     return /^(www\.|m\.)?youtube(-nocookie)?\.com$/.test(u.hostname) || u.hostname === 'consent.youtube.com' || /^(accounts|consent)\.google\.com$/.test(u.hostname)
   } catch {
     return false

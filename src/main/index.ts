@@ -31,9 +31,7 @@ import type { AiSettings, ExercisePrompt, Review, ReviewRequest, ChatTurn, Findi
 import { normalizeAccent } from '../shared/accent'
 import * as writingLog from './writinglog'
 import { allowedInMusicPlayer } from '../shared/sounds'
-import { registerPlayerScheme, setupMusicSession } from './music'
-
-registerPlayerScheme()
+import { setupMusicSession } from './music'
 
 let win: BrowserWindow | null = null
 let allowClose = false
