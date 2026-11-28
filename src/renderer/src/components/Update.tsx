@@ -12,15 +12,15 @@ export function useUpdateState(): UpdateState {
   return s
 }
 
-/** Under the update line: whether test versions arrive too */
-function TestUpdatesToggle() {
+/** In the settings (round 16; it used to be on the home screen): whether test versions arrive too */
+export function TestUpdatesToggle() {
   const [on, setOn] = useState<boolean | null>(null)
   useEffect(() => {
     void api.testUpdates().then(setOn)
   }, [])
   if (on === null) return null
   return (
-    <label className="update-line update-tests" title="גרסאות בדיקה הן גרסאות לפני מיזוג, כדי לנסות שינויים חדשים. הן עלולות להכיל תקלות.">
+    <label className="set-row" title="גרסאות בדיקה הן גרסאות לפני מיזוג, כדי לנסות שינויים חדשים. הן עלולות להכיל תקלות.">
       <input
         type="checkbox"
         checked={on}
@@ -39,10 +39,7 @@ export function UpdateStatus() {
   const s = useUpdateState()
   if (s.kind === 'dev') return null
   return (
-    <>
-      <UpdateLine s={s} />
-      <TestUpdatesToggle />
-    </>
+    <UpdateLine s={s} />
   )
 }
 

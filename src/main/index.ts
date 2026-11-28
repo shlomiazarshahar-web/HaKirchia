@@ -104,7 +104,11 @@ function createWindow(): void {
     void loadAppPage(win)
   })
   spell.setupSpellcheck(win)
-  win.once('ready-to-show', () => win?.show())
+  // round 16: opens filling the screen (maximized), not as a small window
+  win.once('ready-to-show', () => {
+    win?.maximize()
+    win?.show()
+  })
   // Round 16: another computer may have changed the shared app state meanwhile
   const reload = () =>
     void reloadShared().then((changed) => {

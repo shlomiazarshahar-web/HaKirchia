@@ -1475,9 +1475,9 @@ export default function App() {
           <Icon name={theme === 'light' ? 'moon' : 'sun'} />
           {theme === 'light' ? 'כהה' : 'בהיר'}
         </button>
-        <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים, נקודת עצירה, סנכרון בין מחשבים, גיבוי" onClick={() => setDialog({ kind: 'settings' })}>
+        <button className="ib" title="הגדרות: מראה, כתיבה, סנכרון בין מחשבים, גיבוי ועדכונים, Claude" onClick={() => setDialog({ kind: 'settings' })}>
           <Icon name="gear" />
-          <span className="lbl">הגדרות כתיבה</span>
+          <span className="lbl">הגדרות</span>
         </button>
         {inWrite && !empty && (
           <>

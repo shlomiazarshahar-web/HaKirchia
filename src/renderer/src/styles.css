@@ -394,7 +394,7 @@ body { background: #dde3e0; overflow: hidden; }
 .nq-name { font-size: 10.5px; color: var(--w-muted); text-align: center; line-height: 1.2; }
 .nq-row { display: flex; gap: 4px; flex-wrap: wrap; }
 .nq-row .ib { border: 1px solid var(--w-line); font-size: 14px; min-width: 26px; justify-content: center; }
-.dialog.settings { width: min(560px, calc(100vw - 40px)); max-height: calc(100vh - 80px); overflow: auto; gap: 18px; }
+.dialog.settings { width: min(600px, calc(100vw - 40px)); height: min(680px, calc(100vh - 80px)); overflow: auto; gap: 18px; }
 .dialog.settings section { display: flex; flex-direction: column; gap: 8px; }
 .dialog.settings section + section { border-top: 1px solid var(--w-line); padding-top: 16px; }
 .dialog.settings h3 { margin: 0; font-size: 14.5px; }
@@ -1695,3 +1695,11 @@ g.sp-arc.paid circle { fill: var(--w-accent); }
 .sync-pcs b { color: var(--w-ink); font-weight: 600; }
 .ws-missing { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 520px; margin: 0 auto; }
 .ws-missing-actions { display: flex; gap: 8px; margin-top: 6px; }
+
+/* Round 16: the settings in tabs */
+.set-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--w-line); margin-top: -6px; position: sticky; top: -20px; background: var(--w-paper); z-index: 1; padding-top: 4px; }
+.set-tabs button { all: unset; cursor: pointer; padding: 7px 12px; font-size: 13.5px; color: var(--w-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.set-tabs button:hover { color: var(--w-ink); }
+.set-tabs button.on { color: var(--w-ink); font-weight: 600; border-bottom-color: var(--w-accent); }
+.set-tabs button:focus-visible { outline: 2px solid var(--w-accent); outline-offset: -2px; }
+.set-tabs + section { border-top: none !important; padding-top: 0 !important; }
