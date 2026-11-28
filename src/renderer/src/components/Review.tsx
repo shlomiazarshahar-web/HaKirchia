@@ -5,7 +5,7 @@ import type { Editor } from '@tiptap/react'
 import type { Book, Chapter } from '@shared/types'
 import {
   addUsage,
-  costOf,
+  estimateReview,
   DEFAULT_INSTRUCTIONS,
   DEFAULT_KINDS,
   EFFORTS,
@@ -18,9 +18,12 @@ import {
   partialReply,
   historyText,
   relevantReviews,
+  type ChatTurn,
+  type Effort,
   type Exercise,
   type Finding,
   type FindingStatus,
+  type ModelId,
   type Review,
   type ReviewKind,
   type ReviewRequest,
@@ -64,10 +67,6 @@ function selectionOf(editor: Editor | null): { text: string; notes: string[]; ch
   return { text, notes, chapterId: editorChapter(editor)?.chapterId }
 }
 
-/** Rough price before sending: Hebrew is about 2.5 characters a token; the answer is guessed */
-function estimate(model: string, chars: number): number {
-  return costOf(model, Math.round(chars / 2.5) + 1500, 3000)
-}
 
 // ---------------------------------------------------------------------------
 // The panel
@@ -166,7 +165,6 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
                 await save(rv)
                 setOpenId(rv.id)
               }}
-              model={ai.model}
             />
           ) : (
             <div className="rv-list">
@@ -196,7 +194,7 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
 // A new review
 // ---------------------------------------------------------------------------
 
-type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'excerptNotes' | 'withSource' | 'withHistory'>
+type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'excerptNotes' | 'withSource' | 'withHistory' | 'effort' | 'withBackground'>
 
 /** Builds the request: the texts are read now (open editors win over the files) */
 export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: ReviewKind[], withBackground: boolean, earlier: Review[] = []): Promise<ReviewRequest | string> {
@@ -258,8 +256,7 @@ function NewReview({
   running,
   partial,
   onCancel,
-  onRun,
-  model
+  onRun
 }: {
   target: ReviewTarget
   current: Chapter | null
@@ -268,7 +265,6 @@ function NewReview({
   partial: string
   onCancel: () => void
   onRun: (req: ReviewRequest, meta: Meta) => Promise<void>
-  model: string
 }) {
   const ai = useAi()
   const [scope, setScope] = useState<ReviewScope>(target.mode === 'exercise' ? 'exercise' : 'chapter')
@@ -277,6 +273,11 @@ function NewReview({
   const [withBg, setWithBg] = useState(true)
   const [withSrc, setWithSrc] = useState(true)
   const [withHist, setWithHist] = useState(true)
+  // round 17: model and depth for this review (start from the settings)
+  const [pickModel, setPickModel] = useState<ModelId>(ai.model)
+  const [pickEffort, setPickEffort] = useState<Effort>(ai.effort)
+  useEffect(() => setPickModel(ai.model), [ai.model])
+  useEffect(() => setPickEffort(ai.effort), [ai.effort])
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [sel, setSel] = useState(() => selectionOf(target.editor))
@@ -341,11 +342,13 @@ function NewReview({
     if (!picked.length && !meta.question) return setError('בוחרים לפחות סוג ביקורת אחד, או כותבים שאלה')
     if (hasSrc && withSrc) meta.withSource = true
     if (earlier.length && withHist) meta.withHistory = true
+    meta.effort = pickEffort
+    if (hasBg && withBg) meta.withBackground = true
     setPreparing(true)
     const req = await buildRequest(target, meta, ai.kinds, hasBg && withBg, earlier)
     setPreparing(false)
     if (typeof req === 'string') return setError(req)
-    await onRun(req, meta)
+    await onRun({ ...req, model: pickModel, effort: pickEffort }, meta)
   }
 
   if (running || preparing) {
@@ -364,7 +367,8 @@ function NewReview({
     )
   }
 
-  const modelLabel = MODELS.find((m) => m.id === model)?.label ?? model
+  // what would be sent, in characters: the text, the original (about as long), and earlier reviews
+  const sentChars = size ? size * (hasSrc && withSrc ? 2 : 1) + (withHist && earlier.length ? Math.min(40000, historyText(earlier, histTarget).length) : 0) : 0
   return (
     <div className="rv-new">
       {target.mode === 'book' && (
@@ -414,13 +418,29 @@ function NewReview({
         שאלה או בקשה (לא חובה)
         <textarea dir="auto" rows={3} value={question} placeholder="למשל: האם הסוף של הפרק מרגיש מוקדם מדי?" onChange={(e) => setQuestion(e.target.value)} />
       </label>
+      <div className="rv-row rv-pick">
+        <span className="rv-lbl">מודל ועומק</span>
+        <select value={pickModel} aria-label="מודל" onChange={(e) => setPickModel(e.target.value as ModelId)}>
+          {MODELS.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.label.replace('Claude ', '')}
+            </option>
+          ))}
+        </select>
+        <select value={pickEffort} aria-label="עומק" onChange={(e) => setPickEffort(e.target.value as Effort)}>
+          {EFFORTS.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+      </div>
       {error && <div className="rv-err">{error}</div>}
       <button className="btn" onClick={() => void run()}>
         <Icon name="spark" /> הרצת ביקורת
       </button>
       <div className="lp-note">
-        {modelLabel}
-        {size !== null && size > 0 ? ` · בערך ${formatCost(estimate(model, size + (withHist && earlier.length ? Math.min(40000, historyText(earlier, histTarget).length) : 0)))}` : ''}. הטקסט נשלח ל־Anthropic לצורך הביקורת בלבד.
+        {sentChars > 0 ? `הערכה: בערך ${formatCost(estimateReview(pickModel, pickEffort, sentChars))} לביקורת. תגובות ושאלות אחריה: כמה סנטים כל אחת. ` : ''}הטקסט נשלח ל־Anthropic לצורך הביקורת בלבד.
       </div>
     </div>
   )
@@ -471,7 +491,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
 
   /** The same request the review was made with: the text as reviewed, plus what changed since (round 16), for follow-ups */
   const request = async () => {
-    const req = await buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
+    const req = await buildRequest(target, rv, ai.kinds, rv.effort ? !!rv.withBackground : target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
     return typeof req === 'string' && !rv.reviewed?.length ? req : followUpRequest(typeof req === 'string' ? { scope: rv.scope, texts: [], kinds: [] } : req, rv)
   }
 
@@ -492,7 +512,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
       show(r.error ?? 'התגובה לא נשלחה', true)
       return false
     }
-    const thread = [...(f.thread ?? []), { role: 'user' as const, text: message }, { role: 'assistant' as const, text: r.value.reply }]
+    const thread = [...(f.thread ?? []), { role: 'user' as const, text: message }, { role: 'assistant' as const, text: r.value.reply, cost: r.value.usage.cost }]
     update({ ...patchFinding(rv, f.id, { thread, ...(r.value.decision ? { decision: r.value.decision } : {}) }), usage: addUsage(rv.usage, r.value.usage) })
     return true
   }
@@ -545,7 +565,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
       setQ(question)
       return show(r.error ?? 'השאלה לא נשלחה', true)
     }
-    const next: Review = { ...asked, chat: [...asked.chat, { role: 'assistant', text: r.value.text }], usage: addUsage(rv.usage, r.value.usage) }
+    const next: Review = { ...asked, chat: [...asked.chat, { role: 'assistant', text: r.value.text, cost: r.value.usage.cost }], usage: addUsage(rv.usage, r.value.usage) }
     update(next)
     requestAnimationFrame(() => chatEnd.current?.scrollIntoView({ block: 'end' }))
   }
@@ -603,7 +623,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
           </small>
         </div>
         {rv.summary && (
-          <div className="rv-summary" dir="auto">
+          <div className="rv-summary" dir="rtl">
             {rv.summary}
           </div>
         )}
@@ -642,20 +662,20 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
                 {rv.scope === 'book' && chapterTitle(f.chapterId) && <small>{chapterTitle(f.chapterId)}</small>}
               </div>
               {f.quote && (
-                <button className={`rv-quote${missing.has(f.id) ? ' missing' : ''}`} dir="auto" title={missing.has(f.id) ? 'לא נמצא בטקסט' : 'קפיצה למקום בטקסט'} onClick={() => void jump(f)}>
+                <button className={`rv-quote${missing.has(f.id) ? ' missing' : ''}`} dir="rtl" title={missing.has(f.id) ? 'לא נמצא בטקסט' : 'קפיצה למקום בטקסט'} onClick={() => void jump(f)}>
                   “{f.quote}”
                 </button>
               )}
-              <div className="rv-comment" dir="auto">
+              <div className="rv-comment" dir="rtl">
                 {f.comment}
               </div>
               {f.suggestion && (
-                <div className="rv-suggest" dir="auto">
+                <div className="rv-suggest" dir="rtl">
                   ← {f.suggestion}
                 </div>
               )}
               {f.decision && !openThreads.has(f.id) && (
-                <div className="rv-decision" dir="auto">
+                <div className="rv-decision" dir="rtl">
                   <b>הוחלט:</b> {f.decision}
                 </div>
               )}
@@ -695,25 +715,26 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
         {rv.lessons && (
           <div className="rv-section">
             <b>מה זה מלמד על הכתיבה שלך</b>
-            <div dir="auto">{rv.lessons}</div>
+            <div dir="rtl">{rv.lessons}</div>
           </div>
         )}
         {rv.next && (
           <div className="rv-section">
             <b>מה הייתי עושה עכשיו</b>
-            <div dir="auto">{rv.next}</div>
+            <div dir="rtl">{rv.next}</div>
           </div>
         )}
         {(rv.chat.length > 0 || job.jobId) && (
           <div className="rv-chat">
             {rv.chat.map((t, i) => (
-              <div key={i} className={`rv-msg ${t.role}`} dir="auto">
+              <div key={i} className={`rv-msg ${t.role}`} dir="rtl">
                 {t.text}
+                <MsgCost t={t} />
               </div>
             ))}
-            {job.jobId && (
-              <div className="rv-msg assistant pending" dir="auto">
-                {job.partial || 'Claude חושב…'}
+            {job.jobId && !replyFor && (
+              <div className="rv-msg assistant pending" dir="rtl">
+                {partialReply(job.partial) || 'Claude חושב…'}
               </div>
             )}
           </div>
@@ -722,7 +743,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
       </div>
       <div className="rv-ask">
         <textarea
-          dir="auto"
+          dir="rtl"
           rows={2}
           value={q}
           disabled={!!job.jobId}
@@ -746,10 +767,17 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
         )}
       </div>
       <div className="lp-note rv-foot">
-        {MODELS.find((m) => m.id === rv.model)?.label ?? rv.model} · עלות עד עכשיו {formatCost(rv.usage.cost)}
+        {MODELS.find((m) => m.id === rv.model)?.label ?? rv.model}
+        {rv.effort ? ` · ${EFFORTS.find((x) => x.id === rv.effort)?.label ?? ''}` : ''} · עלות עד עכשיו, כולל תגובות ושאלות: {formatCost(rv.usage.cost)}
       </div>
     </div>
   )
+}
+
+/** Round 17: what one answer cost, small, under it */
+function MsgCost({ t }: { t: ChatTurn }) {
+  if (t.role !== 'assistant' || t.cost === undefined) return null
+  return <small className="rv-cost">{formatCost(t.cost)}</small>
 }
 
 // ---------------------------------------------------------------------------
@@ -789,19 +817,20 @@ function FindingThread({
   return (
     <div className="rv-thread">
       {thread.map((t, i) => (
-        <div key={i} className={`rv-msg ${t.role}`} dir="auto">
+        <div key={i} className={`rv-msg ${t.role}`} dir="rtl">
           {t.text}
+          <MsgCost t={t} />
         </div>
       ))}
       {busy && (
-        <div className="rv-msg assistant pending" dir="auto">
+        <div className="rv-msg assistant pending" dir="rtl">
           {partial || 'Claude חושב…'}
         </div>
       )}
       <div className="rv-ask">
         <textarea
           ref={box}
-          dir="auto"
+          dir="rtl"
           rows={2}
           value={draft}
           disabled={locked}
@@ -827,7 +856,7 @@ function FindingThread({
       <label className="rv-decision-edit">
         <span>מה הוחלט</span>
         <input
-          dir="auto"
+          dir="rtl"
           value={decision}
           placeholder="Claude ימלא אחרי השיחה, ואפשר לכתוב בעצמך"
           title="ביקורות הבאות יתחשבו בהחלטה הזו"
@@ -933,7 +962,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
           ))}
           <label className="set-row">
             <span>יסודיות</span>
-            <select value={ai.effort} onChange={(e) => setAi({ effort: e.target.value as typeof ai.effort })}>
+            <select value={ai.effort} onChange={(e) => setAi({ effort: e.target.value as typeof ai.effort, r17: true })}>
               {EFFORTS.map((x) => (
                 <option key={x.id} value={x.id}>
                   {x.label}
@@ -942,7 +971,9 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             </select>
             <span className="set-ex">יותר יסודי = לוקח יותר זמן ועולה קצת יותר</span>
           </label>
-          <p className="lp-note">פרק של 3,000 מילים עולה בערך 5 עד 15 סנט ב־Opus 5.5. שאלות המשך זולות יותר, כי הפרק נשמר אצל Claude לכמה דקות.</p>
+          <p className="lp-note">
+            רוב המחיר והזמן של ביקורת הם מה ש־Claude כותב: החשיבה השקטה וההערות. ביקורת על פרק ב־Opus 5.5 עולה בערך 60 סנט ב"יסודי" ובערך 35 ב"רגיל", ו־Sonnet בחצי מזה. תגובות ושאלות אחרי הביקורת עולות כמה סנטים, כי הפרק נשמר אצל Claude לשעה. אפשר לבחור מודל ועומק גם לכל ביקורת בנפרד, בחלון הביקורת.
+          </p>
         </section>
 
         <section>
