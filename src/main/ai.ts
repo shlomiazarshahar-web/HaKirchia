@@ -6,7 +6,7 @@ import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import type { BetaMessageParam, BetaTextBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import { getSettings } from './settings'
-import { costOf, findingThreadMessages, normalizeAi, parseReply, REPLY_SCHEMA, promptIdeasMessage, REVIEW_SCHEMA, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Finding, type Review, type ReviewRequest, type Usage } from '../shared/review'
+import { changesNote, costOf, findingThreadMessages, normalizeAi, parseReply, REPLY_SCHEMA, promptIdeasMessage, REVIEW_SCHEMA, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Finding, type Review, type ReviewRequest, type Usage } from '../shared/review'
 
 const keyFile = () => join(app.getPath('userData'), 'claude-key.bin')
 let keyCache: string | null | undefined
@@ -168,7 +168,7 @@ export async function followUp(wc: WebContents, jobId: string, req: ReviewReques
     { role: 'assistant', content: reviewAsText(rv) || '(אין הערות)' }
   ]
   for (const t of chat) messages.push({ role: t.role, content: t.text })
-  messages.push({ role: 'user', content: `${question}\n\n(ענה בטקסט רגיל, בקצרה ולעניין.)` })
+  messages.push({ role: 'user', content: `${changesNote(req)}${question}\n\n(ענה בטקסט רגיל, בקצרה ולעניין.)` })
   const body: Body = {
     model: s.model,
     max_tokens: 32000,
@@ -189,7 +189,11 @@ export async function findingReply(wc: WebContents, jobId: string, req: ReviewRe
     { role: 'user', content: contextBlocks(req, ask) },
     { role: 'assistant', content: reviewAsText(rv) || '(אין הערות)' }
   ]
-  for (const t of findingThreadMessages(finding, finding.thread ?? [], message)) messages.push({ role: t.role, content: t.text })
+  const turns = findingThreadMessages(finding, finding.thread ?? [], message)
+  // round 16: what changed in the text since the review goes with the writer's latest reply
+  const note = changesNote(req)
+  if (note) turns[turns.length - 1] = { ...turns[turns.length - 1], text: note + turns[turns.length - 1].text }
+  for (const t of turns) messages.push({ role: t.role, content: t.text })
   const body: Body = {
     model: s.model,
     max_tokens: 32000,

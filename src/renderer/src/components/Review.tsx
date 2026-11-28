@@ -25,7 +25,9 @@ import {
   type ReviewKind,
   type ReviewRequest,
   type ReviewScope,
-  type ReviewText
+  type ReviewText,
+  snapshotTexts,
+  followUpRequest
 } from '@shared/review'
 import { api } from '../api'
 import { saveKey, setAi, useAi, useAiJob, useAiKey } from '../ai'
@@ -159,7 +161,8 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
                 job.done()
                 if (!r.ok || !r.value) return show(r.error ?? 'הביקורת נכשלה', true)
                 const parsed = parseReview(r.value.json, req.texts)
-                const rv: Review = { id: newId(), at: Date.now(), ...meta, model: r.value.model, ...parsed, chat: [], usage: r.value.usage }
+                const reviewed = meta.scope === 'selection' ? undefined : snapshotTexts(req.texts)
+                const rv: Review = { id: newId(), at: Date.now(), ...meta, model: r.value.model, ...parsed, chat: [], usage: r.value.usage, ...(reviewed ? { reviewed } : {}) }
                 await save(rv)
                 setOpenId(rv.id)
               }}
@@ -466,8 +469,11 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
   const setFinding = (id: string, s: FindingStatus) => update(patchFinding(rv, id, { status: s }))
   const setDecision = (id: string, decision: string) => update(patchFinding(rv, id, { decision: decision.trim() || undefined }))
 
-  /** The same request the review was made with (the text as it is now), for follow-ups */
-  const request = () => buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
+  /** The same request the review was made with: the text as reviewed, plus what changed since (round 16), for follow-ups */
+  const request = async () => {
+    const req = await buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
+    return typeof req === 'string' && !rv.reviewed?.length ? req : followUpRequest(typeof req === 'string' ? { scope: rv.scope, texts: [], kinds: [] } : req, rv)
+  }
 
   /** The writer answers one comment; Claude answers and sums up what was decided */
   const reply = async (f: Finding, message: string): Promise<boolean> => {

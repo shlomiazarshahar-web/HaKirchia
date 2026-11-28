@@ -143,3 +143,34 @@ describe('round 16: app state shared between computers', () => {
     expect(emptyState().books).toEqual([])
   })
 })
+
+import { changesNote, changesText, followUpRequest, snapshotTexts } from '../src/shared/review'
+
+describe('round 16: a review remembers the text it reviewed', () => {
+  const reviewed = [{ id: 'c1', title: 'פרק 1', paras: ['הים היה שקט מאוד מאוד.', 'נועה הלכה הביתה.', 'סוף.'] }]
+  it('lists only what changed since the review', () => {
+    const now = [{ id: 'c1', title: 'פרק 1', paras: ['הים היה שקט.', 'נועה הלכה הביתה.', 'סוף.', 'פסקה חדשה.'] }]
+    const t = changesText(reviewed, now)
+    expect(t).toContain('לפני: «הים היה שקט מאוד מאוד.»')
+    expect(t).toContain('אחרי: «הים היה שקט.»')
+    expect(t).toContain('נוסף: «פסקה חדשה.»')
+    expect(t).not.toContain('נועה')
+    expect(changesText(reviewed, reviewed)).toBe('')
+  })
+  it('a follow-up sends the reviewed text (same cached context) plus the changes', () => {
+    const req = { scope: 'chapter' as const, texts: [{ id: 'c1', title: 'פרק 1', paras: ['הים היה שקט.', 'נועה הלכה הביתה.', 'סוף.'], source: ['The sea'] }], kinds: [] }
+    const f = followUpRequest(req, { scope: 'chapter', reviewed })
+    expect(f.texts[0].paras).toEqual(reviewed[0].paras)
+    expect(f.texts[0].source).toEqual(['The sea'])
+    expect(changesNote(f)).toContain('השינויים מאז')
+    // an older review with no copy: today's text, with a note
+    const old = followUpRequest(req, { scope: 'chapter' })
+    expect(old.texts).toBe(req.texts)
+    expect(changesNote(old)).toContain('הגרסה של היום')
+    expect(changesNote(followUpRequest(req, { scope: 'chapter', reviewed: req.texts }))).toBe('')
+  })
+  it('does not keep a copy of a huge text', () => {
+    expect(snapshotTexts([{ title: 'x', paras: ['א'.repeat(700_000)] }])).toBeUndefined()
+    expect(snapshotTexts([{ title: 'x', paras: ['א'], source: ['a'] }])).toEqual([{ title: 'x', paras: ['א'] }])
+  })
+})
