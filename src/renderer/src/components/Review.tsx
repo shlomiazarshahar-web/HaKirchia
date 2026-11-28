@@ -623,7 +623,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
           </small>
         </div>
         {rv.summary && (
-          <div className="rv-summary" dir="auto">
+          <div className="rv-summary" dir="rtl">
             {rv.summary}
           </div>
         )}
@@ -662,20 +662,20 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
                 {rv.scope === 'book' && chapterTitle(f.chapterId) && <small>{chapterTitle(f.chapterId)}</small>}
               </div>
               {f.quote && (
-                <button className={`rv-quote${missing.has(f.id) ? ' missing' : ''}`} dir="auto" title={missing.has(f.id) ? 'לא נמצא בטקסט' : 'קפיצה למקום בטקסט'} onClick={() => void jump(f)}>
+                <button className={`rv-quote${missing.has(f.id) ? ' missing' : ''}`} dir="rtl" title={missing.has(f.id) ? 'לא נמצא בטקסט' : 'קפיצה למקום בטקסט'} onClick={() => void jump(f)}>
                   “{f.quote}”
                 </button>
               )}
-              <div className="rv-comment" dir="auto">
+              <div className="rv-comment" dir="rtl">
                 {f.comment}
               </div>
               {f.suggestion && (
-                <div className="rv-suggest" dir="auto">
+                <div className="rv-suggest" dir="rtl">
                   ← {f.suggestion}
                 </div>
               )}
               {f.decision && !openThreads.has(f.id) && (
-                <div className="rv-decision" dir="auto">
+                <div className="rv-decision" dir="rtl">
                   <b>הוחלט:</b> {f.decision}
                 </div>
               )}
@@ -715,25 +715,25 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
         {rv.lessons && (
           <div className="rv-section">
             <b>מה זה מלמד על הכתיבה שלך</b>
-            <div dir="auto">{rv.lessons}</div>
+            <div dir="rtl">{rv.lessons}</div>
           </div>
         )}
         {rv.next && (
           <div className="rv-section">
             <b>מה הייתי עושה עכשיו</b>
-            <div dir="auto">{rv.next}</div>
+            <div dir="rtl">{rv.next}</div>
           </div>
         )}
         {(rv.chat.length > 0 || job.jobId) && (
           <div className="rv-chat">
             {rv.chat.map((t, i) => (
-              <div key={i} className={`rv-msg ${t.role}`} dir="auto">
+              <div key={i} className={`rv-msg ${t.role}`} dir="rtl">
                 {t.text}
                 <MsgCost t={t} />
               </div>
             ))}
             {job.jobId && !replyFor && (
-              <div className="rv-msg assistant pending" dir="auto">
+              <div className="rv-msg assistant pending" dir="rtl">
                 {partialReply(job.partial) || 'Claude חושב…'}
               </div>
             )}
@@ -743,7 +743,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
       </div>
       <div className="rv-ask">
         <textarea
-          dir="auto"
+          dir="rtl"
           rows={2}
           value={q}
           disabled={!!job.jobId}
@@ -817,20 +817,20 @@ function FindingThread({
   return (
     <div className="rv-thread">
       {thread.map((t, i) => (
-        <div key={i} className={`rv-msg ${t.role}`} dir="auto">
+        <div key={i} className={`rv-msg ${t.role}`} dir="rtl">
           {t.text}
           <MsgCost t={t} />
         </div>
       ))}
       {busy && (
-        <div className="rv-msg assistant pending" dir="auto">
+        <div className="rv-msg assistant pending" dir="rtl">
           {partial || 'Claude חושב…'}
         </div>
       )}
       <div className="rv-ask">
         <textarea
           ref={box}
-          dir="auto"
+          dir="rtl"
           rows={2}
           value={draft}
           disabled={locked}
@@ -856,7 +856,7 @@ function FindingThread({
       <label className="rv-decision-edit">
         <span>מה הוחלט</span>
         <input
-          dir="auto"
+          dir="rtl"
           value={decision}
           placeholder="Claude ימלא אחרי השיחה, ואפשר לכתוב בעצמך"
           title="ביקורות הבאות יתחשבו בהחלטה הזו"
