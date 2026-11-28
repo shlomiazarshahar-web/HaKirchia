@@ -8,6 +8,7 @@ import type { PublishSettings } from '../shared/publish'
 import type { NakdanToken, SynonymSense } from '../shared/wordtools'
 import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, ReviewRequest, Usage, Workshop } from '../shared/review'
 import type { UpdateState } from '../shared/update'
+import type { SyncStatus } from '../shared/appstate'
 import type { ChapterLabel } from '../shared/labels'
 import type { Idea, TableColumn } from '../shared/plan'
 import type { PlotLine, PlotNotes, Setup } from '../shared/overview'
@@ -187,6 +188,23 @@ const api = {
   addDictionaryWord: (word: string): Promise<SpellStatus> => ipcRenderer.invoke('spell:add', word),
   removeDictionaryWord: (word: string): Promise<SpellStatus> => ipcRenderer.invoke('spell:remove', word),
   listLibrary: (): Promise<RecentBook[]> => ipcRenderer.invoke('library:list'),
+  /** Round 16: chooses again, for this computer, the folder of a book that is not reachable. value = the new path, null when cancelled */
+  relocateBook: (path: string): Promise<OpResult<string | null>> => ipcRenderer.invoke('library:relocate', path),
+  syncStatus: (): Promise<SyncStatus> => ipcRenderer.invoke('sync:status'),
+  /** Asks for the shared folder and starts sharing the app state there. value is null when cancelled. */
+  chooseSyncFolder: (): Promise<OpResult<SyncStatus | null>> => ipcRenderer.invoke('sync:choose'),
+  stopSync: (): Promise<SyncStatus> => ipcRenderer.invoke('sync:stop'),
+  reloadSync: (): Promise<SyncStatus> => ipcRenderer.invoke('sync:reload'),
+  setComputerName: (name: string): Promise<SyncStatus> => ipcRenderer.invoke('sync:computerName', name),
+  workshopToShared: (): Promise<OpResult<Workshop>> => ipcRenderer.invoke('workshop:toShared'),
+  /** Another computer changed the shared app state (read again when the window came to the front) */
+  onAppStateChanged: (fn: () => void) => {
+    const h = () => fn()
+    ipcRenderer.on('appstate:changed', h)
+    return () => {
+      ipcRenderer.removeListener('appstate:changed', h)
+    }
+  },
   forgetBook: (path: string): Promise<void> => ipcRenderer.invoke('library:forget', path),
   chooseFolder: (purpose: 'parent' | 'open'): Promise<string | null> => ipcRenderer.invoke('dialog:chooseFolder', purpose),
   defaultFolder: (): Promise<string> => ipcRenderer.invoke('app:defaultFolder'),

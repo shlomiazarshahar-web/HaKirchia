@@ -34,11 +34,13 @@ interface Props {
   onForget: (path: string) => void
   onRename: (path: string, title: string) => void
   onArchive: (path: string, archived: boolean) => void
+  /** Round 16: the book's folder is not here; choose where it is on this computer */
+  onRelocate: (path: string) => void
 }
 
 const ARCH_KEY = 'hakirchia.archiveOpen'
 
-export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, onRename, onArchive }: Props) {
+export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, onRename, onArchive, onRelocate }: Props) {
   const [menu, setMenu] = useState<{ book: RecentBook; x: number; y: number } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [archOpen, setArchOpen] = useState(() => {
@@ -81,15 +83,15 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, o
     <div key={b.path} className={`book${b.exists ? '' : ' missing'}${b.archived ? ' archived' : ''}`}>
       <button
         className="book-btn"
-        title={`${b.path}\nקליק ימני: שינוי שם, ארכוב`}
-        onClick={() => (b.exists ? onOpen(b.path) : onForget(b.path))}
+        title={b.exists ? `${b.path}\nקליק ימני: שינוי שם, ארכוב` : `התיקייה לא זמינה במחשב הזה:\n${b.path}\nלחיצה: בחירת המקום שלה במחשב הזה. קליק ימני: עוד אפשרויות`}
+        onClick={() => (b.exists ? onOpen(b.path) : onRelocate(b.path))}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
           setMenu({ book: b, x: e.clientX, y: e.clientY })
         }}
       >
-        <div className="cover" style={{ backgroundColor: coverColor(b.path) }}>
+        <div className="cover" style={{ backgroundColor: coverColor(b.id ?? b.path) }}>
           <div>
             <div className="ct">{b.title}</div>
             <div className="band" />
@@ -110,7 +112,7 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, o
         ) : (
           <b>{b.title}</b>
         )}
-        {b.exists ? when(b.lastOpened) : 'התיקייה לא נמצאה. לחיצה תסיר מהרשימה'}
+        {b.exists ? when(b.lastOpened) : 'לא זמין במחשב הזה. לחיצה לבחירת המקום'}
       </div>
     </div>
   )
@@ -159,6 +161,11 @@ export function Home({ books, onOpen, onNew, onOpenFolder, onImport, onForget, o
       )}
       {menu && (
         <div ref={menuRef} className="menu" role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, visibility: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+          {!menu.book.exists && (
+            <button role="menuitem" onClick={() => (setMenu(null), onRelocate(menu.book.path))}>
+              <Icon name="folder" /> בחירת נתיב מחדש (במחשב הזה)…
+            </button>
+          )}
           {menu.book.exists && (
             <button role="menuitem" onClick={() => (setMenu(null), onOpen(menu.book.path))}>
               <Icon name="book" /> פתיחה

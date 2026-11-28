@@ -100,9 +100,13 @@ async function readFile(dir: string): Promise<WorkshopFile> {
 
 const toWorkshop = (dir: string, f: WorkshopFile): Workshop => ({ path: dir, exercises: [...f.exercises].sort((a, b) => b.updated - a.updated), prompts: f.prompts })
 
+export const WORKSHOP_UNAVAILABLE = 'WORKSHOP_UNAVAILABLE:'
+
 /** Opens the workshop: reads it, or creates the folder the first time */
 export async function openWorkshop(): Promise<Workshop> {
   const dir = workshopPath()
+  // round 16: the folder another computer uses for the workshop is not reachable here
+  if (getSettings().workshopUnavailable) throw new Error(WORKSHOP_UNAVAILABLE + dir)
   await fs.mkdir(join(dir, EXERCISES_DIR), { recursive: true })
   return toWorkshop(dir, await readFile(dir))
 }
@@ -263,6 +267,19 @@ export function importExercises(paths: string[]) {
 
 export async function moveWorkshop(folder: string): Promise<Workshop> {
   updateSettings({ workshopPath: folder })
+  return openWorkshop()
+}
+
+/** Round 16: copies the workshop into the shared folder (unless one is already there) and works from there */
+export async function moveWorkshopToShared(): Promise<Workshop> {
+  const folder = getSettings().syncFolder
+  if (!folder) throw new Error('עוד לא נבחרה תיקייה משותפת')
+  const to = join(folder, 'סדנה')
+  const from = workshopPath()
+  if (from !== to && !existsSync(join(to, WORKSHOP_FILE)) && !getSettings().workshopUnavailable && existsSync(from)) {
+    await fs.cp(from, to, { recursive: true, force: false, errorOnExist: false })
+  }
+  updateSettings({ workshopPath: to })
   return openWorkshop()
 }
 

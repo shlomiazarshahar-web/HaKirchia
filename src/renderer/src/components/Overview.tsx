@@ -445,7 +445,7 @@ export function AppearanceMap({ bar }: { bar: ReactNode }) {
             </tbody>
           </table>
           <div className="am-legend" aria-hidden="true">
-            <span>גוון כהה יותר = השם מופיע יותר פעמים בפרק:</span>
+            <span>צבע חזק יותר = השם מופיע יותר פעמים בפרק:</span>
             {[1, 2, 3, 4].map((lv) => (
               <span key={lv} className={`am-sw lv-${lv}`}>
                 {['1', '2–4', '5–14', '15+'][lv - 1]}

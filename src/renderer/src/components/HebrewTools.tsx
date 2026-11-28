@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BackupSettingsFields } from './Safety'
+import { SyncSection } from './Sync'
 import type { Editor } from '@tiptap/react'
 import type { SpellStatus } from '@shared/types'
 import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, pressesFor, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
@@ -362,6 +363,8 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
           </div>
           <p className="lp-note">הסרה מהרשימה לא משנה טקסט שכבר נכתב בגופן הזה.</p>
         </section>
+
+        <SyncSection />
 
         <section>
           <h3>גיבוי יומי</h3>

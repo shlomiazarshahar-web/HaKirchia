@@ -196,6 +196,7 @@ body { background: #dde3e0; overflow: hidden; }
 .book.new .cover { background: none; border: 1.5px dashed var(--w-line); box-shadow: none; color: var(--w-muted); align-items: center; justify-content: center; gap: 8px; }
 .book.new .cover::after { display: none; }
 .book.missing { opacity: 0.55; }
+.book.missing .cover { filter: grayscale(1); }
 .book-btn { all: unset; cursor: pointer; display: block; }
 .book-btn:focus-visible .cover { outline: 2px solid var(--w-accent); outline-offset: 3px; }
 .book .meta input { width: 100%; box-sizing: border-box; font-size: 14px; }
@@ -1684,3 +1685,13 @@ g.sp-arc.paid circle { fill: var(--w-accent); }
 .payoff-list .muted { font-size: 12px; color: var(--w-muted); }
 .board.ov .muted { color: var(--w-muted); }
 .sp-arcs, .sp-list, .pace { flex: none; }
+
+/* Round 16: sharing the app state between computers */
+.sync .sync-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--w-muted); align-self: center; flex: none; }
+.sync .sync-dot.on { background: var(--w-accent); }
+.sync .sync-path { font-size: 12px; overflow-wrap: anywhere; }
+.sync input { font: inherit; padding: 3px 8px; border: 1px solid var(--w-line); border-radius: 6px; background: var(--w-paper); color: var(--w-ink); min-width: 180px; }
+.sync-pcs { margin: 2px 0; padding-inline-start: 18px; font-size: 13px; color: var(--w-muted); }
+.sync-pcs b { color: var(--w-ink); font-weight: 600; }
+.ws-missing { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; max-width: 520px; margin: 0 auto; }
+.ws-missing-actions { display: flex; gap: 8px; margin-top: 6px; }

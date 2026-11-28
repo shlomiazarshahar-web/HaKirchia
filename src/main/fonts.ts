@@ -7,7 +7,7 @@ import { basename, extname, join } from 'path'
 import { inflateSync } from 'zlib'
 import type { CustomFont } from '../shared/types'
 import { familyFromRegistryName, fontFamilyName } from '../shared/fontname'
-import { getSettings, updateSettings } from './settings'
+import { getSettings, sharedFontsDir, updateSettings } from './settings'
 
 const fontsDir = () => join(app.getPath('userData'), 'fonts')
 
@@ -68,6 +68,9 @@ export async function addFontFile(win: BrowserWindow): Promise<{ fonts: CustomFo
   await fs.mkdir(fontsDir(), { recursive: true })
   const safe = `${Date.now().toString(36)}-${basename(src).replace(/[^\w.\-֐-׿ ]/g, '_')}`
   await fs.copyFile(src, join(fontsDir(), safe))
+  // round 16: also into the shared folder, so the other computers get the font too
+  const shared = sharedFontsDir()
+  if (shared) await fs.mkdir(shared, { recursive: true }).then(() => fs.copyFile(src, join(shared, safe))).catch(() => undefined)
   const list = (getSettings().customFonts ?? []).filter((f) => f.family !== family)
   return { fonts: saveList([...list, { family, file: safe }]), family }
 }
@@ -76,13 +79,27 @@ export async function readFontFile(file: string): Promise<Uint8Array | null> {
   try {
     return new Uint8Array(await fs.readFile(join(fontsDir(), basename(file))))
   } catch {
-    return null
+    // round 16: a font added on another computer comes from the shared folder, and is kept here from now on
+    const shared = sharedFontsDir()
+    if (!shared) return null
+    try {
+      const bytes = await fs.readFile(join(shared, basename(file)))
+      await fs.mkdir(fontsDir(), { recursive: true })
+      await fs.writeFile(join(fontsDir(), basename(file)), bytes).catch(() => undefined)
+      return new Uint8Array(bytes)
+    } catch {
+      return null
+    }
   }
 }
 
 export async function removeFont(family: string): Promise<CustomFont[]> {
   const list = getSettings().customFonts ?? []
   const gone = list.find((f) => f.family === family)
-  if (gone?.file) await fs.rm(join(fontsDir(), basename(gone.file)), { force: true }).catch(() => undefined)
+  if (gone?.file) {
+    await fs.rm(join(fontsDir(), basename(gone.file)), { force: true }).catch(() => undefined)
+    const shared = sharedFontsDir()
+    if (shared) await fs.rm(join(shared, basename(gone.file)), { force: true }).catch(() => undefined)
+  }
   return saveList(list.filter((f) => f.family !== family))
 }

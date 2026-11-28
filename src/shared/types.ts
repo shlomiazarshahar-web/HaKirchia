@@ -49,6 +49,8 @@ export type OutlineNode = ChapterRef | PartNode
 export interface Book extends Background {
   /** Absolute path of the book folder */
   path: string
+  /** Round 16: the same on every computer (kept in book.hakirchia.json) */
+  id?: string
   title: string
   /** All chapters, flat, in reading order (the order of the tree) */
   chapters: Chapter[]
@@ -105,6 +107,8 @@ export interface RecentBook {
   exists: boolean
   /** Put away in the library's archive (not deleted) */
   archived?: boolean
+  /** Round 16: the id the book has on every computer */
+  id?: string
 }
 
 /** A ProseMirror / TipTap JSON node */
@@ -138,7 +142,19 @@ export type Theme = 'light' | 'dark'
 
 export interface Settings {
   theme: Theme
-  recent: { path: string; title: string; chapterCount: number; lastOpened: number; archived?: boolean }[]
+  recent: {
+    path: string
+    title: string
+    chapterCount: number
+    lastOpened: number
+    archived?: boolean
+    /** Round 16: the book's id (kept in book.hakirchia.json), the same on every computer */
+    id?: string
+    /** Round 16: the book's folder is not reachable on this computer (shown greyed out) */
+    unavailable?: boolean
+    /** Round 16, only while saving: the id the book had before (it got the id from its folder) */
+    prevId?: string
+  }[]
   lastChapter: Record<string, string>
   defaultFolder?: string
   /** Split screen panes per book path, as they were last left */
@@ -169,6 +185,15 @@ export interface Settings {
   accent?: string
   /** Feature 56: background sounds and the YouTube player, as last left */
   sounds?: SoundSettings
+  /** The personal dictionary's words (round 16: kept here too, so other computers get them) */
+  dictionary?: string[]
+  /** Round 16: the workshop's folder is not reachable on this computer */
+  workshopUnavailable?: boolean
+  /** Round 16, this computer only: the folder with the shared app state (e.g. in Google Drive) */
+  syncFolder?: string
+  /** Round 16, this computer only: its id and name in the shared file */
+  pcId?: string
+  pcName?: string
 }
 
 /** Feature 56: music and background sounds while writing */
