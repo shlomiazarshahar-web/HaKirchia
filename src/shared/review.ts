@@ -4,9 +4,10 @@ import { diffTexts } from './diff'
 
 /** Models offered for reviews. Haiku is deliberately not offered. */
 export const MODELS = [
-  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', note: 'מומלץ: איכות גבוהה במחיר סביר', input: 4, output: 20 },
-  { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', note: 'המודל החזק ביותר, יקר פי שניים', input: 8, output: 40 },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', note: 'מהיר וזול יותר', input: 2, output: 10 }
+  // prices in dollars per million tokens; cacheRead: reading the cached text, as a share of the input price
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', note: 'מומלץ: איכות גבוהה במחיר סביר', input: 4, output: 20, cacheRead: 0.05 },
+  { id: 'claude-fable-5-2', label: 'Claude Fable 5.2', note: 'המודל החזק ביותר, יקר פי שניים', input: 8, output: 40, cacheRead: 0.025 },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', note: 'מהיר וחצי מחיר', input: 2, output: 10, cacheRead: 0.05 }
 ] as const
 export type ModelId = (typeof MODELS)[number]['id']
 export const DEFAULT_MODEL: ModelId = 'claude-opus-5-5'
@@ -111,6 +112,8 @@ export interface Finding {
 export interface ChatTurn {
   role: 'user' | 'assistant'
   text: string
+  /** What this answer cost, in dollars (answers only) */
+  cost?: number
 }
 
 export interface Usage {
@@ -139,6 +142,8 @@ export interface Review {
   /** Earlier reviews (with their decisions) were sent along, so this one builds on them */
   withHistory?: boolean
   model: string
+  /** Round 17: the depth the review was made with */
+  effort?: Effort
   summary: string
   findings: Finding[]
   /** "מה זה מלמד על הכתיבה שלך" */
@@ -159,9 +164,33 @@ export interface ReviewedText {
   notes?: string[]
 }
 
-export function costOf(model: string, input: number, output: number, cacheRead = 0, cacheWrite = 0): number {
+/** The model a review was made with, as one of MODELS (a fallback model on the server is priced as the default) */
+export function modelOf(id: string | undefined): ModelId {
+  return MODELS.some((m) => m.id === id) ? (id as ModelId) : DEFAULT_MODEL
+}
+
+/**
+ * The price of one call, in dollars. Writing to the cache costs 1.25 times the input price when it is
+ * kept 5 minutes, and twice when kept an hour; reading from it costs a small share (cacheRead).
+ */
+export function costOf(model: string, input: number, output: number, cacheRead = 0, cacheWrite = 0, cacheWrite1h = 0): number {
   const m = MODELS.find((x) => x.id === model) ?? MODELS[0]
-  return (input * m.input + cacheWrite * m.input * 1.25 + cacheRead * m.input * 0.1 + output * m.output) / 1_000_000
+  return (input * m.input + cacheWrite * m.input * 1.25 + cacheWrite1h * m.input * 2 + cacheRead * m.input * m.cacheRead + output * m.output) / 1_000_000
+}
+
+/**
+ * What Claude writes in a review (its quiet thinking plus the comments), in tokens, by depth. From
+ * real chapter reviews: at "יסודי" about 25-33 thousand. A short excerpt gets a shorter answer.
+ */
+const OUTPUT_BY_EFFORT: Record<Effort, number> = { low: 9000, medium: 17000, high: 29000, xhigh: 40000 }
+
+/** Rough price of a review before sending it. chars: everything sent (text, original, history, background). */
+export function estimateReview(model: string, effort: Effort, chars: number): number {
+  // Hebrew is about 2.5 characters a token; the instructions add about 3000
+  const text = Math.round(chars / 2.5)
+  const output = Math.min(OUTPUT_BY_EFFORT[effort], 4000 + Math.round(text * 2.5))
+  const input = text + 3000
+  return costOf(model, input, output)
 }
 
 export function addUsage(a: Usage, b: Usage): Usage {
@@ -247,6 +276,9 @@ export interface ReviewRequest {
   changes?: string
   /** Round 16, follow-ups only: the text sent is today's (an older review kept no copy), so it may already include fixes */
   textIsCurrent?: boolean
+  /** Round 17: the model and depth picked for this review in the panel (default: the settings) */
+  model?: ModelId
+  effort?: Effort
 }
 
 /** The JSON shape Claude answers in (structured outputs) */
@@ -368,7 +400,8 @@ export function historyText(reviews: Review[], target: { scope: ReviewScope; tar
       lines.push(`- [${f.kind}${where}] ${f.quote ? `"${f.quote}": ` : ''}${f.comment}${f.suggestion ? ` ← ${f.suggestion}` : ''}`)
       if (f.kind !== 'מה עובד' || f.status !== 'open') lines.push(`  מצב: ${STATUS_WORD[f.status]}`)
       if (f.decision?.trim()) lines.push(`  הוחלט: ${f.decision.trim()}`)
-      for (const t of f.thread ?? []) lines.push(`  ${t.role === 'user' ? 'הכותב' : 'אתה'}: ${t.text.replace(/\s*\n\s*/g, ' ')}`)
+      // what was decided sums up the talk; the talk itself goes along only when nothing was decided (saves tokens)
+      else for (const t of f.thread ?? []) lines.push(`  ${t.role === 'user' ? 'הכותב' : 'אתה'}: ${t.text.replace(/\s*\n\s*/g, ' ')}`)
     }
     if (r.next) lines.push(`מה הייתי עושה עכשיו: ${r.next}`)
     if (r.chat.length) {

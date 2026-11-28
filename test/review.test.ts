@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backgroundText, costOf, findQuote, findingsSoFar, findingThreadMessages, historyText, HISTORY_ASK, newId, normalizeAi, parseReply, parseReview, partialReply, relevantReviews, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS, type Finding, type Review } from '../src/shared/review'
+import { backgroundText, costOf, estimateReview, findQuote, findingsSoFar, findingThreadMessages, historyText, HISTORY_ASK, newId, normalizeAi, parseReply, parseReview, partialReply, relevantReviews, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS, type Finding, type Review } from '../src/shared/review'
 
 describe('findQuote', () => {
   const paras = ['היא חיככה את ידיה זו בזו כשחשבה על הספה.', 'ה"מחר" של יובל: "היא תתחיל לרוץ מחר".', 'שָׁלוֹם   עולם, אמר הדוד.']
@@ -109,7 +109,20 @@ describe('settings and helpers', () => {
   })
   it('estimates cost', () => {
     expect(costOf('claude-opus-5-5', 1_000_000, 0)).toBeCloseTo(4)
-    expect(costOf('claude-opus-5-5', 0, 1_000_000, 1_000_000)).toBeCloseTo(20.4)
+    // round 17: cache reads are 5% on Opus 5.5 (2.5% on Fable 5.2); writes 1.25x for 5 minutes, 2x for an hour
+    expect(costOf('claude-opus-5-5', 0, 1_000_000, 1_000_000)).toBeCloseTo(20.2)
+    expect(costOf('claude-fable-5-2', 0, 0, 1_000_000)).toBeCloseTo(0.2)
+    expect(costOf('claude-opus-5-5', 0, 0, 0, 1_000_000, 1_000_000)).toBeCloseTo(5 + 8)
+  })
+  it('estimates a review honestly (most of it is what Claude writes)', () => {
+    // a chapter of about 25,000 characters at "יסודי" on Opus: about 60-70 cents, like real reviews
+    const high = estimateReview('claude-opus-5-5', 'high', 25000)
+    expect(high).toBeGreaterThan(0.55)
+    expect(high).toBeLessThan(0.75)
+    expect(estimateReview('claude-opus-5-5', 'medium', 25000)).toBeLessThan(high * 0.7)
+    expect(estimateReview('claude-sonnet-5-5', 'high', 25000)).toBeCloseTo(high / 2)
+    // a short excerpt gets a short answer
+    expect(estimateReview('claude-opus-5-5', 'high', 500)).toBeLessThan(0.2)
   })
   it('splits pasted prompts', () => {
     expect(splitPrompts('1. לכתוב על גשם\n2) דיאלוג בלי תגיות\n\nתיאור מקום\nבלי שמות תואר')).toEqual(['לכתוב על גשם', 'דיאלוג בלי תגיות', 'תיאור מקום בלי שמות תואר'])
@@ -143,14 +156,16 @@ describe('earlier reviews and conversations about comments', () => {
     const t = historyText(relevantReviews(list, { scope: 'chapter', targetId: 'c1' }), { scope: 'chapter', targetId: 'c1' })
     expect(t).toContain('מצב: לא רלוונטי')
     expect(t).toContain('הוחלט: משאיר, ההסמקה מכוונת')
-    expect(t).toContain('הכותב: זה מכוון')
+    // round 17: what was decided stands for the talk about it
+    expect(t).not.toContain('הכותב: זה מכוון')
+    expect(historyText([mk({ findings: [f({ thread: [{ role: 'user', text: 'למה?' }] })] })], { scope: 'chapter' })).toContain('הכותב: למה?')
     expect(t).toContain('על פרק 1')
     expect(t).not.toContain('על פרק 2')
     expect(t.indexOf('כל הספר')).toBeLessThan(t.indexOf('פרק טוב'))
   })
 
   it('drops the oldest reviews when there is too much', () => {
-    const t = historyText([book, a], { scope: 'book' }, () => undefined, 300)
+    const t = historyText([book, a], { scope: 'book' }, () => undefined, 200)
     expect(t).toContain('על פרק 1')
     expect(t).not.toContain('פרק טוב')
   })
