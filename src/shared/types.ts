@@ -9,6 +9,7 @@ import type { Background } from './background'
 import type { BackupSettings } from './backup'
 import type { ChapterLabel } from './labels'
 import type { Idea, TableColumn } from './plan'
+import type { PlotLine, PlotNotes, Setup } from './overview'
 
 export type ChapterStatus = 'draft' | 'writing' | 'editing' | 'done'
 
@@ -72,6 +73,11 @@ export interface Book extends Background {
   tableColumns: TableColumn[]
   /** Feature 61: a chapter order being tried out; the book itself keeps `outline` until it is applied */
   trialOutline?: OutlineNode[]
+  /** Feature 62: the rows of the plot-line grid, and the note in each chapter */
+  plotLines: PlotLine[]
+  plotNotes: PlotNotes
+  /** Feature 65: hints planted and paid off */
+  setups: Setup[]
 }
 
 /**

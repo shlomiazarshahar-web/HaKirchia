@@ -1,5 +1,5 @@
-// Background sounds while writing (feature 56). Fire and brown noise are made on the spot by the
-// computer's sound engine (Web Audio); the others are recordings shipped with the app. No internet.
+// Background sounds while writing (feature 56). All of them are recordings shipped with the app
+// (round 15: the fire too, and a river instead of brown noise). No internet.
 // Several can play together, each with its own volume. The YouTube player (a link, e.g. a Lofi stream) lives in
 // components/Sounds.tsx; this file is the built-in sounds and the shared settings.
 
@@ -13,6 +13,8 @@ import typewriterUrl from './assets/sounds/typewriter.mp3?url'
 import wavesUrl from './assets/sounds/waves.mp3?url'
 import windUrl from './assets/sounds/wind.mp3?url'
 import howlUrl from './assets/sounds/howling-wind.mp3?url'
+import fireUrl from './assets/sounds/fire.mp3?url'
+import riverUrl from './assets/sounds/river.mp3?url'
 
 export interface SoundDef {
   id: string
@@ -24,10 +26,10 @@ export const SOUNDS: SoundDef[] = [
   { id: 'rain', name: 'גשם', hint: 'טיפות על החלון, ומדי פעם רעם רחוק' },
   { id: 'cafe', name: 'בית קפה', hint: 'המולה של בית קפה אמיתי' },
   { id: 'typewriter', name: 'מכונת כתיבה', hint: 'הקשות, פעמון וגלגלת' },
-  { id: 'fire', name: 'אח בוערת', hint: 'רחש עמוק ופצפוצים' },
+  { id: 'fire', name: 'אח בוערת', hint: 'עצים בוערים ומפצפצים' },
   { id: 'waves', name: 'גלים', hint: 'גלים על החוף' },
   { id: 'wind', name: 'רוח', hint: 'רוח במשבים, עם יללה' },
-  { id: 'brown', name: 'רעש חום', hint: 'רחש עמוק ואחיד לגמרי, בלי שום שינוי, שמסתיר רעשים' }
+  { id: 'river', name: 'נהר', hint: 'מים זורמים בנחל, רחש אחיד שמסתיר רעשים' }
 ]
 
 export const DEFAULT_SOUNDS: SoundSettings = { on: {}, master: 0.7, youtube: '', recentYoutube: [] }
@@ -56,12 +58,19 @@ export function useSounds(): SoundState {
   )
 }
 
+/** Round 15: brown noise became the river; a volume set for it carries over */
+function renamedSounds(on: Record<string, number>): Record<string, number> {
+  if (!('brown' in on)) return on
+  const { brown, ...rest } = on
+  return 'river' in rest ? rest : { ...rest, river: brown }
+}
+
 export function initSounds(s: SoundSettings | undefined): void {
   const v = s && typeof s === 'object' ? s : DEFAULT_SOUNDS
   state = {
     ...state,
     settings: {
-      on: v.on && typeof v.on === 'object' ? v.on : {},
+      on: renamedSounds(v.on && typeof v.on === 'object' ? v.on : {}),
       master: typeof v.master === 'number' ? Math.min(1, Math.max(0, v.master)) : DEFAULT_SOUNDS.master,
       youtube: typeof v.youtube === 'string' ? v.youtube : '',
       recentYoutube: Array.isArray(v.recentYoutube) ? v.recentYoutube.filter((x) => typeof x === 'string').slice(0, 6) : []
@@ -138,96 +147,6 @@ function audio(): { ctx: AudioContext; out: GainNode } {
   return { ctx, out: master! }
 }
 
-/** A few seconds of noise that loops: white (hiss), pink (softer) or brown (deep) */
-function noise(c: BaseAudioContext, kind: 'white' | 'pink' | 'brown'): AudioBuffer {
-  if (buffers[kind]) return buffers[kind]
-  const len = c.sampleRate * 6
-  const b = c.createBuffer(2, len, c.sampleRate)
-  for (let ch = 0; ch < 2; ch++) {
-    const d = b.getChannelData(ch)
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0
-    for (let i = 0; i < len; i++) {
-      const w = Math.random() * 2 - 1
-      if (kind === 'white') d[i] = w * 0.5
-      else if (kind === 'pink') {
-        // Paul Kellet's pink noise filter
-        b0 = 0.99886 * b0 + w * 0.0555179
-        b1 = 0.99332 * b1 + w * 0.0750759
-        b2 = 0.969 * b2 + w * 0.153852
-        b3 = 0.8665 * b3 + w * 0.3104856
-        b4 = 0.55 * b4 + w * 0.5329522
-        b5 = -0.7616 * b5 - w * 0.016898
-        d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11
-        b6 = w * 0.115926
-      } else {
-        last = (last + 0.02 * w) / 1.02
-        d[i] = last * 3.5
-      }
-    }
-    // the loop's ends are faded into each other, so it never clicks
-    const fade = Math.floor(c.sampleRate * 0.05)
-    for (let i = 0; i < fade; i++) {
-      const t = i / fade
-      d[i] = d[i] * t + d[len - fade + i] * (1 - t)
-    }
-  }
-  buffers[kind] = b
-  return b
-}
-
-function loop(c: BaseAudioContext, kind: 'white' | 'pink' | 'brown'): AudioBufferSourceNode {
-  const s = c.createBufferSource()
-  s.buffer = noise(c, kind)
-  s.loop = true
-  // each sound starts at a different place in the loop, so two never sound the same
-  s.start(0, Math.random() * 5)
-  return s
-}
-
-function filter(c: BaseAudioContext, type: BiquadFilterType, freq: number, q = 0.7): BiquadFilterNode {
-  const f = c.createBiquadFilter()
-  f.type = type
-  f.frequency.value = freq
-  f.Q.value = q
-  return f
-}
-
-/** A slow wobble of a value around its base: an oscillator into the parameter */
-function lfo(c: BaseAudioContext, param: AudioParam, rate: number, depth: number): OscillatorNode {
-  const o = c.createOscillator()
-  o.frequency.value = rate
-  const g = c.createGain()
-  g.gain.value = depth
-  o.connect(g).connect(param)
-  o.start()
-  return o
-}
-
-/** A very short sound at time `at`: a burst of noise through a band, or a tone that dies away */
-function burst(c: BaseAudioContext, out: AudioNode, at: number, o: { freq: number; q?: number; len: number; vol: number; type?: BiquadFilterType }) {
-  const s = c.createBufferSource()
-  s.buffer = noise(c, 'white')
-  const f = filter(c, o.type ?? 'bandpass', o.freq, o.q ?? 1)
-  const g = c.createGain()
-  g.gain.setValueAtTime(0, at)
-  g.gain.linearRampToValueAtTime(o.vol, at + 0.002)
-  g.gain.exponentialRampToValueAtTime(0.0001, at + o.len)
-  s.connect(f).connect(g).connect(out)
-  s.start(at, Math.random() * 5, o.len + 0.05)
-}
-function tone(c: BaseAudioContext, out: AudioNode, at: number, freq: number, len: number, vol: number, type: OscillatorType = 'sine') {
-  const o = c.createOscillator()
-  o.type = type
-  o.frequency.value = freq
-  const g = c.createGain()
-  g.gain.setValueAtTime(0, at)
-  g.gain.linearRampToValueAtTime(vol, at + 0.004)
-  g.gain.exponentialRampToValueAtTime(0.0001, at + len)
-  o.connect(g).connect(out)
-  o.start(at)
-  o.stop(at + len + 0.05)
-}
-
 /**
  * Calls `plan(time)` again and again; each call places the next event(s) at `time` and says how long
  * until the following one. Events are placed a little ahead, so timers that run late never skip.
@@ -270,7 +189,9 @@ const RECORDINGS: Record<string, string> = {
   typewriter: typewriterUrl,
   waves: wavesUrl,
   wind: windUrl,
-  howl: howlUrl
+  howl: howlUrl,
+  fire: fireUrl,
+  river: riverUrl
 }
 const decoded = new Map<string, Promise<AudioBuffer>>()
 function recording(c: BaseAudioContext, name: string): Promise<AudioBuffer> {
@@ -366,33 +287,12 @@ const BUILDERS: Record<string, Builder> = {
     const howl = playLoop(c, out, 'howl', 0.4)
     return () => (wind(), howl())
   },
-  fire: (c, out) => {
-    const s = loop(c, 'brown')
-    const g = c.createGain()
-    g.gain.value = 0.6
-    s.connect(filter(c, 'lowpass', 450)).connect(g).connect(out)
-    const flicker = lfo(c, g.gain, 0.3, 0.15)
-    const crackle = scheduler(c, (at) => {
-      const n = Math.random() < 0.25 ? 2 + Math.floor(Math.random() * 4) : 1
-      for (let i = 0; i < n; i++) burst(c, out, at + i * (0.008 + Math.random() * 0.02), { freq: 1800 + Math.random() * 3500, q: 0.8, len: 0.004 + Math.random() * 0.012, vol: 0.1 + Math.random() * 0.35, type: 'highpass' })
-      // now and then a log shifts: a deeper pop
-      if (Math.random() < 0.04) burst(c, out, at, { freq: 400 + Math.random() * 300, q: 1.5, len: 0.06, vol: 0.4 })
-      return 0.03 + Math.random() * 0.35
-    })
-    return () => (crackle(), flicker.stop(), s.stop())
-  },
-  brown: (c, out) => {
-    // deliberately the same all the time: no waves, no gusts, nothing that draws attention
-    const s = loop(c, 'brown')
-    const g = c.createGain()
-    g.gain.value = 0.7
-    s.connect(filter(c, 'lowpass', 500)).connect(g).connect(out)
-    return () => s.stop()
-  }
+  fire: (c, out) => playLoop(c, out, 'fire'),
+  river: (c, out) => playLoop(c, out, 'river')
 }
 
 /** Loudness trim of each sound, so they all start at about the same volume (measured with ffmpeg volumedetect) */
-const TRIM: Record<string, number> = { rain: 0.45, cafe: 0.75, typewriter: 1.4, fire: 0.6, waves: 2.4, wind: 1.2, brown: 0.5 }
+const TRIM: Record<string, number> = { rain: 0.45, cafe: 0.75, typewriter: 1.4, fire: 1.4, waves: 2.4, wind: 1.2, river: 1.85 }
 
 function start(id: string) {
   if (voices.has(id) || !BUILDERS[id]) return

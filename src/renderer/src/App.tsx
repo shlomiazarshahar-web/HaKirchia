@@ -28,7 +28,7 @@ import { NiqqudAtCursor, WritingSettings } from './components/HebrewTools'
 import { SynonymsHost } from './components/WordTools'
 import { FocusBar, StopCard, StopDialog } from './components/Focus'
 import { getPrefs, initPrefs, setTypewriterNow, usePrefs } from './prefs'
-import { stopHere, centerCursor } from './editor'
+import { stopHere, centerCursor, contextAt } from './editor'
 import { addBookmark, applyJump, bookmarkAt, bookmarkPos, bookmarkText, editorChapter, editorsFor, getBookmarks, loadBookmarks, removeBookmark, sceneAt, scenesIn, setPendingJump, useBookmarks, useEditorsVersion, type JumpTarget, type SceneItem } from './nav'
 import { SearchPanel } from './components/SearchPanel'
 import { QuickOpen, type QuickEntry } from './components/QuickOpen'
@@ -45,6 +45,8 @@ import { elStyle, type ElementKey, type PublishSettings } from '@shared/publish'
 import { KIND_ICON, KIND_NEW, KIND_ONE, type Material, type MaterialKind } from '@shared/background'
 import { BgContext, type BgActions } from './components/bgctx'
 import { Inspiration, PlanSwitch, Timeline, type PlanMode } from './components/Plan'
+import { AppearanceMap, PaceView, PayoffDialog, PlotGrid, SetupsView } from './components/Overview'
+import { titleFromQuote, type Setup, type StoryPlace } from '@shared/overview'
 import { PlanPane, rememberPlanPaneMode } from './components/PlanPane'
 import { TodayWords, useWritingLog, WritingDaysDialog } from './components/WritingDays'
 import { SoundsButton, SoundsPanel } from './components/Sounds'
@@ -69,6 +71,7 @@ type Dialog =
   | { kind: 'delete'; chapter: Chapter }
   | { kind: 'deletePart'; part: PartNode }
   | { kind: 'deleteMaterial'; material: Material }
+  | { kind: 'payoff'; place: StoryPlace }
   | { kind: 'import'; into: boolean }
   | { kind: 'backups' }
   | { kind: 'labels' }
@@ -942,6 +945,7 @@ export default function App() {
   const [freshTerm, setFreshTerm] = useState<string | null>(null)
   const fromSelection = async (kind: string, text: string) => {
     if (!book) return
+    if (kind === 'setup' || kind === 'payoff') return markSetup(kind, text)
     if (kind === 'character' || kind === 'place' || kind === 'research') {
       const r = await api.createMaterial(book.path, kind, text)
       if (!r.ok || !r.value) return show(r.error ?? 'לא הצלחתי ליצור את הדף', true)
@@ -962,6 +966,37 @@ export default function App() {
     setTimeout(() => setFreshTerm(null), 1500)
     void openBeside({ kind: 'glossary' })
     if (known) show(`"${text}" כבר במילון המונחים`)
+  }
+  /** Feature 65: the marked words are where a hint is planted, or where one pays off */
+  const placeOfSelection = (text: string): StoryPlace | null => {
+    const ch = editorChapter(editor)
+    if (!book || !editor || editor.isDestroyed || !ch || ch.bookPath !== book.path) return null
+    const { from, to } = editor.state.selection
+    const quote = (from < to ? editor.state.doc.textBetween(from, to, ' ') : text).replace(/\s+/g, ' ').trim().slice(0, 400)
+    return { chapterId: ch.chapterId, ...contextAt(editor.state.doc, from), quote }
+  }
+  const saveSetups = async (list: Setup[]) => {
+    if (!book) return false
+    const r = await api.setPlan(book.path, { setups: list })
+    if (!r.ok || !r.value) return (show(r.error ?? 'השמירה נכשלה', true), false)
+    setBook(r.value)
+    return true
+  }
+  const markSetup = async (kind: 'setup' | 'payoff', text: string) => {
+    if (!book) return
+    const place = placeOfSelection(text)
+    if (!place) return show('צריך לסמן מילים בתוך פרק', true)
+    if (kind === 'payoff' && (book.setups ?? []).length) return setDialog({ kind: 'payoff', place })
+    const s: Setup = { id: crypto.randomUUID(), title: titleFromQuote(place.quote ?? ''), note: '', at: Date.now(), ...(kind === 'setup' ? { plant: place } : { payoff: place }) }
+    if (await saveSetups([s, ...(book.setups ?? [])]))
+      show(kind === 'setup' ? 'הרמז נשתל. הוא מחכה לתשלום ברשימת הרמזים (תכנון ← רמזים)' : 'נשמר כתשלום של רמז חדש. אפשר לבחור איפה הוא נשתל ברשימת הרמזים (תכנון ← רמזים)')
+  }
+  const pickPayoff = async (place: StoryPlace, id: string | null) => {
+    if (!book) return
+    setDialog(null)
+    const list = book.setups ?? []
+    const next = id ? list.map((s) => (s.id === id ? { ...s, payoff: place } : s)) : [{ id: crypto.randomUUID(), title: titleFromQuote(place.quote ?? ''), note: '', at: Date.now(), payoff: place }, ...list]
+    if (await saveSetups(next)) show(id ? 'התשלום נשמר. הרמז סומן ששולם' : 'נשמר כתשלום של רמז חדש. אפשר לבחור איפה הוא נשתל ברשימת הרמזים')
   }
   const fromSelectionRef = useRef(fromSelection)
   fromSelectionRef.current = fromSelection
@@ -1476,6 +1511,10 @@ export default function App() {
         )}
         {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
         {inBoard && planMode === 'inspiration' && <Inspiration bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
+        {inBoard && planMode === 'lines' && <PlotGrid bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} />}
+        {inBoard && planMode === 'appear' && <AppearanceMap bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} />}
+        {inBoard && planMode === 'pace' && <PaceView bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} />}
+        {inBoard && planMode === 'setups' && <SetupsView bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} />}
         {inBoard && (planMode === 'cards' || planMode === 'table') && (
           <PlanArea
             key={book!.path}
@@ -1660,6 +1699,14 @@ export default function App() {
                 ? 'טבלה · כותבים ישר בתאים. לחיצה על כותרת ממיינת, העיפרון פותח את הפרק'
                 : planMode === 'timeline'
                 ? 'ציר זמן · אירועי הסיפור לפי סדר הזמן. גרירת הנקודה משנה את המקום'
+                : planMode === 'lines'
+                ? 'קווי עלילה · לחיצה על משבצת כותבת בה, Enter שומר, Esc מבטל'
+                : planMode === 'appear'
+                ? 'הופעות · נספר לבד מהטקסט. לחיצה על משבצת קופצת להופעה הראשונה בפרק'
+                : planMode === 'pace'
+                ? 'קצב · אורך כל פרק במילים. סטטיסטיקה בלבד'
+                : planMode === 'setups'
+                ? 'רמזים · מסמנים מילים בפרק ולוחצים לחיצה ימנית כדי לשתול רמז או לסמן את התשלום שלו'
                 : 'לוח השראה · אפשר לגרור לכאן תמונות מהמחשב'}
           </span>
         ) : inRead ? (
@@ -1908,6 +1955,9 @@ export default function App() {
           onCancel={() => setDialog(null)}
           onConfirm={() => void deleteMaterial(dialog.material)}
         />
+      )}
+      {dialog?.kind === 'payoff' && book && (
+        <PayoffDialog book={book} place={dialog.place} onPick={(id) => void pickPayoff(dialog.place, id)} onNew={() => void pickPayoff(dialog.place, null)} onCancel={() => setDialog(null)} />
       )}
       {dialog?.kind === 'deletePart' && (
         <ConfirmDialog
