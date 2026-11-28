@@ -318,10 +318,28 @@ export function fixPageStarts(flow: HTMLElement, geom: PageGeom): void {
     const r = rg.getClientRects()[0]
     return r && (r.width || r.height) ? pageOf(r) : null
   }
-  const w = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT)
+  // round 16: images too (the scene break image has no text), or a page that starts with one is missed
+  // and the break goes before the text after it, pushing that text one page further
+  const w = document.createTreeWalker(flow, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (n) => (n.nodeType === Node.TEXT_NODE || (n as Element).tagName === 'IMG' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP)
+  })
   let page = -1
-  const cuts: { node: Text; offset: number }[] = []
-  for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) {
+  const cuts: ({ node: Text; offset: number } | { block: HTMLElement })[] = []
+  for (let node = w.nextNode(); node; node = w.nextNode()) {
+    if (node.nodeType !== Node.TEXT_NODE) {
+      const img = node as HTMLImageElement
+      const block = img.closest(BLOCKS) as HTMLElement | null
+      const r = img.getBoundingClientRect()
+      if (!block || img.closest('.bk-fnotes, .pmk') || !(r.width || r.height)) continue
+      const p = pageOf(r)
+      if (page < 0) page = p
+      if (p > page) {
+        cuts.push({ block })
+        page = p
+      }
+      continue
+    }
+    const n = node as Text
     if (!n.data.trim() || n.parentElement?.closest('.bk-fnotes, .pmk')) continue
     let first: number | null = null
     for (let i = 0; i < n.data.length && first === null; i++) first = charPage(n, i)
@@ -352,5 +370,18 @@ export function fixPageStarts(flow: HTMLElement, geom: PageGeom): void {
     }
   }
   // cut from the end, so that earlier places stay valid
-  for (const c of cuts.reverse()) cutAt(c, null)
+  for (const c of cuts.reverse()) 'block' in c ? cutBeforeBlock(c.block) : cutAt(c, null)
+}
+
+/** A block with no text (an image) starts the next page */
+function cutBeforeBlock(block: HTMLElement): void {
+  const sec = block.closest('section')
+  if (sec) {
+    const before = document.createRange()
+    before.setStart(sec, 0)
+    before.setEnd(block, 0)
+    // the first thing in a section that starts its own page anyway
+    if (!before.toString().trim() && sec.matches('.new-page, .bk-matter, .bk-part')) return
+  }
+  block.classList.add('fn-cont')
 }

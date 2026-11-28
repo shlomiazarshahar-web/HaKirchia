@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { BackupSettingsFields } from './Safety'
+import { SyncSection } from './Sync'
+import { TestUpdatesToggle } from './Update'
 import type { Editor } from '@tiptap/react'
 import type { SpellStatus } from '@shared/types'
 import { GERESH, GERSHAYIM, MAQAF, NIQQUD_MARKS, QUOTE_STYLES, hebrewLetterOf, keysFor, nextNiqqud, pressesFor, type NiqqudTurn, type TypographySettings } from '@shared/hebrew'
@@ -251,8 +253,34 @@ const RULES: { key: Exclude<keyof TypographySettings, 'quotes'>; label: string; 
   { key: 'ellipsis', label: 'שלוש נקודות', ex: '... ← …' }
 ]
 
+const SETTINGS_TABS = [
+  { id: 'look', label: 'מראה' },
+  { id: 'writing', label: 'כתיבה' },
+  { id: 'sync', label: 'סנכרון' },
+  { id: 'safety', label: 'גיבוי ועדכונים' },
+  { id: 'claude', label: 'Claude' }
+] as const
+type SettingsTab = (typeof SETTINGS_TABS)[number]['id']
+const TAB_KEY = 'hakirchia.settingsTab'
+
 export function WritingSettings({ onClose }: { onClose: () => void }) {
   const { typography: t, customFonts, askStopNote: askStop } = usePrefs()
+  const [tab, setTabState] = useState<SettingsTab>(() => {
+    try {
+      const v = localStorage.getItem(TAB_KEY)
+      return SETTINGS_TABS.some((x) => x.id === v) ? (v as SettingsTab) : 'look'
+    } catch {
+      return 'look'
+    }
+  })
+  const setTab = (v: SettingsTab) => {
+    setTabState(v)
+    try {
+      localStorage.setItem(TAB_KEY, v)
+    } catch {
+      /* not remembered */
+    }
+  }
   const [spell, setSpell] = useState<SpellStatus | null>(null)
   const [word, setWord] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
@@ -269,11 +297,38 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog settings" role="dialog" aria-label="הגדרות כתיבה" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-        <h2>הגדרות כתיבה</h2>
-
+      <div className="dialog settings" role="dialog" aria-label="הגדרות" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+        <h2>הגדרות</h2>
+        <div className="set-tabs" role="tablist" aria-label="קבוצות הגדרות">
+          {SETTINGS_TABS.map((x) => (
+            <button key={x.id} role="tab" aria-selected={tab === x.id} className={tab === x.id ? 'on' : ''} onClick={() => setTab(x.id)}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+        {tab === 'look' && (
+          <>
         <AccentSection />
 
+        <section>
+          <h3>גופנים שהוספתי</h3>
+          <div className="chips">
+            {!customFonts.length && <span className="lp-note">עוד לא הוספת גופנים. מוסיפים מרשימת הגופנים שבסרגל העיצוב.</span>}
+            {customFonts.map((f) => (
+              <span key={f.family} className="chip" style={{ fontFamily: `"${f.family}"` }}>
+                {f.family}
+                <button title={`הסרת ${f.family}`} aria-label={`הסרת ${f.family}`} onClick={async () => setCustomFonts(await api.removeFont(f.family))}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          <p className="lp-note">הסרה מהרשימה לא משנה טקסט שכבר נכתב בגופן הזה.</p>
+        </section>
+          </>
+        )}
+        {tab === 'writing' && (
+          <>
         <section>
           <h3>טיפוגרפיה עברית בזמן הקלדה</h3>
           <div className="set-sub">מירכאות</div>
@@ -304,7 +359,7 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
             <span className="set-ex">נוע ← נועה (Tab)</span>
           </label>
           <p className="lp-note">שמות של דמויות ומקומות (כולל שמות נוספים) ומונחים ממילון המונחים. אחרי שתי אותיות ההמשך מופיע באפור; Tab משלים, ↑↓ בוחרים כשיש כמה, Esc מסתיר. גם עם אותיות שימוש: ולנו ← ולנועה.</p>
-          <p className="lp-note">מילים נרדפות: לחיצה ימנית על מילה ← "מילים נרדפות", או Shift+F7 כמו בוורד. מגיעות מ־Claude עם מפתח ה־API שלמטה.</p>
+          <p className="lp-note">מילים נרדפות: לחיצה ימנית על מילה ← "מילים נרדפות", או Shift+F7 כמו בוורד. מגיעות מ־Claude עם מפתח ה־API שבלשונית Claude.</p>
           <p className="lp-note">ניקוד אוטומטי: בפאנל הניקוד ({NIQQUD_SHORTCUT}) ← "נקד אוטומטית".</p>
         </section>
 
@@ -346,23 +401,15 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
           </label>
           <p className="lp-note">המקום שבו עצרת נשמר תמיד, וכשפותחים את הספר שוב הסמן חוזר אליו.</p>
         </section>
-
-        <section>
-          <h3>גופנים שהוספתי</h3>
-          <div className="chips">
-            {!customFonts.length && <span className="lp-note">עוד לא הוספת גופנים. מוסיפים מרשימת הגופנים שבסרגל העיצוב.</span>}
-            {customFonts.map((f) => (
-              <span key={f.family} className="chip" style={{ fontFamily: `"${f.family}"` }}>
-                {f.family}
-                <button title={`הסרת ${f.family}`} aria-label={`הסרת ${f.family}`} onClick={async () => setCustomFonts(await api.removeFont(f.family))}>
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-          <p className="lp-note">הסרה מהרשימה לא משנה טקסט שכבר נכתב בגופן הזה.</p>
-        </section>
-
+          </>
+        )}
+        {tab === 'sync' && (
+          <>
+        <SyncSection />
+          </>
+        )}
+        {tab === 'safety' && (
+          <>
         <section>
           <h3>גיבוי יומי</h3>
           <BackupSettingsFields />
@@ -376,6 +423,15 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
         </section>
 
         <section>
+          <h3>עדכונים</h3>
+          <p className="lp-note">גרסה {__APP_VERSION__}. האפליקציה מתעדכנת מעצמה.</p>
+          <TestUpdatesToggle />
+        </section>
+          </>
+        )}
+        {tab === 'claude' && (
+          <>
+        <section>
           <h3>ביקורת כתיבה עם Claude</h3>
           <div className="set-row">
             <span>{aiKey.has ? `מוגדר מפתח API (${aiKey.hint})` : 'עדיין לא הוגדר מפתח API'}</span>
@@ -386,6 +442,8 @@ export function WritingSettings({ onClose }: { onClose: () => void }) {
           </div>
           <p className="lp-note">מפתח, מודל, הנחיות וסוגי ביקורת. הביקורת עצמה נפתחת מהכפתור "ביקורת" בסרגל העליון כשספר פתוח, או מתוך תרגיל בסדנה.</p>
         </section>
+          </>
+        )}
         {aiOpen && <AiSettingsDialog onClose={() => setAiOpen(false)} />}
 
         <div className="actions">

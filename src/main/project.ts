@@ -29,6 +29,8 @@ const BACKUP_DIR = 'גיבוי קבצים מקוריים'
 interface Manifest extends bg.BackgroundManifest {
   app: 'hakirchia'
   version: 1
+  /** Round 16: the book's id, the same on every computer (added the first time the book is opened) */
+  id?: string
   title: string
   chapters: Chapter[]
   /** The binder tree with parts. Missing in books made before parts existed. */
@@ -114,6 +116,7 @@ async function writeManifest(bookPath: string, m: Manifest): Promise<void> {
 
 const toBook = (bookPath: string, m: Manifest): Book => ({
   path: bookPath,
+  ...(m.id ? { id: m.id } : {}),
   title: m.title,
   chapters: m.chapters,
   outline: m.outline ?? [],
@@ -139,7 +142,7 @@ export async function createBook(parentDir: string, title: string): Promise<Book
     throw new Error(`כבר יש תיקייה בשם "${basename(folder)}" במקום הזה. אפשר לבחור שם אחר או מקום אחר.`)
   }
   await fs.mkdir(chaptersDir(folder), { recursive: true })
-  const m: Manifest = { app: 'hakirchia', version: 1, title: title.trim() || 'ספר חדש', chapters: [], outline: [] }
+  const m: Manifest = { app: 'hakirchia', version: 1, id: randomUUID(), title: title.trim() || 'ספר חדש', chapters: [], outline: [] }
   await writeManifest(folder, m)
   // Start with a first chapter so the writer can begin right away
   await addChapterUnlocked(folder, m, 'פרק 1')
@@ -147,7 +150,18 @@ export async function createBook(parentDir: string, title: string): Promise<Book
 }
 
 export async function openBook(folder: string): Promise<Book> {
-  const m = await readManifest(folder)
+  let m = await readManifest(folder)
+  if (!m.id) {
+    // Round 16: give the book its id once, so every computer knows it is the same book
+    m = await serial(folder, async () => {
+      const fresh = await readManifest(folder)
+      if (!fresh.id) {
+        fresh.id = randomUUID()
+        await writeManifest(folder, fresh)
+      }
+      return fresh
+    }).catch(() => m)
+  }
   // Keep the list honest if a chapter file was removed outside the app
   await fs.mkdir(chaptersDir(folder), { recursive: true })
   return toBook(folder, m)

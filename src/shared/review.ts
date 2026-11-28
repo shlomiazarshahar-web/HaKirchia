@@ -1,3 +1,4 @@
+import { diffTexts } from './diff'
 // Writing review with Claude (feature 19) and the workshop (feature 22): settings, prompts, and the
 // shape of a review. Pure logic, shared by the main process (which calls Claude) and the window.
 
@@ -146,6 +147,16 @@ export interface Review {
   next?: string
   chat: ChatTurn[]
   usage: Usage
+  /** Round 16: the text as it was when Claude reviewed it, so follow-ups see what changed since (not kept for very long texts) */
+  reviewed?: ReviewedText[]
+}
+
+/** The reviewed text, as kept with the review */
+export interface ReviewedText {
+  id?: string
+  title: string
+  paras: string[]
+  notes?: string[]
 }
 
 export function costOf(model: string, input: number, output: number, cacheRead = 0, cacheWrite = 0): number {
@@ -232,6 +243,10 @@ export interface ReviewRequest {
   bookTitle?: string
   /** Earlier reviews of the same text and what was decided in them, already as text (historyText) */
   history?: string
+  /** Round 16, follow-ups only: what the writer changed in the text since the review (changesText) */
+  changes?: string
+  /** Round 16, follow-ups only: the text sent is today's (an older review kept no copy), so it may already include fixes */
+  textIsCurrent?: boolean
 }
 
 /** The JSON shape Claude answers in (structured outputs) */
@@ -636,4 +651,71 @@ ${avoid.length ? `אל תחזור על התרגילים האלה:\n${avoid.slice
 export function titleFromPrompt(prompt: string): string {
   const words = prompt.trim().split(/\s+/).slice(0, 6).join(' ')
   return words.replace(/[.,:;!?]+$/, '') || 'תרגיל'
+}
+
+// ---------------------------------------------------------------------------
+// Round 16: follow-ups see the text as it was reviewed, plus what the writer changed since
+// ---------------------------------------------------------------------------
+
+const SNAPSHOT_MAX = 600_000
+
+/** The texts to keep with a new review (without the original's paragraphs, which stay in the PDF) */
+export function snapshotTexts(texts: ReviewText[]): ReviewedText[] | undefined {
+  const size = texts.reduce((n, t) => n + t.paras.reduce((m, p) => m + p.length, 0) + (t.notes ?? []).reduce((m, p) => m + p.length, 0), 0)
+  if (size > SNAPSHOT_MAX) return undefined
+  return texts.map((t) => ({ ...(t.id ? { id: t.id } : {}), title: t.title, paras: t.paras, ...(t.notes?.length ? { notes: t.notes } : {}) }))
+}
+
+const CHANGES_MAX = 40_000
+const q = (t: string) => `«${t.trim()}»`
+
+/** What changed between the reviewed text and today's, paragraph by paragraph ('' when nothing changed) */
+export function changesText(before: ReviewedText[], after: ReviewText[]): string {
+  const out: string[] = []
+  before.forEach((b, i) => {
+    const a = (b.id ? after.find((x) => x.id === b.id) : undefined) ?? (!b.id ? after[i] : undefined)
+    if (!a) {
+      if (b.id) out.push(`[${b.title}] הפרק כבר לא בספר.`)
+      return
+    }
+    const lines: string[] = []
+    const oldParas = [...b.paras, ...(b.notes ?? []).map((n, k) => `[^${k + 1}] ${n}`)]
+    const newParas = [...a.paras, ...(a.notes ?? []).map((n, k) => `[^${k + 1}] ${n}`)]
+    for (const p of diffTexts(oldParas, newParas).paragraphs) {
+      if (p.kind === 'same') continue
+      const was = p.pieces.filter((x) => x.kind !== 'added').map((x) => x.text).join('')
+      const now = p.pieces.filter((x) => x.kind !== 'removed').map((x) => x.text).join('')
+      if (p.kind === 'changed') lines.push(`לפני: ${q(was)}\nאחרי: ${q(now)}`)
+      else if (p.kind === 'removed') lines.push(`נמחק: ${q(was)}`)
+      else if (now.trim()) lines.push(`נוסף: ${q(now)}`)
+    }
+    if (lines.length) out.push(`[${a.title}]\n${lines.join('\n\n')}`)
+  })
+  let text = out.join('\n\n')
+  if (text.length > CHANGES_MAX) text = text.slice(0, CHANGES_MAX) + '\n…(ויש עוד שינויים)'
+  return text
+}
+
+/**
+ * A follow-up request: the text as reviewed (so the cached context is the same one Claude reviewed),
+ * and what changed since. Reviews from before round 16 kept no copy: then today's text is sent, marked as such.
+ */
+export function followUpRequest(req: ReviewRequest, rv: Pick<Review, 'reviewed' | 'scope'>): ReviewRequest {
+  if (rv.scope === 'selection') return req
+  if (!rv.reviewed?.length) return { ...req, textIsCurrent: true }
+  const texts: ReviewText[] = rv.reviewed.map((t, i) => {
+    const now = (t.id ? req.texts.find((x) => x.id === t.id) : req.texts[i]) ?? undefined
+    return { ...t, ...(now?.source ? { source: now.source } : {}) }
+  })
+  const changes = changesText(rv.reviewed, req.texts)
+  return { ...req, texts, ...(changes ? { changes } : {}) }
+}
+
+/** Put before the writer's message in a follow-up, so Claude knows the text moved on (and why) */
+export function changesNote(req: ReviewRequest): string {
+  if (req.changes)
+    return `מאז הביקורת הכותב שינה את הטקסט, בדרך כלל בעקבות ההערות שלך. הטקסט שלמעלה הוא הגרסה שעליה כתבת את הביקורת, ואלה השינויים מאז:\n${req.changes}\n\n(התייחס לשינויים: אם תיקון עונה על הערה, אמור זאת ותגיד אם הוא עובד. אל תתנצל על הערה רק כי המשפט שלה כבר לא מופיע.)\n\n`
+  if (req.textIsCurrent)
+    return '(שים לב: הטקסט שלמעלה הוא הגרסה של היום. ייתכן שהכותב כבר תיקן בעקבות ההערות שלך, אז משפט מהערה שלא מופיע בו כנראה תוקן, ואין צורך להתנצל עליו.)\n\n'
+  return ''
 }

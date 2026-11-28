@@ -5,7 +5,7 @@ import type { AltDraft, Book, Bookmark, DrawerItem, FocusSettings, OpResult, Out
 import type { StopPoint } from '../shared/stoppoint'
 import type { PaneLayout } from '../shared/panes'
 import * as project from './project'
-import { getSettings, rememberBook, updateSettings } from './settings'
+import { flushShared, getSettings, reloadShared, rememberBook, setComputerName, startSync, stopSync, syncStatus, updateSettings } from './settings'
 import * as fonts from './fonts'
 import * as spell from './spell'
 import { noteContextWord } from './spell'
@@ -41,9 +41,12 @@ let installAfterClose = false
 
 /** Lets the window close for good: into the new version's installer, or just closed */
 function finishClose(): void {
-  allowClose = true
-  if (installAfterClose) updater.installNow()
-  else win?.close()
+  // round 16: the shared app state is written first (a few seconds at most, even if the drive is slow)
+  void Promise.race([flushShared(), new Promise((r) => setTimeout(r, 3000))]).finally(() => {
+    allowClose = true
+    if (installAfterClose) updater.installNow()
+    else win?.close()
+  })
 }
 
 const overlayColors = (theme: Theme) =>
@@ -101,7 +104,20 @@ function createWindow(): void {
     void loadAppPage(win)
   })
   spell.setupSpellcheck(win)
-  win.once('ready-to-show', () => win?.show())
+  // round 16: opens filling the screen (maximized), not as a small window
+  win.once('ready-to-show', () => {
+    win?.maximize()
+    win?.show()
+  })
+  // Round 16: another computer may have changed the shared app state meanwhile
+  const reload = () =>
+    void reloadShared().then((changed) => {
+      if (!changed || !win || win.isDestroyed()) return
+      spell.refreshDictionary(win)
+      win.webContents.send('appstate:changed')
+    })
+  win.on('focus', reload)
+  setInterval(reload, 120000)
   // Links open in the normal browser, never inside the app window
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -142,7 +158,7 @@ async function wrap<T>(fn: () => Promise<T> | T): Promise<OpResult<T>> {
 async function wrapBook(fn: () => Promise<{ book: Book; notice?: string }>): Promise<OpResult<Book>> {
   try {
     const { book, notice } = await fn()
-    rememberBook(book.path, book.title, book.chapters.length)
+    rememberBook(book.path, book.title, book.chapters.length, book.id)
     return { ok: true, value: book, notice }
   } catch (e) {
     return { ok: false, error: errText(e) }
@@ -442,8 +458,74 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('library:list', (): RecentBook[] =>
-    getSettings().recent.map((r) => ({ ...r, exists: project.isBookFolder(r.path) }))
+    getSettings().recent.map(({ unavailable, prevId: _p, ...r }) => ({ ...r, exists: !unavailable && project.isBookFolder(r.path) }))
   )
+  // Round 16: a book whose folder is not here (another computer's drive, or moved): its folder is chosen again, for this computer only
+  ipcMain.handle('library:relocate', (_e, oldPath: string) =>
+    wrap(async () => {
+      const entry = getSettings().recent.find((r) => r.path === oldPath)
+      const res = await dialog.showOpenDialog(win!, {
+        title: `איפה התיקייה של "${entry?.title ?? 'הספר'}" במחשב הזה?`,
+        defaultPath: getSettings().defaultFolder ?? app.getPath('documents'),
+        properties: ['openDirectory']
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      const folder = res.filePaths[0]
+      if (!project.isBookFolder(folder)) throw new Error('בתיקייה הזו אין ספר של הכריכייה. יש לבחור את התיקייה הראשית של הספר (זו שיש בה את התיקייה "פרקים").')
+      const book = await project.openBook(folder)
+      const s = getSettings()
+      const move = <T,>(rec: Record<string, T> | undefined) => {
+        if (!rec || !(oldPath in rec) || folder in rec) return rec
+        const { [oldPath]: v, ...rest } = rec
+        return { ...rest, [folder]: v }
+      }
+      const recent = s.recent
+        .filter((r) => r.path !== folder || r.path === oldPath)
+        .map((r) => {
+          if (r.path !== oldPath) return r
+          const { unavailable: _u, ...rest } = r
+          return { ...rest, path: folder, title: book.title, chapterCount: book.chapters.length, ...(book.id ? { id: book.id } : {}), ...(book.id && r.id && r.id !== book.id ? { prevId: r.id } : {}) }
+        })
+      updateSettings({ recent, lastChapter: move(s.lastChapter) ?? {}, splitLayout: move(s.splitLayout), translateLayout: move(s.translateLayout) })
+      return folder
+    })
+  )
+
+  // Round 16: the app state shared by several computers through a folder (Google Drive)
+  ipcMain.handle('sync:status', () => syncStatus())
+  ipcMain.handle('sync:choose', () =>
+    wrap(async () => {
+      const res = await dialog.showOpenDialog(win!, {
+        title: 'תיקייה משותפת למצב האפליקציה (למשל בגוגל דרייב)',
+        defaultPath: getSettings().syncFolder ?? getSettings().defaultFolder ?? app.getPath('documents'),
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      // every book this computer knows gets its id (kept in its folder) first, so the computers match the same book
+      const s = getSettings()
+      const recent = await Promise.all(
+        s.recent.map(async (r) => {
+          if (!project.isBookFolder(r.path)) return r
+          const id = await project
+            .openBook(r.path)
+            .then((b) => b.id)
+            .catch(() => undefined)
+          return id && id !== r.id ? { ...r, id, ...(r.id ? { prevId: r.id } : {}) } : r
+        })
+      )
+      updateSettings({ recent })
+      const st = await startSync(res.filePaths[0])
+      win?.webContents.send('appstate:changed')
+      return st
+    })
+  )
+  ipcMain.handle('sync:stop', () => stopSync())
+  ipcMain.handle('workshop:toShared', () => wrap(() => workshop.moveWorkshopToShared()))
+  ipcMain.handle('sync:computerName', (_e, name: string) => setComputerName(name))
+  ipcMain.handle('sync:reload', async () => {
+    await reloadShared()
+    return syncStatus()
+  })
   ipcMain.handle('library:archive', (_e, path: string, archived: boolean) => {
     updateSettings({ recent: getSettings().recent.map((r) => (r.path === path ? { ...r, archived } : r)) })
   })
@@ -462,7 +544,7 @@ function registerIpc(): void {
   ipcMain.handle('app:defaultFolder', () => getSettings().defaultFolder ?? join(app.getPath('documents'), 'הכריכייה'))
 
   const opened = (book: Book) => {
-    rememberBook(book.path, book.title, book.chapters.length)
+    rememberBook(book.path, book.title, book.chapters.length, book.id)
     project.watchBook(book.path, (id) => win?.webContents.send('chapter:disk-changed', book.path, id))
     backup.watchForBackup(book.path)
     return book
@@ -485,7 +567,7 @@ function registerIpc(): void {
   ipcMain.handle('backup:restoreChapter', (_e, b: string, day: string, chapterId: string) =>
     wrap(async () => {
       const r = await backup.restoreChapter(b, day, chapterId)
-      rememberBook(r.book.path, r.book.title, r.book.chapters.length)
+      rememberBook(r.book.path, r.book.title, r.book.chapters.length, r.book.id)
       return r
     })
   )
@@ -568,7 +650,7 @@ function registerIpc(): void {
   ipcMain.handle('chapter:add', async (_e, bookPath: string, title: string, partId?: string) => {
     try {
       const { book, chapter, notice } = await project.addChapter(bookPath, title, partId)
-      rememberBook(book.path, book.title, book.chapters.length)
+      rememberBook(book.path, book.title, book.chapters.length, book.id)
       return { ok: true, value: { book, chapterId: chapter.id }, notice }
     } catch (e) {
       return { ok: false, error: errText(e) }
@@ -585,7 +667,7 @@ function registerIpc(): void {
   ipcMain.handle('idea:toChapter', async (_e, b: string, ideaId: string, target) => {
     try {
       const { book, chapterId, notice } = await project.ideaToChapter(b, ideaId, target)
-      rememberBook(book.path, book.title, book.chapters.length)
+      rememberBook(book.path, book.title, book.chapters.length, book.id)
       return { ok: true, value: { book, chapterId }, notice }
     } catch (e) {
       return { ok: false, error: errText(e) }

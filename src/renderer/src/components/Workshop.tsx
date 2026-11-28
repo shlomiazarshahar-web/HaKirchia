@@ -18,14 +18,39 @@ function when(ts: number): string {
   return `${d.getDate()}.${d.getMonth() + 1}.${String(d.getFullYear()).slice(2)}`
 }
 
+const UNAVAILABLE = 'WORKSHOP_UNAVAILABLE:'
+
 const SOURCE_LABEL: Record<ExercisePrompt['source'], string> = { mine: '', claude: 'הצעה של Claude', import: 'מיובא' }
 
 export function Workshop({ show, openId, onOpen }: { show: (t: string, e?: boolean) => void; openId: string | null; onOpen: (id: string | null) => void }) {
   const [ws, setWs] = useState<WorkshopData | null>(null)
   const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    void api.openWorkshop().then((r) => (r.ok && r.value ? setWs(r.value) : setError(r.error ?? 'לא הצלחתי לפתוח את הסדנה')))
-  }, [])
+  const load = () => void api.openWorkshop().then((r) => (r.ok && r.value ? (setWs(r.value), setError(null)) : setError(r.error ?? 'לא הצלחתי לפתוח את הסדנה')))
+  useEffect(load, [])
+  // round 16: the workshop's state came from another computer
+  useEffect(() => api.onAppStateChanged(load), [])
+  const picked = (r: { ok: boolean; value?: WorkshopData | null; error?: string }) => (r.ok && r.value ? (setWs(r.value), setError(null)) : r.error && show(r.error, true))
+  if (error?.startsWith(UNAVAILABLE))
+    return (
+      <div className="paper-state ws-missing">
+        <p>
+          התיקייה של הסדנה לא זמינה במחשב הזה:
+          <br />
+          <bdi className="mono" dir="ltr">
+            {error.slice(UNAVAILABLE.length)}
+          </bdi>
+        </p>
+        <p className="lp-note">כנראה שהיא נשמרה בכונן של מחשב אחר. אפשר לבחור איפה היא נמצאת כאן (למשל בגוגל דרייב), וזה ישתנה רק במחשב הזה.</p>
+        <div className="ws-missing-actions">
+          <button className="btn" onClick={() => void api.moveWorkshop().then(picked)}>
+            בחירת התיקייה של הסדנה…
+          </button>
+          <button className="btn ghost" onClick={load}>
+            לנסות שוב
+          </button>
+        </div>
+      </div>
+    )
   if (error) return <div className="paper-state">{error}</div>
   if (!ws) return <div className="paper-state">פותח את הסדנה…</div>
   const open = openId ? ws.exercises.find((e) => e.id === openId) : null

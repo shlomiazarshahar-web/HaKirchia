@@ -29,6 +29,8 @@ function loadWords(): string[] {
 let writing = Promise.resolve()
 function saveWords(): void {
   const text = words.join('\r\n') + '\r\n'
+  // round 16: kept in the settings too, so other computers that share the app state get the words
+  updateSettings({ dictionary: words })
   writing = writing.then(() => fs.writeFile(dictFile(), text, 'utf8')).catch(() => undefined)
 }
 
@@ -47,8 +49,12 @@ export function setupSpellcheck(win: BrowserWindow): void {
   ses.on('spellcheck-dictionary-download-success', (_e, lang) => failed.delete(lang))
 
   // The personal dictionary lives in a plain text file (one word per line) so it is easy to back up
-  words = loadWords()
+  const fromFile = loadWords()
+  const shared = getSettings().dictionary
+  words = Array.isArray(shared) ? [...shared] : fromFile
+  if (!Array.isArray(shared) && words.length) updateSettings({ dictionary: words })
   for (const w of words) ses.addWordToSpellCheckerDictionary(w)
+  if (Array.isArray(shared) && shared.join('\n') !== fromFile.join('\n')) saveWords()
 
   win.webContents.on('context-menu', (_e, p) => {
     const items: MenuItemConstructorOptions[] = []
@@ -134,6 +140,17 @@ export function addWordQuiet(win: BrowserWindow, word: string): void {
 export function setSpellEnabled(win: BrowserWindow, on: boolean): void {
   updateSettings({ spellcheck: on })
   win.webContents.session.setSpellCheckerEnabled(on)
+}
+
+/** Round 16: words another computer added (or removed) since the shared app state was read last */
+export function refreshDictionary(win: BrowserWindow): void {
+  const shared = getSettings().dictionary
+  if (!Array.isArray(shared) || shared.join('\n') === words.join('\n')) return
+  const ses = win.webContents.session
+  for (const w of words) if (!shared.includes(w)) ses.removeWordFromSpellCheckerDictionary(w)
+  for (const w of shared) if (!words.includes(w)) ses.addWordToSpellCheckerDictionary(w)
+  words = [...shared]
+  saveWords()
 }
 
 export function spellStatus(win: BrowserWindow): SpellStatus {

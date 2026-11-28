@@ -177,6 +177,16 @@ export default function App() {
   }, [])
 
   const refreshLibrary = useCallback(() => api.listLibrary().then(setBooks), [])
+  // Round 16: where the writer stands in each book, as the settings have it now (also after another computer changed them)
+  const reloadBookState = useCallback(async () => {
+    const s = await api.getSettings()
+    initPrefs(s)
+    lastChapter.current = s.lastChapter ?? {}
+    savedLayouts.current = s.splitLayout ?? {}
+    savedTr.current = s.translateLayout ?? {}
+    await refreshLibrary()
+  }, [refreshLibrary])
+  useEffect(() => api.onAppStateChanged(() => void reloadBookState()), [reloadBookState])
 
   useEffect(() => {
     api.getSettings().then((s) => {
@@ -1465,9 +1475,9 @@ export default function App() {
           <Icon name={theme === 'light' ? 'moon' : 'sun'} />
           {theme === 'light' ? 'כהה' : 'בהיר'}
         </button>
-        <button className="ib" title="טיפוגרפיה עברית, בדיקת איות ומילון אישי, גופנים, נקודת עצירה" onClick={() => setDialog({ kind: 'settings' })}>
+        <button className="ib" title="הגדרות: מראה, כתיבה, סנכרון בין מחשבים, גיבוי ועדכונים, Claude" onClick={() => setDialog({ kind: 'settings' })}>
           <Icon name="gear" />
-          <span className="lbl">הגדרות כתיבה</span>
+          <span className="lbl">הגדרות</span>
         </button>
         {inWrite && !empty && (
           <>
@@ -1507,6 +1517,14 @@ export default function App() {
               })
             }
             onArchive={(p, a) => void api.archiveBook(p, a).then(() => (refreshLibrary(), show(a ? 'הספר הועבר לארכיון שבתחתית הספרייה' : 'הספר חזר למדף')))}
+            onRelocate={(p) =>
+              void api.relocateBook(p).then((r) => {
+                if (!r.ok) return show(r.error ?? 'לא הצלחתי לבחור את התיקייה', true)
+                if (!r.value) return
+                void reloadBookState()
+                show('הספר נמצא. המקום החדש נשמר למחשב הזה בלבד')
+              })
+            }
           />
         )}
         {inBoard && planMode === 'timeline' && <Timeline bar={<PlanSwitch mode={planMode} onMode={setPlanMode} onBeside={planBeside} />} onOpenChapter={openChapter} />}
