@@ -2,6 +2,9 @@
 export function IconSprite() {
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+      <symbol id="i-lines" viewBox="0 0 24 24"><path d="M3 6h5l3 3h10M3 12h18M3 18h7l3-3h8" /></symbol>
+      <symbol id="i-heat" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5" /><path d="M3 9.3h18M3 14.6h18M9 4v16M15 4v16" /><path d="M9.5 4.5h5v4.3h-5zM3.5 9.8h5v4.3h-5zM15.5 15h5v4.5h-5z" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="i-seed" viewBox="0 0 24 24"><path d="M12 21v-8M12 13c0-4 3-7 8-7 0 4-3 7-8 7zM12 15c0-3-2.5-5.5-7-5.5 0 3 2.5 5.5 7 5.5z" /></symbol>
       <symbol id="i-book" viewBox="0 0 24 24"><path d="M3 5h6a3 3 0 013 3v12a2 2 0 00-2-2H3zM21 5h-6a3 3 0 00-3 3v12a2 2 0 012-2h7z" /></symbol>
       <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7zM14 3v5h5" /></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1" /></symbol>

@@ -100,6 +100,13 @@ export function setupSpellcheck(win: BrowserWindow): void {
           : { label: `הוספה למילון המונחים (כמונח במקור)`, click: send('original') }
       )
     }
+    // Feature 65: a hint planted here, or the payoff of one (any length of marked words, in a chapter)
+    if (p.isEditable && p.selectionText.trim()) {
+      const quote = p.selectionText.replace(/\s+/g, ' ').trim().slice(0, 400)
+      const send = (kind: string) => () => win.webContents.send('context:background', kind, quote)
+      if (items.length) items.push({ type: 'separator' })
+      items.push({ label: 'שתילת רמז כאן', click: send('setup') }, { label: 'התשלום של רמז…', click: send('payoff') })
+    }
     if (items.length) Menu.buildFromTemplate(items).popup({ window: win })
   })
 }

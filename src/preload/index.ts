@@ -10,6 +10,7 @@ import type { AiSettings, ChatTurn, Exercise, ExercisePrompt, Finding, Review, R
 import type { UpdateState } from '../shared/update'
 import type { ChapterLabel } from '../shared/labels'
 import type { Idea, TableColumn } from '../shared/plan'
+import type { PlotLine, PlotNotes, Setup } from '../shared/overview'
 import type { DropTarget } from '../shared/outline'
 import type { WritingLog } from '../shared/writinglog'
 import type { RecoveryEntry, RecoveryItem } from '../shared/recovery'
@@ -206,8 +207,8 @@ const api = {
   writingLog: (bookPath: string): Promise<OpResult<WritingLog>> => ipcRenderer.invoke('book:writingLog', bookPath),
   /** Feature 44: the book's color labels (a removed label leaves every chapter) */
   setLabels: (bookPath: string, labels: ChapterLabel[]): Promise<OpResult<Book>> => ipcRenderer.invoke('book:labels', bookPath, labels),
-  /** Round 14: idea pile, the table's own columns, the trial order (null ends the trial) */
-  setPlan: (bookPath: string, patch: { ideas?: Idea[]; tableColumns?: TableColumn[]; trialOutline?: OutlineNode[] | null }): Promise<OpResult<Book>> => ipcRenderer.invoke('book:plan', bookPath, patch),
+  /** Round 14: idea pile, the table's own columns, the trial order (null ends the trial). Round 15: plot lines, setups */
+  setPlan: (bookPath: string, patch: { ideas?: Idea[]; tableColumns?: TableColumn[]; trialOutline?: OutlineNode[] | null; plotLines?: PlotLine[]; plotNotes?: PlotNotes; setups?: Setup[] }): Promise<OpResult<Book>> => ipcRenderer.invoke('book:plan', bookPath, patch),
   /** Feature 61: the trial order becomes the book's order */
   applyTrialOrder: (bookPath: string): Promise<OpResult<Book>> => ipcRenderer.invoke('book:applyTrial', bookPath),
   /** Feature 59: an idea becomes a chapter, where it was dropped (or at the end) */

@@ -9,13 +9,17 @@ import { useBg } from './bgctx'
 import { Lightbox, TextInput } from './Background'
 import { Icon } from './Icons'
 
-export type PlanMode = 'cards' | 'table' | 'timeline' | 'inspiration'
+export type PlanMode = 'cards' | 'table' | 'lines' | 'appear' | 'pace' | 'setups' | 'timeline' | 'inspiration'
 
-/** Switches between the three ways to look at the plan of the book */
+/** Switches between the ways to look at the plan of the book */
 export function PlanSwitch({ mode, onMode, onBeside }: { mode: PlanMode; onMode: (m: PlanMode) => void; onBeside?: () => void }) {
   const opts: [PlanMode, string, string, string][] = [
     ['cards', 'כרטיסים', 'grid', 'כרטיס לכל פרק, עם תקציר וסטטוס'],
     ['table', 'טבלה', 'table', 'שורה לכל פרק: תקציר, סטטוס, מילים, זמן בסיפור, דמויות ועמודות משלכם'],
+    ['lines', 'קווי עלילה', 'lines', 'שורה לכל קו עלילה או דמות, עמודה לכל פרק, ופתק במשבצת'],
+    ['appear', 'הופעות', 'heat', 'באילו פרקים כל דמות או מקום מופיעים, וכמה (ממולא לבד מהטקסט)'],
+    ['pace', 'קצב', 'chart', 'עמודה באורך של כל פרק, צבועה לפי סטטוס או תווית'],
+    ['setups', 'רמזים', 'seed', 'שתילה ותשלום: רמזים שנשתלו, איפה הם משתלמים, ואלה שעוד מחכים'],
     ['timeline', 'ציר זמן', 'timeline', 'אירועי הסיפור לפי סדר הזמן, מקושרים לפרקים'],
     ['inspiration', 'השראה', 'image', 'תמונות לדמויות, למקומות ולפרקים']
   ]
@@ -27,7 +31,7 @@ export function PlanSwitch({ mode, onMode, onBeside }: { mode: PlanMode; onMode:
           {label}
         </button>
       ))}
-      {onBeside && mode !== 'inspiration' && mode !== 'table' && (
+      {onBeside && (mode === 'cards' || mode === 'timeline') && (
         <button className="seg-beside" title="התצוגה הזאת בחלון צר ליד הכתיבה (תכנון בצד)" onClick={onBeside}>
           <Icon name="cards" size={15} />
           ליד הכתיבה

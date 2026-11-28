@@ -18,6 +18,7 @@ import { chapterParagraphCount, chapterParagraphTexts, SOURCES_DIR, type Chapter
 import { SCENE_BREAK_TEXT } from '../shared/scenes'
 import { normalizePublish, type PublishSettings } from '../shared/publish'
 import { normalizeLabels, type ChapterLabel } from '../shared/labels'
+import { normalizeOverview, normalizePlotLines, normalizePlotNotes, normalizeSetups, type PlotLine, type PlotNotes, type Setup } from '../shared/overview'
 import { cleanCustom, normalizeColumns, normalizeIdeas, normalizePlan, type Idea, type TableColumn } from '../shared/plan'
 import { countWords, docText, docToDocx, docxToDoc, emptyDoc, isOurFile } from '../shared/docx'
 
@@ -50,6 +51,10 @@ interface Manifest extends bg.BackgroundManifest {
   ideas?: Idea[]
   tableColumns?: TableColumn[]
   trialOutline?: OutlineNode[]
+  /** Round 15: plot lines with their notes, setups & payoffs */
+  plotLines?: PlotLine[]
+  plotNotes?: PlotNotes
+  setups?: Setup[]
 }
 
 /** Makes the tree match the chapter list, and puts the chapters in the tree's order. */
@@ -119,6 +124,7 @@ const toBook = (bookPath: string, m: Manifest): Book => ({
   publish: normalizePublish(m.publish),
   labels: normalizeLabels(m.labels),
   ...normalizePlan(m, m.chapters),
+  ...normalizeOverview(m, m.chapters.map((c) => c.id)),
   ...normalizeBackground(m, m.chapters.map((c) => c.id)),
   ...(m.stopPoint && m.chapters.some((c) => c.id === m.stopPoint!.chapterId) ? { stopPoint: m.stopPoint } : {})
 })
@@ -317,11 +323,20 @@ export function updateChapterMeta(bookPath: string, id: string, meta: { status?:
   })
 }
 
+export interface PlanPatch {
+  ideas?: Idea[]
+  tableColumns?: TableColumn[]
+  trialOutline?: OutlineNode[] | null
+  plotLines?: PlotLine[]
+  plotNotes?: PlotNotes
+  setups?: Setup[]
+}
+
 /**
  * Round 14: saves the idea pile, the table's own columns, or the trial order (null ends the trial).
  * A column that was removed takes its values off every chapter.
  */
-export function setPlan(bookPath: string, patch: { ideas?: Idea[]; tableColumns?: TableColumn[]; trialOutline?: OutlineNode[] | null }): Promise<Book> {
+export function setPlan(bookPath: string, patch: PlanPatch): Promise<Book> {
   return serial(bookPath, async () => {
     const m = await readManifest(bookPath)
     if (patch.ideas) {
@@ -341,6 +356,23 @@ export function setPlan(bookPath: string, patch: { ideas?: Idea[]; tableColumns?
     }
     if (patch.trialOutline === null) delete m.trialOutline
     else if (patch.trialOutline) m.trialOutline = normalizePlan({ trialOutline: patch.trialOutline }, m.chapters).trialOutline
+    // round 15
+    const ids = m.chapters.map((c) => c.id)
+    if (patch.plotLines) {
+      const lines = normalizePlotLines(patch.plotLines)
+      if (lines.length) m.plotLines = lines
+      else delete m.plotLines
+    }
+    if (patch.plotNotes || patch.plotLines) {
+      const notes = normalizePlotNotes(patch.plotNotes ?? m.plotNotes, (m.plotLines ?? []).map((l) => l.id), ids)
+      if (Object.keys(notes).length) m.plotNotes = notes
+      else delete m.plotNotes
+    }
+    if (patch.setups) {
+      const list = normalizeSetups(patch.setups, ids)
+      if (list.length) m.setups = list
+      else delete m.setups
+    }
     await writeManifest(bookPath, m)
     return toBook(bookPath, m)
   })
