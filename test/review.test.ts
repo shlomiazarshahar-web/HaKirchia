@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backgroundText, costOf, estimateReview, findQuote, findingsSoFar, findingThreadMessages, historyText, HISTORY_ASK, newId, normalizeAi, parseReply, parseReview, partialReply, relevantReviews, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS, type Finding, type Review } from '../src/shared/review'
+import { backgroundText, ANSWER_SCHEMA, costOf, estimateReview, REPLY_FIELDS, findQuote, findingsSoFar, findingThreadMessages, historyText, HISTORY_ASK, newId, normalizeAi, parseReply, parseReview, partialReply, relevantReviews, REVIEW_SCHEMA, reviewAsText, reviewMessage, splitPrompts, textBlock, titleFromPrompt, DEFAULT_KINDS, MODELS, type Finding, type Review } from '../src/shared/review'
 
 describe('findQuote', () => {
   const paras = ['היא חיככה את ידיה זו בזו כשחשבה על הספה.', 'ה"מחר" של יובל: "היא תתחיל לרוץ מחר".', 'שָׁלוֹם   עולם, אמר הדוד.']
@@ -113,6 +113,20 @@ describe('settings and helpers', () => {
     expect(costOf('claude-opus-5-5', 0, 1_000_000, 1_000_000)).toBeCloseTo(20.2)
     expect(costOf('claude-fable-5-2', 0, 0, 1_000_000)).toBeCloseTo(0.2)
     expect(costOf('claude-opus-5-5', 0, 0, 0, 1_000_000, 1_000_000)).toBeCloseTo(5 + 8)
+  })
+  it('round 17: depth "רגיל" by default, the old default moves once, a later choice stands', () => {
+    expect(normalizeAi(undefined).effort).toBe('medium')
+    expect(normalizeAi({ effort: 'high' }).effort).toBe('medium')
+    expect(normalizeAi({ effort: 'high', r17: true }).effort).toBe('high')
+    expect(normalizeAi({ effort: 'xhigh' }).effort).toBe('xhigh')
+    expect(normalizeAi({ effort: 'high' }).r17).toBe(true)
+  })
+  it('round 17: one answer shape for the review and the replies (so they share the cache)', () => {
+    expect(Object.keys(ANSWER_SCHEMA.properties)).toEqual(['summary', 'findings', 'lessons', 'next', 'reply', 'decision'])
+    expect([...ANSWER_SCHEMA.required].sort()).toEqual(Object.keys(ANSWER_SCHEMA.properties).sort())
+    expect(parseReview('{"summary":"ס","findings":[],"lessons":"","next":"","reply":"","decision":""}', []).summary).toBe('ס')
+    expect(parseReply('{"summary":"","findings":[],"lessons":"","next":"","reply":"כן","decision":"משאיר"}')).toEqual({ reply: 'כן', decision: 'משאיר' })
+    expect(REPLY_FIELDS).toContain('reply')
   })
   it('estimates a review honestly (most of it is what Claude writes)', () => {
     // a chapter of about 25,000 characters at "יסודי" on Opus: about 60-70 cents, like real reviews

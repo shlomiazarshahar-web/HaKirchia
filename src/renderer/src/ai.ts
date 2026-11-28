@@ -13,6 +13,8 @@ const sub = (l: () => void) => (listeners.add(l), () => void listeners.delete(l)
 
 export function initAi(s: Settings): void {
   ai = normalizeAi(s.ai)
+  // round 17: the depth moved once to the new default; remember that it did
+  if (s.ai && !s.ai.r17) void api.setAiSettings({ effort: ai.effort, r17: true })
   emit()
   void api.aiKeyState().then((k) => ((key = k), emit()))
 }

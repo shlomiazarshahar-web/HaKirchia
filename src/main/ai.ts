@@ -6,7 +6,7 @@ import { join } from 'path'
 import Anthropic from '@anthropic-ai/sdk'
 import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import { getSettings } from './settings'
-import { changesNote, costOf, modelOf, findingThreadMessages, normalizeAi, parseReply, REPLY_SCHEMA, promptIdeasMessage, REVIEW_SCHEMA, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Finding, type Review, type ReviewRequest, type Usage } from '../shared/review'
+import { changesNote, costOf, modelOf, findingThreadMessages, normalizeAi, ANSWER_SCHEMA, parseReply, REPLY_FIELDS, promptIdeasMessage, reviewAsText, reviewMessage, systemPrompt, type AiSettings, type ChatTurn, type Finding, type Review, type ReviewRequest, type Usage } from '../shared/review'
 
 const keyFile = () => join(app.getPath('userData'), 'claude-key.bin')
 let keyCache: string | null | undefined
@@ -140,63 +140,66 @@ async function streamOnce(body: Body, jobId: string, onText: (snapshot: string) 
 export async function review(wc: WebContents, jobId: string, req: ReviewRequest): Promise<{ json: string; usage: Usage; model: string }> {
   const s = aiSettings()
   const { context, ask } = reviewMessage(req)
-  // Round 17: no cache mark here. Follow-ups answer in another shape (REPLY_SCHEMA), and a change of
-  // shape starts the cache over, so a mark on the review was only paid for (25% more), never read.
+  // Round 17: the review stores the text in Claude's cache for an hour (same shape as the replies after
+  // it, ANSWER_SCHEMA), so even the first reply on a comment reads it at 5% of the price
   const body: Body = {
     model: req.model ?? s.model,
     max_tokens: 64000,
     system: systemPrompt(s.instructions),
     thinking: { type: 'adaptive' },
-    output_config: { effort: req.effort ?? s.effort, format: { type: 'json_schema', schema: REVIEW_SCHEMA as unknown as Record<string, unknown> } },
-    messages: [{ role: 'user', content: [{ type: 'text', text: context }, { type: 'text', text: ask }] }]
+    output_config: { effort: req.effort ?? s.effort, format: { type: 'json_schema', schema: ANSWER_SCHEMA as unknown as Record<string, unknown> } },
+    messages: [{ role: 'user', content: [{ type: 'text', text: context }, { type: 'text', text: ask, cache_control: HOUR }] }]
   }
   const r = await streamOnce(body, jobId, (snap) => !wc.isDestroyed() && wc.send('ai:progress', jobId, snap))
   return { json: r.text, usage: r.usage, model: r.model }
 }
 
+const HOUR = { type: 'ephemeral', ttl: '1h' } as const
+
 /**
- * Round 17: questions about a review and replies on its comments share one prefix, kept in the cache
- * for an hour: the same system prompt, model, depth and answer shape, then the text (marked) and the
- * review (marked). The writer usually fixes the text between replies, which takes more than the
- * default 5 minutes, so before this almost every reply paid full price for the whole text again.
- * Reading it back costs 5% of the price.
+ * Round 17: a review, the questions about it and the replies on its comments share one prefix, kept in
+ * Claude's cache for an hour: the same system prompt, model, depth and answer shape, then the text and
+ * the ask (stored by the review itself) and the review (stored by the first reply). The writer usually
+ * fixes the text between replies, which takes more than the default 5 minutes, so before this almost
+ * every reply paid full price for the whole text again. Reading it back costs 5% of the price.
  */
-function followUpBase(req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model'>): { body: Omit<Body, 'messages'>; head: BetaMessageParam[] } {
+function followUpBase(req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model' | 'effort'>): { body: Omit<Body, 'messages'>; head: BetaMessageParam[] } {
   const s = aiSettings()
   const { context, ask } = reviewMessage(req)
-  const hour = { type: 'ephemeral', ttl: '1h' } as const
   const head: BetaMessageParam[] = [
-    { role: 'user', content: [{ type: 'text', text: context, cache_control: hour }, { type: 'text', text: ask }] },
-    { role: 'assistant', content: [{ type: 'text', text: reviewAsText(rv) || '(אין הערות)', cache_control: hour }] }
+    { role: 'user', content: [{ type: 'text', text: context }, { type: 'text', text: ask, cache_control: HOUR }] },
+    { role: 'assistant', content: [{ type: 'text', text: reviewAsText(rv) || '(אין הערות)', cache_control: HOUR }] }
   ]
   const body: Omit<Body, 'messages'> = {
     model: modelOf(rv.model),
     max_tokens: 32000,
     system: systemPrompt(s.instructions),
     thinking: { type: 'adaptive' },
-    output_config: { effort: s.effort === 'xhigh' ? 'high' : s.effort, format: { type: 'json_schema', schema: REPLY_SCHEMA as unknown as Record<string, unknown> } }
+    // the review's own depth: another depth would start the cache over
+    output_config: { effort: rv.effort ?? s.effort, format: { type: 'json_schema', schema: ANSWER_SCHEMA as unknown as Record<string, unknown> } }
   }
   return { body, head }
 }
 
 /** A follow-up question about a review: the same text (cached), the review, the talk so far, and the question */
-export async function followUp(wc: WebContents, jobId: string, req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model'>, chat: ChatTurn[], question: string): Promise<{ text: string; usage: Usage }> {
+export async function followUp(wc: WebContents, jobId: string, req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model' | 'effort'>, chat: ChatTurn[], question: string): Promise<{ text: string; usage: Usage }> {
   const { body, head } = followUpBase(req, rv)
   const messages: BetaMessageParam[] = [...head]
   for (const t of chat) messages.push({ role: t.role, content: t.text })
-  messages.push({ role: 'user', content: `${changesNote(req)}${question}\n\n(ענה בשדה reply, בטקסט רגיל, בקצרה ולעניין. השאר את decision ריק.)` })
+  messages.push({ role: 'user', content: `${changesNote(req)}${question}\n\n(ענה בשדה reply, בטקסט רגיל, בקצרה ולעניין. השאר את decision ריק.)\n${REPLY_FIELDS}` })
   const r = await streamOnce({ ...body, messages } as Body, jobId, (snap) => !wc.isDestroyed() && wc.send('ai:progress', jobId, snap))
   return { text: parseReply(r.text).reply, usage: r.usage }
 }
 
 /** The writer's reply on one comment: the same text (cached), the review, the talk about this comment, and the reply */
-export async function findingReply(wc: WebContents, jobId: string, req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model'>, finding: Finding, message: string): Promise<{ reply: string; decision: string; usage: Usage }> {
+export async function findingReply(wc: WebContents, jobId: string, req: ReviewRequest, rv: Pick<Review, 'summary' | 'findings' | 'model' | 'effort'>, finding: Finding, message: string): Promise<{ reply: string; decision: string; usage: Usage }> {
   const { body, head } = followUpBase(req, rv)
   const messages: BetaMessageParam[] = [...head]
   const turns = findingThreadMessages(finding, finding.thread ?? [], message)
   // round 16: what changed in the text since the review goes with the writer's latest reply
   const note = changesNote(req)
-  if (note) turns[turns.length - 1] = { ...turns[turns.length - 1], text: note + turns[turns.length - 1].text }
+  const last = turns[turns.length - 1]
+  turns[turns.length - 1] = { ...last, text: `${note}${last.text}\n${REPLY_FIELDS}` }
   for (const t of turns) messages.push({ role: t.role, content: t.text })
   const r = await streamOnce({ ...body, messages } as Body, jobId, (snap) => !wc.isDestroyed() && wc.send('ai:progress', jobId, snap))
   return { ...parseReply(r.text), usage: r.usage }

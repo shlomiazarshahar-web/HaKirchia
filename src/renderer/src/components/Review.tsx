@@ -194,7 +194,7 @@ export function ReviewPanel({ target, onClose, show }: { target: ReviewTarget; o
 // A new review
 // ---------------------------------------------------------------------------
 
-type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'excerptNotes' | 'withSource' | 'withHistory' | 'effort'>
+type Meta = Pick<Review, 'scope' | 'targetId' | 'title' | 'kinds' | 'question' | 'excerpt' | 'excerptNotes' | 'withSource' | 'withHistory' | 'effort' | 'withBackground'>
 
 /** Builds the request: the texts are read now (open editors win over the files) */
 export async function buildRequest(target: ReviewTarget, meta: Meta, kinds: ReviewKind[], withBackground: boolean, earlier: Review[] = []): Promise<ReviewRequest | string> {
@@ -343,6 +343,7 @@ function NewReview({
     if (hasSrc && withSrc) meta.withSource = true
     if (earlier.length && withHist) meta.withHistory = true
     meta.effort = pickEffort
+    if (hasBg && withBg) meta.withBackground = true
     setPreparing(true)
     const req = await buildRequest(target, meta, ai.kinds, hasBg && withBg, earlier)
     setPreparing(false)
@@ -490,7 +491,7 @@ function ReviewView({ review, list, target, onBack, onSave, show }: { review: Re
 
   /** The same request the review was made with: the text as reviewed, plus what changed since (round 16), for follow-ups */
   const request = async () => {
-    const req = await buildRequest(target, rv, ai.kinds, target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
+    const req = await buildRequest(target, rv, ai.kinds, rv.effort ? !!rv.withBackground : target.mode === 'book' && rv.scope !== 'selection', rv.withHistory ? relevantReviews(list, rv, rv.at) : [])
     return typeof req === 'string' && !rv.reviewed?.length ? req : followUpRequest(typeof req === 'string' ? { scope: rv.scope, texts: [], kinds: [] } : req, rv)
   }
 
@@ -961,7 +962,7 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
           ))}
           <label className="set-row">
             <span>יסודיות</span>
-            <select value={ai.effort} onChange={(e) => setAi({ effort: e.target.value as typeof ai.effort })}>
+            <select value={ai.effort} onChange={(e) => setAi({ effort: e.target.value as typeof ai.effort, r17: true })}>
               {EFFORTS.map((x) => (
                 <option key={x.id} value={x.id}>
                   {x.label}

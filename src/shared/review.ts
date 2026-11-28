@@ -35,6 +35,8 @@ export interface AiSettings {
   /** General instructions, like a claude.ai project's instructions ("ביקורת כתיבה") */
   instructions: string
   kinds: ReviewKind[]
+  /** Round 17: the depth was moved once from "יסודי" to the new default "רגיל"; after that the writer's choice stands */
+  r17?: boolean
 }
 
 export const DEFAULT_INSTRUCTIONS = `אתה עורך ספרותי ותיק שקורא כתבי יד בעברית. הכותב חוזר לכתיבה כתחביב ומבקש ביקורת כנה, בונה ועניינית: לא מחמאות ריקות ולא ריכוך. אם משהו לא עובד, אמור זאת בבירור והסבר למה. אם משהו עובד, אמור גם את זה, ואמור למה הוא עובד, כדי שהכותב יידע מה לשמור.
@@ -70,14 +72,17 @@ export const DEFAULT_KINDS: ReviewKind[] = [
   { id: 'translation', name: 'תרגום', prompt: 'מול המקור, משפט מול משפט: טעויות משמעות, השמטות ותוספות, ניואנס ואירוניה שאבדו, משלב וקול הדמויות, מונחים לפי המילון. בכל הערה לציין גם את המקור בשדה ההערה ולהציע תרגום.' }
 ]
 
-export const DEFAULT_AI: AiSettings = { model: DEFAULT_MODEL, effort: 'high', instructions: DEFAULT_INSTRUCTIONS, kinds: DEFAULT_KINDS }
+// round 17: "רגיל" by default (שלומי's choice): much less quiet thinking, so cheaper and faster, with about the same comments
+export const DEFAULT_AI: AiSettings = { model: DEFAULT_MODEL, effort: 'medium', instructions: DEFAULT_INSTRUCTIONS, kinds: DEFAULT_KINDS, r17: true }
 
 export function normalizeAi(raw: Partial<AiSettings> | undefined): AiSettings {
   const r = raw ?? {}
   const model = MODELS.some((m) => m.id === r.model) ? (r.model as ModelId) : DEFAULT_MODEL
-  const effort = EFFORTS.some((e) => e.id === r.effort) ? (r.effort as Effort) : DEFAULT_AI.effort
+  let effort = EFFORTS.some((e) => e.id === r.effort) ? (r.effort as Effort) : DEFAULT_AI.effort
+  // round 17: the old default "יסודי" becomes the new default "רגיל", once
+  if (!r.r17 && effort === 'high') effort = DEFAULT_AI.effort
   const kinds = Array.isArray(r.kinds) ? r.kinds.filter((k) => k && typeof k.name === 'string' && k.name.trim()).map((k) => ({ id: String(k.id || newId()), name: k.name, prompt: String(k.prompt ?? ''), on: !!k.on })) : DEFAULT_KINDS
-  return { model, effort, instructions: typeof r.instructions === 'string' ? r.instructions : DEFAULT_INSTRUCTIONS, kinds }
+  return { model, effort, instructions: typeof r.instructions === 'string' ? r.instructions : DEFAULT_INSTRUCTIONS, kinds, r17: true }
 }
 
 export function newId(): string {
@@ -144,6 +149,8 @@ export interface Review {
   model: string
   /** Round 17: the depth the review was made with */
   effort?: Effort
+  /** Round 17: background pages were sent along (follow-ups send the same, so the cache matches) */
+  withBackground?: boolean
   summary: string
   findings: Finding[]
   /** "מה זה מלמד על הכתיבה שלך" */
@@ -346,7 +353,7 @@ export function reviewMessage(req: ReviewRequest): { context: string; ask: strin
   if (req.exercisePrompt?.trim()) asks.push('התייחס גם לשאלה עד כמה הטקסט עונה על הנחיית התרגיל.')
   if (req.question?.trim()) asks.push(`שאלה מהכותב: ${req.question.trim()}`)
   if (!asks.length) asks.push('תן ביקורת כללית על הטקסט.')
-  asks.push('ענה במבנה המבוקש: סיכום קצר ורשימת הערות, כל הערה עם ציטוט מדויק מהטקסט.')
+  asks.push('ענה במבנה המבוקש: סיכום קצר ורשימת הערות, כל הערה עם ציטוט מדויק מהטקסט. בביקורת עצמה השדות reply ו־decision נשארים ריקים.')
   return { context: parts.join('\n\n'), ask: asks.join('\n\n') }
 }
 
@@ -572,6 +579,26 @@ export const REPLY_SCHEMA = {
   required: ['reply', 'decision'],
   additionalProperties: false
 } as const
+
+/**
+ * Round 17: one answer shape for a review and for everything after it. A change of shape starts
+ * Claude's cache over, so with one shape the review itself stores the text for an hour and even the
+ * first reply on a comment reads it at 5% of the price. A review leaves reply and decision empty; a
+ * reply leaves the review's fields empty.
+ */
+export const ANSWER_SCHEMA = {
+  type: 'object',
+  properties: {
+    ...REVIEW_SCHEMA.properties,
+    reply: { type: 'string', description: 'רק בתשובה לכותב אחרי הביקורת (תגובה על הערה או שאלת המשך): התשובה, בטקסט רגיל, בקצרה ולעניין. בביקורת עצמה: ריק' },
+    decision: { type: 'string', description: REPLY_SCHEMA.properties.decision.description + '. בביקורת עצמה ובשאלת המשך: ריק' }
+  },
+  required: ['summary', 'findings', 'lessons', 'next', 'reply', 'decision'],
+  additionalProperties: false
+} as const
+
+/** Added to every message after the review, so Claude fills only the answer's fields */
+export const REPLY_FIELDS = '(בתשובה הזו השאר את summary, lessons ו־next ריקים ואת findings רשימה ריקה. כתוב רק את reply ו־decision.)'
 
 /** One comment as text, to open a conversation about it */
 export function findingAsText(f: Pick<Finding, 'kind' | 'quote' | 'comment' | 'suggestion'>): string {
